@@ -1,6 +1,6 @@
 import React from 'react';
 import { Routes, Route, NavLink } from 'react-router-dom';
-import { BookOpen, Search, GitBranch, RotateCcw, Settings, Table2 } from 'lucide-react';
+import { BookOpen, Search, GitBranch, RotateCcw, Settings, Table2, Network } from 'lucide-react';
 import NotesPage from './pages/NotesPage';
 import NoteEditor from './pages/NoteEditor';
 import SearchPage from './pages/SearchPage';
@@ -8,12 +8,14 @@ import ReviewPage from './pages/ReviewPage';
 import GraphPage from './pages/GraphPage';
 import SettingsPage from './pages/SettingsPage';
 import QueryPage from './pages/QueryPage';
+import MocPage from './pages/MocPage';
 
 const navItems = [
   { to: '/', icon: BookOpen, label: 'Notes' },
   { to: '/search', icon: Search, label: 'Search' },
   { to: '/graph', icon: GitBranch, label: 'Graph' },
   { to: '/query', icon: Table2, label: 'Query' },
+  { to: '/moc', icon: Network, label: 'MOC' },
   { to: '/review', icon: RotateCcw, label: 'Review' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];
@@ -51,6 +53,7 @@ export default function App() {
           <Route path="/search" element={<SearchPage />} />
           <Route path="/graph" element={<GraphPage />} />
           <Route path="/query" element={<QueryPage />} />
+          <Route path="/moc" element={<MocPage />} />
           <Route path="/review" element={<ReviewPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>

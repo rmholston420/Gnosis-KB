@@ -88,3 +88,57 @@ class DailyReviewResponse(BaseModel):
     summary: str
     inbox_note_count: int
     action_items: list[str]
+
+
+# ---------------------------------------------------------------------------
+# MOC Generator
+# ---------------------------------------------------------------------------
+
+class MocSection(BaseModel):
+    """A single H2 section within a generated MOC."""
+
+    heading: str = Field(description="Section heading (used as H2 in the MOC note)")
+    wikilinks: list[str] = Field(
+        description="Titles of notes to link under this heading"
+    )
+    summary: str = Field(
+        description="1-2 sentence description of what this section covers"
+    )
+
+
+class MocRequest(BaseModel):
+    """Request body for POST /ai/generate-moc."""
+
+    topic: str = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        description="Topic or tag name to generate the MOC around",
+    )
+    tag: Optional[str] = Field(
+        default=None,
+        description="If provided, only notes tagged with this value are considered",
+    )
+    folder: Optional[str] = Field(
+        default=None,
+        description="If provided, only notes in this folder prefix are considered",
+    )
+    max_notes: int = Field(
+        default=60,
+        ge=5,
+        le=200,
+        description="Maximum number of vault notes to pass to the LLM for grouping",
+    )
+
+
+class MocResponse(BaseModel):
+    """Response from POST /ai/generate-moc."""
+
+    topic: str
+    moc_title: str = Field(description="Suggested title for the MOC note")
+    vault_path: str = Field(description="Suggested file path: 80-meta/<slug>.md")
+    sections: list[MocSection]
+    markdown: str = Field(
+        description="Complete ready-to-save Markdown body for the MOC note"
+    )
+    note_count: int = Field(description="Number of vault notes scanned")
