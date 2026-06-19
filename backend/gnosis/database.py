@@ -2,7 +2,9 @@
 
 Provides:
   - Base: SQLAlchemy declarative base
-  - AsyncSessionLocal: session factory for dependency injection
+  - get_engine(): lazy async engine
+  - get_session_factory(): lazy async_sessionmaker
+  - AsyncSessionLocal: alias for get_session_factory (callable → session)
   - get_db: FastAPI dependency for database sessions
   - init_db: create schema and vault directories
 """
@@ -22,7 +24,7 @@ class Base(DeclarativeBase):
     """SQLAlchemy declarative base for all Gnosis models."""
 
 
-# Engine and session factory (initialized lazily)
+# Engine and session factory (initialized lazily on first access)
 _engine = None
 _session_factory = None
 
@@ -43,7 +45,15 @@ def get_engine():
 
 
 def get_session_factory() -> async_sessionmaker:
-    """Return the session factory, creating it if needed."""
+    """Return the async session factory, creating it if needed.
+
+    Usage in background services (e.g. vault_sync)::
+
+        from gnosis.database import get_session_factory
+
+        async with get_session_factory()() as session:
+            ...
+    """
     global _session_factory
     if _session_factory is None:
         _session_factory = async_sessionmaker(
@@ -54,27 +64,9 @@ def get_session_factory() -> async_sessionmaker:
     return _session_factory
 
 
-# Alias for use in vault_sync and other background services
-@property
-def AsyncSessionLocal() -> async_sessionmaker:
-    return get_session_factory()
-
-
-# Make AsyncSessionLocal importable as a callable
-class _AsyncSessionLocalProxy:
-    """Proxy that behaves like async_sessionmaker."""
-
-    def __call__(self):
-        return get_session_factory()()
-
-    def __enter__(self):
-        return get_session_factory()().__enter__()
-
-    async def __aenter__(self):
-        return get_session_factory()().__aenter__()
-
-
-AsyncSessionLocal = get_session_factory  # type: ignore[assignment]
+# Convenience alias — vault_sync.py imports this and calls it as:
+#   async with AsyncSessionLocal() as session: ...
+AsyncSessionLocal = get_session_factory
 
 
 async def get_db():
