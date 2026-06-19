@@ -10,6 +10,13 @@ PUT  /api/v1/query/saved/{id}       — update a saved dashboard
 DELETE /api/v1/query/saved/{id}     — delete a saved dashboard
 POST /api/v1/query/saved/{id}/run   — execute a saved dashboard
 
+Namespace contract
+------------------
+All query execution is scoped to the caller's accessible vault set via
+``get_accessible_owner_ids()``.  SavedQuery rows are owned by the user who
+created them (``owner_id`` column); list/get/update/delete are all filtered
+to ``current_user.id`` so users cannot read or modify each other's dashboards.
+
 GQL syntax examples::
 
     FROM 10-zettelkasten WHERE status=draft SORT modified DESC LIMIT 20
@@ -23,8 +30,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from gnosis.core.auth import get_current_user
+from gnosis.core.namespace import get_accessible_owner_ids
 from gnosis.database import get_db
 from gnosis.models.saved_query import SavedQuery
+from gnosis.models.user import User
 from gnosis.schemas.query import (
     QueryResult,
     QueryRun,
@@ -45,17 +55,16 @@ router = APIRouter(prefix="/query", tags=["query"])
 async def run_query(
     payload: QueryRun,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> QueryResult:
-    """Parse and execute a Gnosis Query Language string against the vault.
-
-    Returns a list of matching note rows with the requested columns.
-    """
+    """Parse and execute a GQL string scoped to the caller's accessible vaults."""
     try:
         parsed = parse_query(payload.query)
     except GQLParseError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    rows, ms = await execute_query(parsed, db)
+    owner_ids = await get_accessible_owner_ids(db, current_user)
+    rows, ms = await execute_query(parsed, db, owner_ids=owner_ids)
     return QueryResult(rows=rows, total=len(rows), query_time_ms=ms)
 
 
@@ -66,9 +75,14 @@ async def run_query(
 @router.get("/saved", response_model=list[SavedQueryRead], summary="List saved dashboards")
 async def list_saved(
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> list[SavedQuery]:
-    """Return all saved Dataview dashboards, ordered by name."""
-    result = await db.execute(select(SavedQuery).order_by(SavedQuery.name))
+    """Return saved dashboards owned by the current user, ordered by name."""
+    result = await db.execute(
+        select(SavedQuery)
+        .where(SavedQuery.owner_id == current_user.id)
+        .order_by(SavedQuery.name)
+    )
     return list(result.scalars().all())
 
 
@@ -81,15 +95,20 @@ async def list_saved(
 async def create_saved(
     payload: SavedQueryCreate,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> SavedQuery:
-    """Persist a named GQL query as a reusable dashboard."""
-    # Validate GQL before saving
+    """Persist a named GQL query as a reusable dashboard owned by the caller."""
     try:
         parse_query(payload.query)
     except GQLParseError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    sq = SavedQuery(name=payload.name, query=payload.query, description=payload.description)
+    sq = SavedQuery(
+        name=payload.name,
+        query=payload.query,
+        description=payload.description,
+        owner_id=current_user.id,
+    )
     db.add(sq)
     try:
         await db.commit()
@@ -104,9 +123,15 @@ async def create_saved(
 async def get_saved(
     sq_id: int,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> SavedQuery:
-    """Return a single saved dashboard by ID."""
-    result = await db.execute(select(SavedQuery).where(SavedQuery.id == sq_id))
+    """Return a single saved dashboard by ID (must be owned by caller)."""
+    result = await db.execute(
+        select(SavedQuery).where(
+            SavedQuery.id == sq_id,
+            SavedQuery.owner_id == current_user.id,
+        )
+    )
     sq = result.scalar_one_or_none()
     if sq is None:
         raise HTTPException(status_code=404, detail="Dashboard not found.")
@@ -118,9 +143,15 @@ async def update_saved(
     sq_id: int,
     payload: SavedQueryUpdate,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> SavedQuery:
-    """Update the name, query, or description of a saved dashboard."""
-    result = await db.execute(select(SavedQuery).where(SavedQuery.id == sq_id))
+    """Update a saved dashboard (must be owned by caller)."""
+    result = await db.execute(
+        select(SavedQuery).where(
+            SavedQuery.id == sq_id,
+            SavedQuery.owner_id == current_user.id,
+        )
+    )
     sq = result.scalar_one_or_none()
     if sq is None:
         raise HTTPException(status_code=404, detail="Dashboard not found.")
@@ -139,13 +170,19 @@ async def update_saved(
     return sq
 
 
-@router.delete("/saved/{sq_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete a saved dashboard")
+@router.delete("/saved/{sq_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_saved(
     sq_id: int,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> None:
-    """Permanently delete a saved dashboard."""
-    result = await db.execute(select(SavedQuery).where(SavedQuery.id == sq_id))
+    """Permanently delete a saved dashboard (must be owned by caller)."""
+    result = await db.execute(
+        select(SavedQuery).where(
+            SavedQuery.id == sq_id,
+            SavedQuery.owner_id == current_user.id,
+        )
+    )
     sq = result.scalar_one_or_none()
     if sq is None:
         raise HTTPException(status_code=404, detail="Dashboard not found.")
@@ -157,9 +194,15 @@ async def delete_saved(
 async def run_saved(
     sq_id: int,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> QueryResult:
-    """Execute a saved dashboard and return fresh results."""
-    result = await db.execute(select(SavedQuery).where(SavedQuery.id == sq_id))
+    """Execute a saved dashboard scoped to the caller's accessible vaults."""
+    result = await db.execute(
+        select(SavedQuery).where(
+            SavedQuery.id == sq_id,
+            SavedQuery.owner_id == current_user.id,
+        )
+    )
     sq = result.scalar_one_or_none()
     if sq is None:
         raise HTTPException(status_code=404, detail="Dashboard not found.")
@@ -167,5 +210,6 @@ async def run_saved(
         parsed = parse_query(sq.query)
     except GQLParseError as exc:
         raise HTTPException(status_code=422, detail=f"Saved query has invalid syntax: {exc}") from exc
-    rows, ms = await execute_query(parsed, db)
+    owner_ids = await get_accessible_owner_ids(db, current_user)
+    rows, ms = await execute_query(parsed, db, owner_ids=owner_ids)
     return QueryResult(rows=rows, total=len(rows), query_time_ms=ms)

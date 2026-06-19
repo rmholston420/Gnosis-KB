@@ -15,6 +15,15 @@ Endpoints:
 Dependencies:
   services/llm_provider.py — three-tier LLM fallback
   services/graph_rag.py    — LightRAG for vault-aware answers
+
+Namespace contract
+------------------
+Every endpoint is scoped to the authenticated user's accessible vault set.
+- graph_rag calls carry user_id=current_user.id so LightRAG uses the correct
+  per-user working directory.
+- Note fetches use scoped_note_stmt() via _get_note_or_404 so cross-vault
+  notes are never surfaced, even if a caller guesses a note UUID.
+- Raw SQL in orphan_audit is filtered by owner_id IN (accessible_ids).
 """
 from __future__ import annotations
 
@@ -26,10 +35,11 @@ from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, func
+from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from gnosis.core.auth import get_current_user
+from gnosis.core.namespace import get_accessible_owner_ids, scoped_note_stmt
 from gnosis.database import get_session
 from gnosis.models.note import Note
 from gnosis.models.user import User
@@ -58,11 +68,18 @@ router = APIRouter(prefix="/ai", tags=["ai"])
 # Helpers
 # ---------------------------------------------------------------------------
 
-async def _get_note_or_404(note_id: str, session: AsyncSession) -> Note:
-    """Fetch a note by ID or raise HTTP 404."""
-    result = await session.execute(
-        select(Note).where(Note.id == note_id, Note.is_deleted.is_(False))
+async def _get_note_or_404(
+    note_id: str,
+    session: AsyncSession,
+    owner_ids: set[int],
+) -> Note:
+    """Fetch a note by ID, scoped to *owner_ids*, or raise HTTP 404."""
+    base = (
+        select(Note)
+        .where(Note.id == note_id, Note.is_deleted.is_(False))
     )
+    stmt = scoped_note_stmt(base, owner_ids)
+    result = await session.execute(stmt)
     note = result.scalar_one_or_none()
     if note is None:
         raise HTTPException(status_code=404, detail=f"Note {note_id!r} not found")
@@ -88,11 +105,7 @@ def _parse_json_list(text: str) -> list[str]:
 
 
 def _build_moc_markdown(topic: str, moc_title: str, sections: list[MocSection]) -> str:
-    """Render a list of MocSection objects into a full Markdown MOC body.
-
-    The output follows Gnosis frontmatter conventions and uses [[WikiLink]]
-    syntax so the vault watcher picks up outgoing links on save.
-    """
+    """Render a list of MocSection objects into a full Markdown MOC body."""
     from datetime import datetime
     now = datetime.now()
     ts = now.strftime("%Y%m%d-%H%M%S")
@@ -130,19 +143,15 @@ def _build_moc_markdown(topic: str, moc_title: str, sections: list[MocSection]) 
     "/chat",
     response_model=ChatResponse,
     summary="RAG-powered chat over the vault",
-    description=(
-        "Query your entire Gnosis vault using LightRAG dual-level graph-RAG. "
-        "Supports three modes: 'local' (entity-specific), "
-        "'global' (thematic synthesis), and 'hybrid' (default)."
-    ),
 )
 async def chat(
     req: ChatRequest,
     session: AsyncSession = Depends(get_session),
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> ChatResponse:
-    if graph_rag.is_available:
-        answer = await graph_rag.query(req.message, mode=req.mode)
+    user_id = current_user.id
+    if await graph_rag.is_available(user_id):
+        answer = await graph_rag.query(req.message, user_id=user_id, mode=req.mode)
     elif llm_provider.is_available:
         answer = await llm_provider.complete(
             prompt=req.message,
@@ -163,19 +172,16 @@ async def chat(
 # POST /ai/summarize/{note_id}
 # ---------------------------------------------------------------------------
 
-@router.post(
-    "/summarize/{note_id}",
-    response_model=SummarizeResponse,
-    summary="Summarize a note",
-)
+@router.post("/summarize/{note_id}", response_model=SummarizeResponse)
 async def summarize_note(
     note_id: str,
     session: AsyncSession = Depends(get_session),
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> SummarizeResponse:
     if not llm_provider.is_available:
         raise HTTPException(status_code=503, detail="No LLM provider available")
-    note = await _get_note_or_404(note_id, session)
+    owner_ids = await get_accessible_owner_ids(session, current_user)
+    note = await _get_note_or_404(note_id, session, owner_ids)
     prompt = (
         f"Note title: {note.title}\n\nNote body:\n{note.body[:6000]}\n\n"
         "Write a concise 2–4 sentence summary of this note. "
@@ -189,25 +195,25 @@ async def summarize_note(
 # POST /ai/suggest-links/{note_id}
 # ---------------------------------------------------------------------------
 
-@router.post(
-    "/suggest-links/{note_id}",
-    response_model=LinkSuggestionsResponse,
-    summary="Suggest wikilinks for a note",
-)
+@router.post("/suggest-links/{note_id}", response_model=LinkSuggestionsResponse)
 async def suggest_links(
     note_id: str,
     session: AsyncSession = Depends(get_session),
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> LinkSuggestionsResponse:
     if not llm_provider.is_available:
         raise HTTPException(status_code=503, detail="No LLM provider available")
-    note = await _get_note_or_404(note_id, session)
-    result = await session.execute(
+    owner_ids = await get_accessible_owner_ids(session, current_user)
+    note = await _get_note_or_404(note_id, session, owner_ids)
+    # Candidate notes scoped to accessible vaults
+    base = (
         select(Note.id, Note.title)
         .where(Note.id != note_id, Note.is_deleted.is_(False))
         .order_by(func.random())
         .limit(80)
     )
+    stmt = scoped_note_stmt(base, owner_ids)
+    result = await session.execute(stmt)
     candidates = result.all()
     titles_text = "\n".join(f"- {row.title}" for row in candidates)
     prompt = (
@@ -242,24 +248,21 @@ async def suggest_links(
 # POST /ai/suggest-tags/{note_id}
 # ---------------------------------------------------------------------------
 
-@router.post(
-    "/suggest-tags/{note_id}",
-    response_model=TagSuggestionsResponse,
-    summary="Suggest tags for a note",
-)
+@router.post("/suggest-tags/{note_id}", response_model=TagSuggestionsResponse)
 async def suggest_tags(
     note_id: str,
     session: AsyncSession = Depends(get_session),
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> TagSuggestionsResponse:
     if not llm_provider.is_available:
         raise HTTPException(status_code=503, detail="No LLM provider available")
-    note = await _get_note_or_404(note_id, session)
+    owner_ids = await get_accessible_owner_ids(session, current_user)
+    note = await _get_note_or_404(note_id, session, owner_ids)
     prompt = (
         f"Note title: {note.title}\n\nBody:\n{note.body[:3000]}\n\n"
         "Suggest 3–8 concise, lowercase tags for this note. "
         "Tags should be single words or hyphenated phrases. "
-        "Return a JSON array of strings only. Example: [\"buddhism\", \"epistemology\", \"graph-theory\"]"
+        "Return a JSON array of strings only."
     )
     raw = await llm_provider.complete(prompt, temperature=0.2)
     tags = _parse_json_list(raw)
@@ -271,27 +274,22 @@ async def suggest_tags(
 # POST /ai/critique/{note_id}
 # ---------------------------------------------------------------------------
 
-@router.post(
-    "/critique/{note_id}",
-    response_model=CritiqueResponse,
-    summary="Zettelkasten atomicity critique",
-)
+@router.post("/critique/{note_id}", response_model=CritiqueResponse)
 async def critique_note(
     note_id: str,
     session: AsyncSession = Depends(get_session),
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> CritiqueResponse:
     if not llm_provider.is_available:
         raise HTTPException(status_code=503, detail="No LLM provider available")
-    note = await _get_note_or_404(note_id, session)
+    owner_ids = await get_accessible_owner_ids(session, current_user)
+    note = await _get_note_or_404(note_id, session, owner_ids)
     prompt = (
         f"Note title: {note.title}\n\nBody:\n{note.body[:4000]}\n\n"
         "Evaluate this Zettelkasten permanent note on four criteria. "
         "Return a JSON object with exactly these keys: "
         '"atomicity", "connectivity", "self_containedness", "insight_density", "overall". '
-        "Each value should be 1–3 sentences of actionable feedback. "
-        "Example: {\"atomicity\": \"...\", \"connectivity\": \"...\", "
-        '"self_containedness": \"...\", "insight_density": \"...\", "overall": \"...\"}'
+        "Each value should be 1–3 sentences of actionable feedback."
     )
     raw = await llm_provider.complete(prompt, temperature=0.2)
     match = re.search(r"\{.*\}", raw, re.DOTALL)
@@ -315,23 +313,24 @@ async def critique_note(
 # GET /ai/orphan-audit
 # ---------------------------------------------------------------------------
 
-@router.get(
-    "/orphan-audit",
-    response_model=OrphanAuditResponse,
-    summary="AI-powered orphan audit",
-)
+@router.get("/orphan-audit", response_model=OrphanAuditResponse)
 async def orphan_audit(
-    limit: int = Query(default=10, ge=1, le=50, description="Max orphans to process"),
+    limit: int = Query(default=10, ge=1, le=50),
     session: AsyncSession = Depends(get_session),
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> OrphanAuditResponse:
-    from sqlalchemy import text
+    owner_ids = await get_accessible_owner_ids(session, current_user)
+    # Include legacy sentinel (0) so pre-migration notes are visible
+    accessible_ids = list(owner_ids | {0})
+    id_list = ",".join(str(i) for i in accessible_ids)
+
     orphan_result = await session.execute(
         text(
-            """
+            f"""
             SELECT n.id, n.title, n.body
             FROM notes n
             WHERE n.is_deleted = false
+              AND (n.owner_id IN ({id_list}) OR n.owner_id IS NULL)
               AND NOT EXISTS (
                   SELECT 1 FROM links l WHERE l.source_id = n.id
               )
@@ -345,11 +344,16 @@ async def orphan_audit(
         {"lim": limit},
     )
     orphans = orphan_result.fetchall()
+
     target_result = await session.execute(
-        select(Note.title).where(Note.is_deleted.is_(False)).limit(60)
+        scoped_note_stmt(
+            select(Note.title).where(Note.is_deleted.is_(False)).limit(60),
+            owner_ids,
+        )
     )
     candidate_titles = [row[0] for row in target_result.all()]
     titles_text = "\n".join(f"- {t}" for t in candidate_titles)
+
     items: list[OrphanAuditItem] = []
     for orphan in orphans:
         if not llm_provider.is_available:
@@ -372,17 +376,14 @@ async def orphan_audit(
 # POST /ai/daily-review
 # ---------------------------------------------------------------------------
 
-@router.post(
-    "/daily-review",
-    response_model=DailyReviewResponse,
-    summary="Generate daily review from inbox notes",
-)
+@router.post("/daily-review", response_model=DailyReviewResponse)
 async def daily_review(
     session: AsyncSession = Depends(get_session),
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> DailyReviewResponse:
     today_str = date.today().isoformat()
-    result = await session.execute(
+    owner_ids = await get_accessible_owner_ids(session, current_user)
+    base = (
         select(Note)
         .where(
             Note.folder == "00-inbox",
@@ -391,6 +392,7 @@ async def daily_review(
         )
         .order_by(Note.created_at)
     )
+    result = await session.execute(scoped_note_stmt(base, owner_ids))
     inbox_notes = result.scalars().all()
     if not inbox_notes:
         return DailyReviewResponse(
@@ -441,26 +443,25 @@ async def daily_review(
 @router.get(
     "/stream/chat",
     summary="SSE streaming chat",
-    description=(
-        "Server-Sent Events endpoint. Pass ?message=...&mode=hybrid. "
-        "Each SSE event contains a text chunk. "
-        "Final event has data: [DONE]."
-    ),
     response_class=StreamingResponse,
 )
 async def stream_chat(
     message: str = Query(..., min_length=1, max_length=8000),
     mode: str = Query(default="hybrid"),
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> StreamingResponse:
+    user_id = current_user.id
+
     async def event_generator() -> AsyncGenerator[str, None]:
         if not llm_provider.is_available:
             yield "data: No AI provider available. Start Ollama or configure GROQ_API_KEY.\n\n"
             yield "data: [DONE]\n\n"
             return
-        if graph_rag.is_available:
-            context = await graph_rag.query(message, mode=mode)
+        if await graph_rag.is_available(user_id):
+            context = await graph_rag.query(message, user_id=user_id, mode=mode)
             system = (
-                f"You are a knowledge base assistant. "
+                "You are a knowledge base assistant. "
                 f"Use the following vault context to answer:\n\n{context[:4000]}"
             )
         else:
@@ -482,59 +483,39 @@ async def stream_chat(
 
 
 # ---------------------------------------------------------------------------
-# POST /ai/generate-moc  — Feature 3: Map of Content Generator
+# POST /ai/generate-moc
 # ---------------------------------------------------------------------------
 
-@router.post(
-    "/generate-moc",
-    response_model=MocResponse,
-    summary="Generate a Map of Content note",
-    description=(
-        "Scans the vault for notes matching a topic/tag/folder filter, "
-        "asks the LLM to group them into themed H2 sections with wikilinks, "
-        "and returns a ready-to-save Markdown MOC note body. "
-        "The response also includes a suggested vault_path (80-meta/<slug>.md) "
-        "and structured section data for the UI to render before saving."
-    ),
-)
+@router.post("/generate-moc", response_model=MocResponse)
 async def generate_moc(
     req: MocRequest,
     session: AsyncSession = Depends(get_session),
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> MocResponse:
-    """Generate a Map of Content note for a topic.
-
-    Algorithm:
-      1. Query vault notes filtered by tag and/or folder.
-      2. Build a compact note index (id, title, tags, folder) for the LLM.
-      3. Prompt the LLM to organise notes into 3-8 themed sections,
-         each with a heading, wikilink list, and one-sentence description.
-      4. Parse the JSON structure and render full Markdown.
-      5. Return sections + rendered markdown; the frontend decides whether to save.
-    """
     if not llm_provider.is_available:
         raise HTTPException(
             status_code=503,
             detail="No LLM provider available. Start Ollama or configure GROQ_API_KEY.",
         )
+    owner_ids = await get_accessible_owner_ids(session, current_user)
 
-    # ---- 1. Gather candidate notes -----------------------------------------
-    stmt = (
+    # ---- 1. Gather candidate notes (scoped) --------------------------------
+    base = (
         select(Note)
         .where(Note.is_deleted.is_(False))
         .order_by(Note.modified_at.desc())
         .limit(req.max_notes)
     )
     if req.folder:
-        stmt = stmt.where(Note.folder.ilike(f"{req.folder}%"))
+        base = base.where(Note.folder.ilike(f"{req.folder}%"))
     if req.tag:
         from gnosis.models.tag import NoteTag, Tag
         tag_sub = select(NoteTag.note_id).join(Tag).where(
             Tag.name == req.tag.lower()
         )
-        stmt = stmt.where(Note.id.in_(tag_sub))
+        base = base.where(Note.id.in_(tag_sub))
 
-    result = await session.execute(stmt)
+    result = await session.execute(scoped_note_stmt(base, owner_ids))
     notes = result.scalars().all()
 
     if len(notes) < 2:
@@ -598,7 +579,6 @@ async def generate_moc(
         except (json.JSONDecodeError, KeyError, TypeError) as exc:
             logger.warning("MOC JSON parse failed: %s", exc)
 
-    # Fallback: put all notes in one section if parsing failed
     if not sections:
         sections = [
             MocSection(

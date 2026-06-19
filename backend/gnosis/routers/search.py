@@ -7,9 +7,13 @@ hybrid   -- Qdrant BM25 + dense RRF fusion (default; falls back to FTS on
 semantic -- Dense-only Qdrant vector search
 fulltext -- PostgreSQL tsvector search (always works, even without Qdrant)
 
-The ``fulltext`` mode is the resilient backbone: it requires no external
-services beyond the database, ranks results by cover-density (ts_rank_cd),
-and returns highlighted snippets with <mark> tags around matching terms.
+Namespace contract
+------------------
+Every search is scoped to the calling user's accessible vault set:
+  owner_ids = {current_user.id} ∪ {shared-vault grant owner IDs}
+The ``owner_ids`` set is passed to ``hybrid_search()`` which injects a
+Qdrant payload filter, and to ``fulltext_search()`` / ``suggest_completions()``
+which use ``scoped_note_stmt`` under the hood.
 """
 
 from typing import Optional
@@ -18,7 +22,10 @@ import logging
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from gnosis.core.auth import get_current_user
+from gnosis.core.namespace import get_accessible_owner_ids
 from gnosis.database import get_db
+from gnosis.models.user import User
 from gnosis.schemas.search import SearchResponse, SearchResult
 from gnosis.services.fts import fulltext_search, suggest_completions
 from gnosis.services.hybrid_search import hybrid_search
@@ -37,8 +44,9 @@ async def search(
     tags: Optional[list[str]] = Query(None),
     mode: str = Query("hybrid", pattern="^(hybrid|semantic|fulltext)$"),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> SearchResponse:
-    """Search the vault.
+    """Search the vault (scoped to the caller's accessible vaults).
 
     - **hybrid** (default): Qdrant BM25 + dense vector RRF fusion. Falls back
       to PostgreSQL FTS automatically if Qdrant is unavailable.
@@ -46,9 +54,12 @@ async def search(
     - **fulltext**: PostgreSQL tsvector search. Always available; no Qdrant
       required. Best for exact phrase and keyword searches.
     """
+    owner_ids = await get_accessible_owner_ids(db, current_user)
+
     if mode == "fulltext":
         raw = await fulltext_search(
-            db, q, limit=limit, folder=folder, note_type=note_type, tags=tags
+            db, q, owner_ids=owner_ids,
+            limit=limit, folder=folder, note_type=note_type, tags=tags,
         )
         results = _map_results(raw["results"])
         return SearchResponse(
@@ -59,7 +70,8 @@ async def search(
     # hybrid / semantic — delegate to Qdrant service
     try:
         raw = hybrid_search(
-            q, limit=limit, folder=folder, note_type=note_type, tags=tags
+            q, owner_ids=owner_ids,
+            limit=limit, folder=folder, note_type=note_type, tags=tags,
         )
         results = _map_results(raw["results"])
         return SearchResponse(
@@ -72,7 +84,8 @@ async def search(
             "Qdrant search failed (%s); falling back to PostgreSQL FTS", exc
         )
         raw = await fulltext_search(
-            db, q, limit=limit, folder=folder, note_type=note_type, tags=tags
+            db, q, owner_ids=owner_ids,
+            limit=limit, folder=folder, note_type=note_type, tags=tags,
         )
         results = _map_results(raw["results"])
         return SearchResponse(
@@ -89,9 +102,14 @@ async def suggest(
     q: str = Query(..., min_length=1, max_length=100),
     limit: int = Query(8, ge=1, le=20),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> list[str]:
-    """Return note titles that start with *q* for search-bar autocomplete."""
-    return await suggest_completions(db, q, limit=limit)
+    """Return note titles that start with *q* for search-bar autocomplete.
+
+    Scoped to the caller's accessible vaults.
+    """
+    owner_ids = await get_accessible_owner_ids(db, current_user)
+    return await suggest_completions(db, q, owner_ids=owner_ids, limit=limit)
 
 
 def _map_results(raw_results: list[dict]) -> list[SearchResult]:
