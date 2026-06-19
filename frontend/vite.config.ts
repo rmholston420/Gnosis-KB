@@ -1,39 +1,41 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    VitePWA({
+      /**
+       * injectManifest strategy: we own sw.js entirely and
+       * vite-plugin-pwa only injects the precache manifest list
+       * (replacing the __WB_MANIFEST placeholder).
+       */
+      strategies: 'injectManifest',
+      srcDir: 'public',
+      filename: 'sw.js',
+      injectManifest: {
+        injectionPoint: '__WB_MANIFEST',
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+      },
+      manifest: false, // We manage manifest.json manually in public/
+      devOptions: {
+        enabled: true,
+        type: 'module',
+      },
+    }),
+  ],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
     },
   },
   server: {
-    port: 3010,
-    host: '0.0.0.0',
     proxy: {
       '/api': {
-        target: 'http://localhost:8010',
+        target: 'http://localhost:8000',
         changeOrigin: true,
-      },
-      '/health': {
-        target: 'http://localhost:8010',
-        changeOrigin: true,
-      },
-    },
-  },
-  build: {
-    outDir: 'dist',
-    sourcemap: true,
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          vendor: ['react', 'react-dom', 'react-router-dom'],
-          editor: ['@uiw/react-codemirror', '@codemirror/lang-markdown'],
-          graph: ['cytoscape', 'cytoscape-fcose', 'd3'],
-          query: ['@tanstack/react-query', 'zustand'],
-        },
       },
     },
   },
