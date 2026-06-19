@@ -9,11 +9,13 @@
  *
  * Hover over a resolved link → WikilinkPopup floating preview card.
  * Click a broken link → navigate to /notes/new?title=Missing+Title
+ *
+ * Uses marked v12 API: new Marked() + use({ extensions: [...] })
  */
 
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { marked, type TokenizerExtension, type RendererExtension } from 'marked';
+import { Marked, type MarkedExtension, type TokenizerExtension, type RendererExtension } from 'marked';
 import type { NoteListItem } from '../types';
 import WikilinkPopup, { type PopupState } from './WikilinkPopup';
 
@@ -28,18 +30,18 @@ interface WikiToken {
 }
 
 // ---------------------------------------------------------------------------
-// marked extension factory
+// marked v12 extension factory
 // ---------------------------------------------------------------------------
 function buildWikilinkExtension(
   notesByTitle: Map<string, NoteListItem>,
-): marked.MarkedExtension {
+): MarkedExtension {
   const tokenizer: TokenizerExtension = {
     name: 'wikilink',
     level: 'inline',
     start(src: string) {
       return src.indexOf('[[');
     },
-    tokenize(src: string): WikiToken | undefined {
+    tokenizer(src: string): WikiToken | undefined {
       const match = src.match(/^\[\[([^\]\[]+?)(?:\|([^\]\[]+?))?\]\]/);
       if (!match) return undefined;
       return {
@@ -113,7 +115,7 @@ export default function WikilinkPreview({
 
   // Render Markdown → HTML with wikilink extension (memoised)
   const html = useMemo(() => {
-    const instance = new marked.Marked();
+    const instance = new Marked();
     instance.use(buildWikilinkExtension(notesByTitle));
     return instance.parse(body) as string;
   }, [body, notesByTitle]);
@@ -135,11 +137,9 @@ export default function WikilinkPreview({
     e.preventDefault();
 
     if (anchor.classList.contains('wikilink-exists')) {
-      // Resolved link → navigate
       const id = (anchor as HTMLElement).dataset.noteId;
       if (id) navigate(`/notes/${id}`);
     } else if (anchor.classList.contains('wikilink-broken')) {
-      // Broken link → open new-note editor pre-filled with title
       const title = (anchor as HTMLElement).dataset.noteTitle ?? '';
       navigate(`/notes/new?title=${encodeURIComponent(title)}`);
     }
@@ -166,7 +166,6 @@ export default function WikilinkPreview({
 
   function handleMouseOut(e: React.MouseEvent<HTMLDivElement>) {
     const related = e.relatedTarget as HTMLElement | null;
-    // Don’t hide if moving into the popup itself
     if (related?.closest('.wikilink-popup')) return;
     scheduleHide();
   }
