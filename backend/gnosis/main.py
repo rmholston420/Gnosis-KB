@@ -24,8 +24,8 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from gnosis.config import settings
-from gnosis.database import engine, Base
+from gnosis.config import get_settings
+from gnosis.database import get_engine, Base
 from gnosis.routers import (
     ai,
     auth,
@@ -50,13 +50,15 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Create tables on startup (dev convenience; production uses Alembic)."""
-    async with engine.begin() as conn:
+    """Ensure tables exist on startup (dev convenience; production uses Alembic)."""
+    async with get_engine().begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Gnosis API ready — database tables ensured")
     yield
     logger.info("Gnosis API shutting down")
 
+
+_settings = get_settings()
 
 app = FastAPI(
     title="Gnosis Knowledge Base API",
@@ -74,7 +76,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=_settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -92,4 +94,4 @@ app.include_router(review.router, prefix=API_V1)
 app.include_router(export.router, prefix=API_V1)
 app.include_router(tags.router, prefix=API_V1)
 app.include_router(ingest.router, prefix=API_V1)
-app.include_router(users.router, prefix=API_V1)   # ← new
+app.include_router(users.router, prefix=API_V1)
