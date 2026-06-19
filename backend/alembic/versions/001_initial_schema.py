@@ -3,6 +3,10 @@
 Revision ID: 001_initial
 Revises:
 Create Date: 2026-06-19
+
+This migration is intentionally idempotent: every CREATE TABLE and
+CREATE INDEX uses IF NOT EXISTS so it is safe to run against a
+database that was pre-populated by SQLAlchemy create_all().
 """
 from __future__ import annotations
 from typing import Sequence, Union
@@ -17,127 +21,119 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Create initial tables."""
-    # users
-    op.create_table(
-        "users",
-        sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-        sa.Column("username", sa.String(100), unique=True, nullable=False),
-        sa.Column("email", sa.String(255), unique=True, nullable=False),
-        sa.Column("hashed_password", sa.String(255), nullable=False),
-        sa.Column("is_active", sa.Boolean, server_default="1", nullable=False),
-        sa.Column("is_superuser", sa.Boolean, server_default="0", nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
-        sa.Column("updated_at", sa.DateTime(timezone=True), onupdate=sa.func.now()),
-    )
-    op.create_index("ix_users_username", "users", ["username"])
-    op.create_index("ix_users_email", "users", ["email"])
+    conn = op.get_bind()
 
-    # notes
-    # sa.JSON is stored as TEXT on SQLite and as native JSON/JSONB on Postgres.
-    # If you later migrate to Postgres exclusively, change sa.JSON to
-    # postgresql.JSONB here — for now sa.JSON keeps the migration cross-dialect.
-    op.create_table(
-        "notes",
-        sa.Column("id", sa.String(20), primary_key=True),
-        sa.Column("title", sa.String(500), nullable=False),
-        sa.Column("slug", sa.String(500), unique=True, nullable=False),
-        sa.Column("body", sa.Text, nullable=False, server_default=""),
-        sa.Column("body_html", sa.Text, nullable=False, server_default=""),
-        sa.Column("note_type", sa.String(50), server_default="permanent"),
-        sa.Column("status", sa.String(50), server_default="draft"),
-        sa.Column("vault_path", sa.String(1000), unique=True),
-        sa.Column("folder", sa.String(100)),
-        sa.Column("source_url", sa.Text),
-        sa.Column("word_count", sa.Integer, server_default="0"),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
-        sa.Column("modified_at", sa.DateTime(timezone=True), onupdate=sa.func.now()),
-        sa.Column("last_reviewed", sa.Date),
-        sa.Column("is_deleted", sa.Boolean, server_default="0", nullable=False),
-        sa.Column("vector_indexed", sa.Boolean, server_default="0", nullable=False),
-        sa.Column("graph_indexed", sa.Boolean, server_default="0", nullable=False),
-        sa.Column("frontmatter", sa.JSON, nullable=True),  # TEXT on SQLite, JSON on PG
-    )
-    op.create_index("ix_notes_title", "notes", ["title"])
-    op.create_index("ix_notes_slug", "notes", ["slug"])
-    op.create_index("ix_notes_folder", "notes", ["folder"])
-    op.create_index("ix_notes_note_type", "notes", ["note_type"])
-    op.create_index("ix_notes_status", "notes", ["status"])
-    op.create_index("ix_notes_is_deleted", "notes", ["is_deleted"])
+    conn.execute(sa.text("""
+        CREATE TABLE IF NOT EXISTS users (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            username     VARCHAR(100) NOT NULL UNIQUE,
+            email        VARCHAR(255) NOT NULL UNIQUE,
+            hashed_password VARCHAR(255) NOT NULL,
+            is_active    BOOLEAN NOT NULL DEFAULT 1,
+            is_superuser BOOLEAN NOT NULL DEFAULT 0,
+            created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at   DATETIME
+        )
+    """))
+    conn.execute(sa.text(
+        "CREATE INDEX IF NOT EXISTS ix_users_username ON users (username)"
+    ))
+    conn.execute(sa.text(
+        "CREATE INDEX IF NOT EXISTS ix_users_email ON users (email)"
+    ))
 
-    # tags
-    op.create_table(
-        "tags",
-        sa.Column("name", sa.String(100), primary_key=True),
-        sa.Column("description", sa.String(500), server_default=""),
-    )
+    conn.execute(sa.text("""
+        CREATE TABLE IF NOT EXISTS notes (
+            id             VARCHAR(20)  PRIMARY KEY,
+            title          VARCHAR(500) NOT NULL,
+            slug           VARCHAR(500) NOT NULL UNIQUE,
+            body           TEXT         NOT NULL DEFAULT '',
+            body_html      TEXT         NOT NULL DEFAULT '',
+            note_type      VARCHAR(50)  DEFAULT 'permanent',
+            status         VARCHAR(50)  DEFAULT 'draft',
+            vault_path     VARCHAR(1000) UNIQUE,
+            folder         VARCHAR(100),
+            source_url     TEXT,
+            word_count     INTEGER      DEFAULT 0,
+            created_at     DATETIME     DEFAULT CURRENT_TIMESTAMP,
+            modified_at    DATETIME,
+            last_reviewed  DATE,
+            is_deleted     BOOLEAN      NOT NULL DEFAULT 0,
+            vector_indexed BOOLEAN      NOT NULL DEFAULT 0,
+            graph_indexed  BOOLEAN      NOT NULL DEFAULT 0,
+            frontmatter    TEXT
+        )
+    """))
+    conn.execute(sa.text(
+        "CREATE INDEX IF NOT EXISTS ix_notes_title    ON notes (title)"
+    ))
+    conn.execute(sa.text(
+        "CREATE INDEX IF NOT EXISTS ix_notes_slug     ON notes (slug)"
+    ))
+    conn.execute(sa.text(
+        "CREATE INDEX IF NOT EXISTS ix_notes_folder   ON notes (folder)"
+    ))
+    conn.execute(sa.text(
+        "CREATE INDEX IF NOT EXISTS ix_notes_note_type ON notes (note_type)"
+    ))
+    conn.execute(sa.text(
+        "CREATE INDEX IF NOT EXISTS ix_notes_status   ON notes (status)"
+    ))
+    conn.execute(sa.text(
+        "CREATE INDEX IF NOT EXISTS ix_notes_is_deleted ON notes (is_deleted)"
+    ))
 
-    # note_tags (association)
-    op.create_table(
-        "note_tags",
-        sa.Column(
-            "note_id",
-            sa.String(20),
-            sa.ForeignKey("notes.id", ondelete="CASCADE"),
-            primary_key=True,
-        ),
-        sa.Column(
-            "tag_id",
-            sa.String(100),
-            sa.ForeignKey("tags.name", ondelete="CASCADE"),
-            primary_key=True,
-        ),
-    )
+    conn.execute(sa.text("""
+        CREATE TABLE IF NOT EXISTS tags (
+            name        VARCHAR(100) PRIMARY KEY,
+            description VARCHAR(500) DEFAULT ''
+        )
+    """))
 
-    # links
-    op.create_table(
-        "links",
-        sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-        sa.Column(
-            "source_id",
-            sa.String(20),
-            sa.ForeignKey("notes.id", ondelete="CASCADE"),
-            nullable=False,
-        ),
-        sa.Column(
-            "target_id",
-            sa.String(20),
-            sa.ForeignKey("notes.id", ondelete="CASCADE"),
-            nullable=False,
-        ),
-        sa.Column("link_text", sa.String(500), nullable=False),
-        sa.Column("context", sa.Text),
-        sa.Column("link_type", sa.String(50), server_default="wikilink"),
-    )
-    op.create_index("ix_links_source_id", "links", ["source_id"])
-    op.create_index("ix_links_target_id", "links", ["target_id"])
+    conn.execute(sa.text("""
+        CREATE TABLE IF NOT EXISTS note_tags (
+            note_id VARCHAR(20)  NOT NULL REFERENCES notes(id)  ON DELETE CASCADE,
+            tag_id  VARCHAR(100) NOT NULL REFERENCES tags(name) ON DELETE CASCADE,
+            PRIMARY KEY (note_id, tag_id)
+        )
+    """))
 
-    # attachments
-    op.create_table(
-        "attachments",
-        sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-        sa.Column(
-            "note_id",
-            sa.String(20),
-            sa.ForeignKey("notes.id", ondelete="CASCADE"),
-            nullable=False,
-        ),
-        sa.Column("filename", sa.String(500), nullable=False),
-        sa.Column("original_filename", sa.String(500), nullable=False),
-        sa.Column("file_path", sa.String(1000), nullable=False),
-        sa.Column("mime_type", sa.String(100), server_default="application/octet-stream"),
-        sa.Column("file_size", sa.Integer, server_default="0"),
-        sa.Column("extracted_text", sa.Text),
-        sa.Column("uploaded_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
-    )
-    op.create_index("ix_attachments_note_id", "attachments", ["note_id"])
+    conn.execute(sa.text("""
+        CREATE TABLE IF NOT EXISTS links (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_id VARCHAR(20) NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+            target_id VARCHAR(20) NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+            link_text VARCHAR(500) NOT NULL,
+            context   TEXT,
+            link_type VARCHAR(50) DEFAULT 'wikilink'
+        )
+    """))
+    conn.execute(sa.text(
+        "CREATE INDEX IF NOT EXISTS ix_links_source_id ON links (source_id)"
+    ))
+    conn.execute(sa.text(
+        "CREATE INDEX IF NOT EXISTS ix_links_target_id ON links (target_id)"
+    ))
+
+    conn.execute(sa.text("""
+        CREATE TABLE IF NOT EXISTS attachments (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            note_id           VARCHAR(20) NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+            filename          VARCHAR(500) NOT NULL,
+            original_filename VARCHAR(500) NOT NULL,
+            file_path         VARCHAR(1000) NOT NULL,
+            mime_type         VARCHAR(100) DEFAULT 'application/octet-stream',
+            file_size         INTEGER DEFAULT 0,
+            extracted_text    TEXT,
+            uploaded_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """))
+    conn.execute(sa.text(
+        "CREATE INDEX IF NOT EXISTS ix_attachments_note_id ON attachments (note_id)"
+    ))
 
 
 def downgrade() -> None:
-    """Drop all tables in reverse dependency order."""
-    op.drop_table("attachments")
-    op.drop_table("links")
-    op.drop_table("note_tags")
-    op.drop_table("tags")
-    op.drop_table("notes")
-    op.drop_table("users")
+    conn = op.get_bind()
+    for tbl in ("attachments", "links", "note_tags", "tags", "notes", "users"):
+        conn.execute(sa.text(f"DROP TABLE IF EXISTS {tbl}"))
