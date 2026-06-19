@@ -1,0 +1,53 @@
+{
+  "name": "gnosis-kb-ui",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 3010 --host 0.0.0.0",
+    "build": "tsc && vite build",
+    "preview": "vite preview --port 3010",
+    "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@codemirror/autocomplete": "^6.18.0",
+    "@codemirror/commands": "^6.7.0",
+    "@codemirror/lang-markdown": "^6.3.0",
+    "@codemirror/state": "^6.5.0",
+    "@codemirror/view": "^6.36.0",
+    "@tanstack/react-query": "^5.56.0",
+    "@uiw/codemirror-extensions-langs": "^4.23.0",
+    "@uiw/react-codemirror": "^4.23.0",
+    "cytoscape": "^3.30.0",
+    "cytoscape-fcose": "^2.2.0",
+    "d3": "^7.9.0",
+    "date-fns": "^4.1.0",
+    "framer-motion": "^11.11.0",
+    "lucide-react": "^0.453.0",
+    "marked": "^14.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-dropzone": "^14.3.0",
+    "react-router-dom": "^6.26.2",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/cytoscape": "^3.21.8",
+    "@types/d3": "^7.4.3",
+    "@types/node": "^22.7.4",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.2",
+    "@vitest/coverage-v8": "^2.1.1",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^9.11.1",
+    "jsdom": "^25.0.1",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.13",
+    "typescript": "^5.5.3",
+    "vite": "^5.4.9",
+    "vitest": "^2.1.1"
+  }
+}

@@ -1,0 +1,91 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --sidebar-width: 260px;
+    --topbar-height: 48px;
+    --panel-gap: 1px;
+  }
+
+  body {
+    @apply bg-bg-primary text-text-primary;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-bg-secondary;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-border-muted rounded-sm;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-text-muted;
+  }
+
+  /* Prose styles for rendered markdown */
+  .gnosis-prose {
+    @apply font-serif text-base leading-relaxed text-text-primary;
+  }
+
+  .gnosis-prose h1 { @apply text-2xl font-semibold text-text-primary mt-6 mb-3; }
+  .gnosis-prose h2 { @apply text-xl font-semibold text-text-primary mt-5 mb-2; }
+  .gnosis-prose h3 { @apply text-lg font-semibold text-text-primary mt-4 mb-2; }
+  .gnosis-prose p  { @apply mb-3 leading-relaxed; }
+  .gnosis-prose a  { @apply text-text-link hover:underline; }
+  .gnosis-prose code { @apply font-mono text-sm bg-bg-tertiary px-1 py-0.5 rounded; }
+  .gnosis-prose pre { @apply bg-bg-tertiary rounded-lg p-4 overflow-x-auto mb-4; }
+  .gnosis-prose pre code { @apply bg-transparent p-0; }
+  .gnosis-prose blockquote { @apply border-l-4 border-accent-blue pl-4 text-text-secondary italic my-4; }
+  .gnosis-prose ul { @apply list-disc list-inside mb-3 space-y-1; }
+  .gnosis-prose ol { @apply list-decimal list-inside mb-3 space-y-1; }
+  .gnosis-prose hr { @apply border-border my-6; }
+  .gnosis-prose table { @apply w-full border-collapse mb-4; }
+  .gnosis-prose th { @apply bg-bg-tertiary text-left px-3 py-2 border border-border font-semibold text-sm; }
+  .gnosis-prose td { @apply px-3 py-2 border border-border text-sm; }
+
+  /* Wikilink style */
+  .wikilink {
+    @apply text-note-permanent border-b border-note-permanent border-opacity-40 cursor-pointer hover:border-opacity-100 transition-all;
+  }
+
+  /* Code mirror overrides */
+  .cm-editor {
+    @apply h-full bg-transparent text-text-primary;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  .cm-scroller {
+    @apply overflow-auto;
+  }
+
+  .cm-content {
+    @apply py-4 px-2;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
