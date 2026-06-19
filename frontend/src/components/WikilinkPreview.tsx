@@ -1,42 +1,37 @@
 /**
  * WikilinkPreview
  * ================
- * Renders a Markdown string with [[wikilink]] support.
+ * Renders Markdown with full [[wikilink]] support:
  *
- * - [[Note Title]]           → navigates to notes/:id by title lookup
- * - [[Note Title|alias]]     → same but displays "alias"
- * - Broken links (title not found) render with a .wikilink-broken class
+ *   [[Note Title]]          → teal link; navigates to /notes/:id on click
+ *   [[Note Title|alias]]    → same but shows "alias"
+ *   [[Missing Title]]       → dashed-underline "ghost" link; click → create note
  *
- * Usage:
- *   <WikilinkPreview body={note.body} notes={noteListItems} />
- *
- * The component is pure: it takes the flat note list (already fetched by
- * the parent) so it doesn’t issue its own network requests.
+ * Hover over a resolved link → WikilinkPopup floating preview card.
+ * Click a broken link → navigate to /notes/new?title=Missing+Title
  */
 
-import { useMemo } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { marked, type TokenizerExtension, type RendererExtension } from 'marked';
 import type { NoteListItem } from '../types';
+import WikilinkPopup, { type PopupState } from './WikilinkPopup';
 
 // ---------------------------------------------------------------------------
-// Wikilink token type
+// Wikilink token
 // ---------------------------------------------------------------------------
 interface WikiToken {
   type: 'wikilink';
   raw: string;
-  /** The title used for lookup (left side of |) */
   target: string;
-  /** Display text (right side of |, or same as target) */
   label: string;
 }
 
 // ---------------------------------------------------------------------------
-// Build a marked extension for [[wikilinks]]
+// marked extension factory
 // ---------------------------------------------------------------------------
 function buildWikilinkExtension(
   notesByTitle: Map<string, NoteListItem>,
-  onNavigate: (id: string) => void,
 ): marked.MarkedExtension {
   const tokenizer: TokenizerExtension = {
     name: 'wikilink',
@@ -62,19 +57,20 @@ function buildWikilinkExtension(
       const t = token as WikiToken;
       const note = notesByTitle.get(t.target.toLowerCase());
       if (note) {
-        // Encode the note id into a data attribute; the click handler reads it.
         return `<a
           class="wikilink wikilink-exists"
           data-note-id="${note.id}"
+          data-note-title="${escapeHtml(t.target)}"
           href="#"
           title="${escapeHtml(t.target)}"
         >${escapeHtml(t.label)}</a>`;
       }
-      // Broken link — no note found
-      return `<span
+      return `<a
         class="wikilink wikilink-broken"
-        title="Note not found: ${escapeHtml(t.target)}"
-      >${escapeHtml(t.label)}</span>`;
+        data-note-title="${escapeHtml(t.target)}"
+        href="#"
+        title="Create note: ${escapeHtml(t.target)}"
+      >${escapeHtml(t.label)}</a>`;
     },
   };
 
@@ -93,9 +89,7 @@ function escapeHtml(s: string): string {
 // Component
 // ---------------------------------------------------------------------------
 interface WikilinkPreviewProps {
-  /** Raw Markdown body of the note being rendered */
   body: string;
-  /** Flat list of all notes — used to resolve [[Title]] → id */
   notes: NoteListItem[];
   className?: string;
 }
@@ -106,41 +100,92 @@ export default function WikilinkPreview({
   className = '',
 }: WikilinkPreviewProps) {
   const navigate = useNavigate();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const [popup, setPopup] = useState<PopupState | null>(null);
 
-  // Build title → NoteListItem map (case-insensitive)
+  // Case-insensitive title → NoteListItem map
   const notesByTitle = useMemo(() => {
     const map = new Map<string, NoteListItem>();
-    for (const n of notes) {
-      map.set(n.title.toLowerCase(), n);
-    }
+    for (const n of notes) map.set(n.title.toLowerCase(), n);
     return map;
   }, [notes]);
 
-  // Render Markdown → HTML with wikilink extension
+  // Render Markdown → HTML with wikilink extension (memoised)
   const html = useMemo(() => {
-    const markedInstance = new marked.Marked();
-    markedInstance.use(
-      buildWikilinkExtension(notesByTitle, (id) => navigate(`/notes/${id}`)),
-    );
-    return markedInstance.parse(body) as string;
-  }, [body, notesByTitle, navigate]);
+    const instance = new marked.Marked();
+    instance.use(buildWikilinkExtension(notesByTitle));
+    return instance.parse(body) as string;
+  }, [body, notesByTitle]);
 
-  // Handle clicks on rendered wikilinks via event delegation
+  // ---- Event delegation ------------------------------------------------
+
+  const scheduleHide = useCallback(() => {
+    hideTimerRef.current = setTimeout(() => setPopup(null), 200);
+  }, []);
+
+  const cancelHide = useCallback(() => {
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+  }, []);
+
   function handleClick(e: React.MouseEvent<HTMLDivElement>) {
     const target = e.target as HTMLElement;
-    const anchor = target.closest('a.wikilink-exists');
+    const anchor = target.closest('a.wikilink');
     if (!anchor) return;
     e.preventDefault();
-    const id = (anchor as HTMLElement).dataset.noteId;
-    if (id) navigate(`/notes/${id}`);
+
+    if (anchor.classList.contains('wikilink-exists')) {
+      // Resolved link → navigate
+      const id = (anchor as HTMLElement).dataset.noteId;
+      if (id) navigate(`/notes/${id}`);
+    } else if (anchor.classList.contains('wikilink-broken')) {
+      // Broken link → open new-note editor pre-filled with title
+      const title = (anchor as HTMLElement).dataset.noteTitle ?? '';
+      navigate(`/notes/new?title=${encodeURIComponent(title)}`);
+    }
+  }
+
+  function handleMouseOver(e: React.MouseEvent<HTMLDivElement>) {
+    const target = e.target as HTMLElement;
+    const anchor = target.closest('a.wikilink-exists') as HTMLElement | null;
+    if (!anchor) return;
+
+    cancelHide();
+    const noteId = anchor.dataset.noteId;
+    const noteTitle = anchor.dataset.noteTitle?.toLowerCase();
+    const note = noteId
+      ? notes.find((n) => n.id === noteId)
+      : noteTitle
+        ? notesByTitle.get(noteTitle)
+        : undefined;
+
+    if (!note) return;
+    const anchorRect = anchor.getBoundingClientRect();
+    setPopup({ note, anchorRect });
+  }
+
+  function handleMouseOut(e: React.MouseEvent<HTMLDivElement>) {
+    const related = e.relatedTarget as HTMLElement | null;
+    // Don’t hide if moving into the popup itself
+    if (related?.closest('.wikilink-popup')) return;
+    scheduleHide();
   }
 
   return (
-    <div
-      className={`gnosis-prose max-w-prose mx-auto ${className}`}
-      // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitised by marked
-      dangerouslySetInnerHTML={{ __html: html }}
-      onClick={handleClick}
-    />
+    <>
+      <div
+        ref={containerRef}
+        className={`gnosis-prose max-w-prose mx-auto ${className}`}
+        // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitised by marked
+        dangerouslySetInnerHTML={{ __html: html }}
+        onClick={handleClick}
+        onMouseOver={handleMouseOver}
+        onMouseOut={handleMouseOut}
+      />
+      <WikilinkPopup
+        state={popup}
+        onClose={scheduleHide}
+      />
+    </>
   );
 }

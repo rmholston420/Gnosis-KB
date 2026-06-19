@@ -1,4 +1,4 @@
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 import NoteEditor from '../components/NoteEditor';
@@ -7,7 +7,8 @@ import { Loader2, ArrowLeft } from 'lucide-react';
 import type { Note, NoteCreate } from '../types';
 
 export default function NoteEditorPage() {
-  const { id } = useParams<{ id?: string }>(); // undefined = new note
+  const { id } = useParams<{ id?: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { setActiveNoteId } = useAppStore();
@@ -22,6 +23,7 @@ export default function NoteEditorPage() {
     mutationFn: (data: NoteCreate) => api.createNote(data) as Promise<Note>,
     onSuccess: (newNote: Note) => {
       queryClient.invalidateQueries({ queryKey: ['notes'] });
+      queryClient.invalidateQueries({ queryKey: ['notes-titles'] });
       navigate(`/notes/${newNote.id}`, { replace: true });
       setActiveNoteId(newNote.id);
     },
@@ -44,11 +46,12 @@ export default function NoteEditorPage() {
     );
   }
 
-  // New note: show blank editor
+  // ---- New note (blank or pre-filled from broken-link click) ---------------
   if (!id) {
+    const prefillTitle = searchParams.get('title') ?? '';
     const blankNote: Note = {
       id: '',
-      title: '',
+      title: prefillTitle,
       slug: '',
       body: '',
       body_html: '',
@@ -67,7 +70,10 @@ export default function NoteEditorPage() {
     return (
       <div className="h-full flex flex-col">
         <div className="px-4 py-2 border-b border-border flex-shrink-0">
-          <button onClick={() => navigate(-1)} className="flex items-center gap-1 text-xs text-text-muted hover:text-text-primary">
+          <button
+            onClick={() => navigate(-1)}
+            className="flex items-center gap-1 text-xs text-text-muted hover:text-text-primary"
+          >
             <ArrowLeft size={13} /> Back
           </button>
         </div>
@@ -76,7 +82,7 @@ export default function NoteEditorPage() {
             note={blankNote}
             onSave={async (body, title) => {
               await createMutation.mutateAsync({
-                title: title || 'Untitled',
+                title: title || prefillTitle || 'Untitled',
                 body,
                 folder: '10-zettelkasten',
               });
@@ -93,7 +99,10 @@ export default function NoteEditorPage() {
   return (
     <div className="h-full flex flex-col">
       <div className="px-4 py-2 border-b border-border flex-shrink-0">
-        <button onClick={() => navigate('/notes')} className="flex items-center gap-1 text-xs text-text-muted hover:text-text-primary">
+        <button
+          onClick={() => navigate('/notes')}
+          className="flex items-center gap-1 text-xs text-text-muted hover:text-text-primary"
+        >
           <ArrowLeft size={13} /> All Notes
         </button>
       </div>
