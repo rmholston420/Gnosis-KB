@@ -1,9 +1,11 @@
-"""SQLAlchemy ORM models for Gnosis."""
+"""SQLAlchemy ORM models for Gnosis.
 
-from gnosis.models.attachment import Attachment
-from gnosis.models.link import Link
-from gnosis.models.note import Note
-from gnosis.models.tag import Tag, NoteTag
-from gnosis.models.user import User
+Importing this module registers all models with Base.metadata,
+enabling Alembic autogenerate and DB initialization.
+"""
 
-__all__ = ["Attachment", "Link", "Note", "Tag", "NoteTag", "User"]
+from gnosis.models.user import User  # noqa: F401
+from gnosis.models.note import Note  # noqa: F401
+from gnosis.models.tag import Tag, NoteTag  # noqa: F401
+from gnosis.models.link import Link  # noqa: F401
+from gnosis.models.attachment import Attachment  # noqa: F401

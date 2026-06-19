@@ -1,88 +1,145 @@
 # Gnosis Knowledge Base
 
-> A sovereign, Linux-native, AI-augmented personal knowledge base.
+> Sovereign, Linux-native, AI-augmented personal knowledge management.
 
-Gnosis unifies Zettelkasten methodology, PARA organization, and cutting-edge knowledge graph retrieval into a single self-hosted Docker stack. Every note is a plain `.md` file on your filesystem. The AI layer (LightRAG + Qdrant hybrid search) is purely local via Ollama — no data leaves your machine.
+[![CI](https://github.com/rmholston420/Gnosis-KB/actions/workflows/ci.yml/badge.svg)](https://github.com/rmholston420/Gnosis-KB/actions/workflows/ci.yml)
+
+## Overview
+
+Gnosis is a fully self-hosted personal knowledge base built on the Zettelkasten methodology with AI-powered features:
+
+- **Plain Markdown vault** — notes live as `.md` files in `~/gnosis-vault/`
+- **PARA organization** — Inbox, Zettelkasten, Projects, Areas, Resources, Archive, Journals, Sources, Meta
+- **Hybrid search** — BM25 + dense vector (fastembed) → RRF fusion (Qdrant)
+- **Knowledge graph** — NetworkX-powered with Cytoscape.js visualization
+- **LightRAG** — graph-aware dual-level retrieval for chat
+- **MCP server** — AI agents (Claude, Cursor) connect via `http://localhost:8010/mcp`
+- **Multi-provider LLM** — Ollama (local) → Groq → OpenAI → OpenRouter fallback chain
+
+## Quick Start
+
+### 1. Clone and configure
+
+```bash
+git clone https://github.com/rmholston420/Gnosis-KB.git
+cd Gnosis-KB
+cp .env.example .env
+# Edit .env: set VAULT_PATH, SECRET_KEY, and any API keys
+```
+
+### 2. Start with Docker Compose
+
+```bash
+docker compose up -d
+```
+
+Services:
+| Service | URL |
+|---------|-----|
+| React UI | http://localhost:3010 |
+| FastAPI (docs) | http://localhost:8010/docs |
+| MCP server | http://localhost:8010/mcp |
+| Qdrant UI | http://localhost:6333/dashboard |
+
+### 3. Install Ollama models (optional but recommended)
+
+```bash
+ollama pull mistral
+ollama pull nomic-embed-text
+```
+
+### 4. Connect an AI agent via MCP
+
+In Claude Desktop `config.json`:
+```json
+{
+  "mcpServers": {
+    "gnosis-kb": {
+      "url": "http://localhost:8010/mcp"
+    }
+  }
+}
+```
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        GNOSIS STACK                             │
-│                                                                 │
-│  React/TS (Vite 6) ◄──► FastAPI Backend (port 8010)            │
-│  port 5173                                                      │
-│                          Notes | Search | Graph | AI | MCP      │
-│                                │         │                      │
-│                         PostgreSQL 16   Qdrant 1.13             │
-│                         port 5432       port 6333               │
-│                                                                 │
-│  ~/gnosis-vault/  (plain Markdown — the source of truth)        │
-│  Watched by filesystem monitor (watchdog)                       │
-└─────────────────────────────────────────────────────────────────┘
-```
+gnosis-vault/          # Plain .md files (source of truth)
+  00-inbox/
+  10-zettelkasten/
+  20-projects/
+  ...
 
-## Services
+backend/               # FastAPI + MCP server (port 8010)
+  gnosis/
+    config.py          # Pydantic settings
+    database.py        # SQLAlchemy async engine
+    models/            # ORM models
+    schemas/           # Pydantic schemas
+    routers/           # API endpoints
+    services/
+      markdown_parser  # Frontmatter + WikiLink extraction
+      vault_sync       # Watchdog filesystem watcher
+      embeddings       # fastembed dense + ColBERT
+      vector_store     # Qdrant collection management
+      hybrid_search    # BM25 + dense → RRF → ColBERT
+      llm_provider     # Multi-provider with fallback
+      graph_rag        # LightRAG integration
+      document_parser  # PDF/DOCX/PPTX/image OCR
+    core/
+      auth             # JWT + bcrypt
+      events           # FastAPI lifespan
+      exceptions       # Custom error types
+  alembic/             # DB migrations
 
-| Service | Technology | Port |
-|---|---|---|
-| `gnosis-api` | Python 3.12 + FastAPI | 8010 |
-| `gnosis-mcp` | FastAPI-MCP (auto-mount) | 8011 |
-| `gnosis-ui` | React + TypeScript + Vite 6 | 5173 |
-| `gnosis-db` | PostgreSQL 16 | 5432 |
-| `gnosis-vector` | Qdrant 1.13 | 6333 |
-| `gnosis-ollama` | Ollama (optional) | 11434 |
-
-## Quick Start
-
-```bash
-# 1. Clone
-git clone https://github.com/rmholston420/Gnosis-KB.git
-cd Gnosis-KB
-
-# 2. Copy and edit environment
-cp .env.example .env
-# Edit .env: set SECRET_KEY, VAULT_PATH, optional LLM keys
-
-# 3. Start infrastructure + API + UI
-docker compose up -d
-
-# 4. (Optional) Start with local Ollama GPU support
-docker compose --profile local-ai up -d
-
-# 5. Pull Ollama models (if using local AI)
-docker exec gnosis-ollama ollama pull qwen2.5:14b
-docker exec gnosis-ollama ollama pull nomic-embed-text
-
-# 6. Open the app
-open http://localhost:5173
-
-# 7. API docs
-open http://localhost:8010/docs
-
-# 8. MCP server (for Claude Code / OpenHands)
-claude mcp add gnosis http://localhost:8011/mcp
-```
-
-## Vault Directory Structure
-
-```
-~/gnosis-vault/
-├── 00-inbox/          # Raw fleeting notes
-├── 10-zettelkasten/   # Atomic permanent notes
-├── 20-projects/       # Active projects
-├── 30-areas/          # Ongoing responsibilities
-├── 40-resources/      # Reference material
-├── 50-archive/        # Inactive material
-├── 60-journals/       # Daily / weekly notes
-├── 70-sources/        # Literature notes
-└── 80-meta/           # Templates, MOCs, system notes
+frontend/              # Vite + React + TypeScript (port 3010)
+  src/
+    components/        # Layout, Sidebar, NoteEditor, GraphCanvas, AIChat
+    pages/             # All route pages
+    services/          # api.ts (typed fetch)
+    store/             # Zustand global state
+    types/             # TypeScript domain types
 ```
 
 ## Development
 
-See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed setup instructions.
+### Backend
+
+```bash
+cd backend
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+alembic upgrade head
+uvicorn gnosis.main:app --reload --port 8010
+```
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev   # starts at http://localhost:3010
+```
+
+### Tests
+
+```bash
+cd backend
+pytest tests/ -v --cov=gnosis
+```
+
+## Note Types
+
+| Type | Folder | Purpose |
+|------|--------|---------|
+| `fleeting` | 00-inbox | Quick captures, process daily |
+| `permanent` | 10-zettelkasten | Atomic concepts, distilled insights |
+| `project` | 20-projects | Active project notes |
+| `literature` | 70-sources | Reading notes, web clips |
+| `journal` | 60-journals | Daily notes |
+| `map` | 80-meta | Maps of Content (MOC) |
+| `reference` | 40-resources | Reference material |
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE)

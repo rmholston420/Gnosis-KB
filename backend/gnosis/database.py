@@ -1,24 +1,17 @@
-"""Async SQLAlchemy engine and session factory.
+"""Database engine and session factory.
 
 Provides:
-    - async_engine: the SQLAlchemy async engine
-    - AsyncSessionLocal: async session factory
-    - Base: declarative base for all ORM models
-    - get_db: FastAPI dependency that yields an async session
-    - init_db: called at startup to ensure tables/dirs exist
+  - Base: SQLAlchemy declarative base
+  - AsyncSessionLocal: session factory for dependency injection
+  - get_db: FastAPI dependency for database sessions
+  - init_db: create schema and vault directories
 """
 
 import logging
-from typing import AsyncGenerator
+from pathlib import Path
 
-from sqlalchemy import event
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy.pool import NullPool
 
 from gnosis.config import get_settings
 
@@ -26,65 +19,94 @@ logger = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
-    """Declarative base for all SQLAlchemy ORM models."""
-
-    pass
+    """SQLAlchemy declarative base for all Gnosis models."""
 
 
-def _build_engine() -> object:
-    """Build and return the async SQLAlchemy engine."""
-    settings = get_settings()
-    engine = create_async_engine(
-        settings.database_url,
-        pool_size=settings.database_pool_size,
-        max_overflow=settings.database_max_overflow,
-        echo=settings.debug,
-        future=True,
-    )
-    return engine
+# Engine and session factory (initialized lazily)
+_engine = None
+_session_factory = None
 
 
-async_engine = _build_engine()  # type: ignore[assignment]
+def get_engine():
+    """Return the async database engine, creating it if needed."""
+    global _engine
+    if _engine is None:
+        settings = get_settings()
+        _engine = create_async_engine(
+            settings.database_url,
+            echo=settings.debug,
+            pool_size=10,
+            max_overflow=20,
+            pool_pre_ping=True,
+        )
+    return _engine
 
-AsyncSessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
-    bind=async_engine,  # type: ignore[arg-type]
-    class_=AsyncSession,
-    expire_on_commit=False,
-    autoflush=False,
-    autocommit=False,
-)
+
+def get_session_factory() -> async_sessionmaker:
+    """Return the session factory, creating it if needed."""
+    global _session_factory
+    if _session_factory is None:
+        _session_factory = async_sessionmaker(
+            bind=get_engine(),
+            class_=AsyncSession,
+            expire_on_commit=False,
+        )
+    return _session_factory
 
 
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    """FastAPI dependency that yields a database session.
+# Alias for use in vault_sync and other background services
+@property
+def AsyncSessionLocal() -> async_sessionmaker:
+    return get_session_factory()
 
-    Usage:
-        @router.get("/example")
-        async def example(db: AsyncSession = Depends(get_db)):
+
+# Make AsyncSessionLocal importable as a callable
+class _AsyncSessionLocalProxy:
+    """Proxy that behaves like async_sessionmaker."""
+
+    def __call__(self):
+        return get_session_factory()()
+
+    def __enter__(self):
+        return get_session_factory()().__enter__()
+
+    async def __aenter__(self):
+        return get_session_factory()().__aenter__()
+
+
+AsyncSessionLocal = get_session_factory  # type: ignore[assignment]
+
+
+async def get_db():
+    """FastAPI dependency: yields an async database session.
+
+    Usage::
+        async def endpoint(db: AsyncSession = Depends(get_db)):
             ...
     """
-    async with AsyncSessionLocal() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
+    async with get_session_factory()() as session:
+        yield session
 
 
 async def init_db() -> None:
-    """Initialize the database: create vault directories, log connection status.
+    """Initialize database tables and vault directory structure.
 
-    Called from the FastAPI lifespan context manager on startup.
-    Table creation is handled by Alembic migrations, not this function.
+    Creates all tables defined in Base.metadata.
+    Also ensures the vault folder structure exists.
     """
     settings = get_settings()
 
-    # Ensure vault PARA directories exist
-    for dir_name in settings.vault_dirs:
-        vault_dir = settings.vault_path / dir_name
-        vault_dir.mkdir(parents=True, exist_ok=True)
+    # Create vault folders
+    for folder in [
+        "00-inbox", "10-zettelkasten", "20-projects",
+        "30-areas", "40-resources", "50-archive",
+        "60-journals", "70-sources", "80-meta",
+    ]:
+        (settings.vault_path / folder).mkdir(parents=True, exist_ok=True)
+    logger.info("Vault directory structure ensured at %s", settings.vault_path)
 
-    logger.info("Database initialized. Vault path: %s", settings.vault_path)
+    # Tables are created via Alembic migrations in production.
+    # For dev/test, create directly.
+    async with get_engine().begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    logger.info("Database tables initialized")

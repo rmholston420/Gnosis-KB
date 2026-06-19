@@ -1,19 +1,22 @@
-"""Application configuration via pydantic-settings.
+"""Application configuration via Pydantic Settings.
 
-All settings are loaded from environment variables (with .env file support).
-Every value has a sensible default for local development.
+All settings can be overridden via environment variables or .env file.
 """
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Optional
 
-from pydantic import Field, field_validator
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Global application settings loaded from environment variables."""
+    """Gnosis application settings.
+
+    Loaded from environment variables and .env file.
+    All settings have sensible defaults for local development.
+    """
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -22,113 +25,80 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # -------------------------------------------------------------------------
-    # Application
-    # -------------------------------------------------------------------------
+    # ---- Application ----
     app_name: str = "Gnosis Knowledge Base"
     app_version: str = "1.0.0"
     debug: bool = False
-    log_level: Literal["debug", "info", "warning", "error", "critical"] = "info"
 
-    # -------------------------------------------------------------------------
-    # Database
-    # -------------------------------------------------------------------------
+    # ---- Database ----
     database_url: str = Field(
-        default="postgresql+asyncpg://gnosis:gnosis_dev@localhost:5432/gnosis",
-        description="Async SQLAlchemy database URL (asyncpg driver)",
+        default="postgresql+asyncpg://gnosis:gnosis_secret@localhost:5432/gnosis",
+        alias="DATABASE_URL",
     )
-    database_pool_size: int = 10
-    database_max_overflow: int = 20
+    database_url_sync: str = Field(
+        default="postgresql+psycopg2://gnosis:gnosis_secret@localhost:5432/gnosis",
+        alias="DATABASE_URL_SYNC",
+    )
 
-    # Sync URL for Alembic migrations (psycopg2)
-    @property
-    def database_url_sync(self) -> str:
-        """Return synchronous database URL for Alembic."""
-        return self.database_url.replace(
-            "postgresql+asyncpg://", "postgresql+psycopg2://"
-        )
-
-    # -------------------------------------------------------------------------
-    # Vector Store (Qdrant)
-    # -------------------------------------------------------------------------
-    qdrant_url: str = "http://localhost:6333"
-    qdrant_api_key: str | None = None
-    qdrant_collection_name: str = "gnosis_notes"
-
-    # -------------------------------------------------------------------------
-    # Vault
-    # -------------------------------------------------------------------------
+    # ---- Vault ----
     vault_path: Path = Field(
-        default=Path("/vault"),
-        description="Absolute path to the Markdown vault directory",
+        default=Path.home() / "gnosis-vault",
+        alias="VAULT_PATH",
+    )
+    lightrag_working_dir: str = Field(
+        default=str(Path.home() / ".gnosis" / "lightrag"),
+        alias="LIGHTRAG_WORKING_DIR",
     )
 
-    @field_validator("vault_path", mode="before")
-    @classmethod
-    def expand_vault_path(cls, v: object) -> Path:
-        """Expand ~ and resolve relative paths."""
-        return Path(str(v)).expanduser().resolve()
+    # ---- Qdrant ----
+    qdrant_url: str = Field(default="http://localhost:6333", alias="QDRANT_URL")
+    qdrant_api_key: Optional[str] = Field(default=None, alias="QDRANT_API_KEY")
+    qdrant_collection_name: str = Field(default="gnosis_notes", alias="QDRANT_COLLECTION_NAME")
 
-    # Vault PARA subdirectories
-    vault_dirs: list[str] = [
-        "00-inbox",
-        "10-zettelkasten",
-        "20-projects",
-        "30-areas",
-        "40-resources",
-        "50-archive",
-        "60-journals",
-        "70-sources",
-        "80-meta",
-    ]
+    # ---- Ollama ----
+    ollama_base_url: str = Field(default="http://localhost:11434", alias="OLLAMA_BASE_URL")
+    ollama_llm_model: str = Field(default="mistral", alias="OLLAMA_LLM_MODEL")
+    ollama_embed_model: str = Field(default="nomic-embed-text", alias="OLLAMA_EMBED_MODEL")
 
-    # -------------------------------------------------------------------------
-    # Authentication
-    # -------------------------------------------------------------------------
+    # ---- Groq ----
+    groq_api_key: Optional[str] = Field(default=None, alias="GROQ_API_KEY")
+    groq_model: str = Field(default="llama-3.1-8b-instant", alias="GROQ_MODEL")
+
+    # ---- OpenAI ----
+    openai_api_key: Optional[str] = Field(default=None, alias="OPENAI_API_KEY")
+    openai_model: str = Field(default="gpt-4o-mini", alias="OPENAI_MODEL")
+
+    # ---- OpenRouter ----
+    openrouter_api_key: Optional[str] = Field(default=None, alias="OPENROUTER_API_KEY")
+    openrouter_model: str = Field(
+        default="meta-llama/llama-3.1-8b-instruct:free",
+        alias="OPENROUTER_MODEL",
+    )
+    openrouter_base_url: str = Field(
+        default="https://openrouter.ai/api/v1",
+        alias="OPENROUTER_BASE_URL",
+    )
+
+    # ---- Security ----
     secret_key: str = Field(
-        default="change_in_production_immediately",
-        description="JWT signing secret — generate with: openssl rand -hex 32",
+        default="changeme-replace-in-production",
+        alias="SECRET_KEY",
     )
     algorithm: str = "HS256"
-    access_token_expire_minutes: int = 10080  # 7 days
+    access_token_expire_minutes: int = 60 * 24 * 7  # 7 days
 
-    # -------------------------------------------------------------------------
-    # AI Providers
-    # -------------------------------------------------------------------------
-    # Ollama (primary / local)
-    ollama_base_url: str = "http://localhost:11434"
-    ollama_llm_model: str = "qwen2.5:14b"
-    ollama_embed_model: str = "nomic-embed-text"
-
-    # External fallbacks (optional)
-    openai_api_key: str = ""
-    openai_model: str = "gpt-4o-mini"
-    groq_api_key: str = ""
-    groq_model: str = "llama-3.1-70b-versatile"
-    openrouter_api_key: str = ""
-    openrouter_model: str = "anthropic/claude-3.5-sonnet"
-    openrouter_base_url: str = "https://openrouter.ai/api/v1"
-
-    # -------------------------------------------------------------------------
-    # LightRAG
-    # -------------------------------------------------------------------------
-    lightrag_working_dir: str = "./lightrag-data"
-
-    # -------------------------------------------------------------------------
-    # CORS
-    # -------------------------------------------------------------------------
-    cors_origins: list[str] = [
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://localhost:80",
-    ]
+    # ---- CORS ----
+    cors_origins: list[str] = Field(
+        default=["http://localhost:3010", "http://localhost:5173"],
+        alias="CORS_ORIGINS",
+    )
 
 
-@lru_cache
+@lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """Return cached Settings instance.
+    """Return cached application settings.
 
-    Using lru_cache ensures Settings is only instantiated once per process,
-    which is the correct pattern for production apps.
+    Uses lru_cache to ensure Settings is only instantiated once.
+    In tests, call get_settings.cache_clear() to reset.
     """
     return Settings()

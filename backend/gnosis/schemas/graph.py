@@ -1,12 +1,12 @@
-"""Pydantic schemas for graph visualization and traversal."""
+"""Graph-related Pydantic schemas."""
 
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel
 
 
 class GraphNode(BaseModel):
-    """A node in the knowledge graph (= a note)."""
+    """Represents a note node in the graph."""
 
     id: str
     title: str
@@ -17,23 +17,40 @@ class GraphNode(BaseModel):
     tag_count: int
     incoming_link_count: int
     outgoing_link_count: int
-    tags: list[str] = []
 
 
 class GraphEdge(BaseModel):
-    """A directed edge between two notes (= a wikilink)."""
+    """Represents a directional link in the graph."""
 
     source: str
     target: str
     link_text: str
-    link_type: str
+    link_type: str = "wikilink"
 
 
 class GraphData(BaseModel):
-    """Full graph data for frontend visualization."""
+    """Complete graph snapshot."""
 
     nodes: list[GraphNode]
     edges: list[GraphEdge]
+
+
+class PathResult(BaseModel):
+    """Result of a shortest-path query."""
+
+    from_id: str
+    to_id: str
+    path: list[str]
+    length: int
+    exists: bool
+
+
+class ClusterResult(BaseModel):
+    """Result of community detection."""
+
+    cluster_id: int
+    node_ids: list[str]
+    size: int
 
 
 class GraphStats(BaseModel):
@@ -45,22 +62,3 @@ class GraphStats(BaseModel):
     avg_degree: float
     density: float
     most_connected: list[dict[str, Any]]
-
-
-class ClusterResult(BaseModel):
-    """A detected community/cluster in the graph."""
-
-    cluster_id: int
-    node_ids: list[str]
-    size: int
-    label: Optional[str] = None  # AI-generated label (future)
-
-
-class PathResult(BaseModel):
-    """Shortest path between two notes."""
-
-    from_id: str
-    to_id: str
-    path: list[str]  # List of note IDs from source to target
-    length: int
-    exists: bool

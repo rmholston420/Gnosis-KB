@@ -1,17 +1,11 @@
-"""Tag ORM model and Note↔Tag association table."""
-
-from typing import TYPE_CHECKING
+"""Tag and NoteTag association models."""
 
 from sqlalchemy import Column, ForeignKey, String, Table
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from gnosis.database import Base
 
-if TYPE_CHECKING:
-    from gnosis.models.note import Note
-
-
-# Association table for the many-to-many Note ↔ Tag relationship
+# Many-to-many association table: note <-> tag
 NoteTag = Table(
     "note_tags",
     Base.metadata,
@@ -21,21 +15,18 @@ NoteTag = Table(
 
 
 class Tag(Base):
-    """A tag that can be applied to multiple notes.
-
-    Tags are identified by their name (e.g., 'zettelkasten', 'eeg').
-    """
+    """A note tag (folksonomy-style)."""
 
     __tablename__ = "tags"
 
     name: Mapped[str] = mapped_column(String(100), primary_key=True)
     description: Mapped[str] = mapped_column(String(500), default="")
 
-    # Relationships
-    notes: Mapped[list["Note"]] = relationship(
+    notes: Mapped[list] = relationship(
         "Note",
         secondary="note_tags",
         back_populates="tags",
+        lazy="selectin",
     )
 
     def __repr__(self) -> str:

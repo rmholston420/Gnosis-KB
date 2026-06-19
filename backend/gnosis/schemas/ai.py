@@ -1,41 +1,38 @@
-"""Pydantic schemas for AI/RAG operations."""
+"""AI / RAG-related Pydantic schemas."""
 
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class ChatMessage(BaseModel):
-    """A single message in a chat conversation."""
+    """A single chat message."""
 
-    role: str = Field(pattern="^(user|assistant|system)$")
+    role: str  # user | assistant | system
     content: str
+    timestamp: Optional[str] = None
 
 
 class ChatRequest(BaseModel):
-    """Request body for the AI chat endpoint."""
+    """Chat request payload."""
 
-    message: str = Field(..., min_length=1)
-    history: list[ChatMessage] = Field(default_factory=list)
-    mode: str = Field(
-        default="hybrid",
-        pattern="^(local|global|hybrid)$",
-        description="LightRAG query mode",
-    )
+    message: str
+    history: list[ChatMessage] = []
+    mode: str = "hybrid"  # hybrid | local | global
     session_id: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
-    """Response from the AI chat endpoint."""
+    """Chat response payload."""
 
     answer: str
-    sources: list[str] = []  # Note titles cited
-    mode: str
+    sources: list[str] = []
+    mode: str = "hybrid"
     session_id: Optional[str] = None
 
 
 class SummarizeResponse(BaseModel):
-    """AI-generated summary of a note."""
+    """Note summarization result."""
 
     note_id: str
     title: str
@@ -44,48 +41,33 @@ class SummarizeResponse(BaseModel):
     suggested_tags: list[str]
 
 
-class LinkSuggestion(BaseModel):
-    """A suggested wikilink with reasoning."""
-
-    target_note_id: str
-    target_title: str
-    reason: str
-    confidence: float = Field(ge=0.0, le=1.0)
-
-
-class LinkSuggestionsResponse(BaseModel):
-    """Suggested wikilinks for a note."""
-
-    note_id: str
-    suggestions: list[LinkSuggestion]
-
-
 class CritiqueResponse(BaseModel):
-    """Zettelkasten critique of a note."""
+    """Zettelkasten critique result."""
 
     note_id: str
-    atomicity_score: int = Field(ge=1, le=5)
+    atomicity_score: int
     atomicity_feedback: str
-    connectivity_score: int = Field(ge=1, le=5)
+    connectivity_score: int
     connectivity_feedback: str
-    self_containedness_score: int = Field(ge=1, le=5)
+    self_containedness_score: int
     self_containedness_feedback: str
-    insight_density_score: int = Field(ge=1, le=5)
+    insight_density_score: int
     insight_density_feedback: str
     overall_feedback: str
     action_items: list[str]
 
 
-class ExtractEntitiesRequest(BaseModel):
-    """Request to extract named entities from text."""
+class LinkSuggestion(BaseModel):
+    """A single wikilink suggestion."""
 
-    text: str
-    note_id: Optional[str] = None
+    target_note_id: str
+    target_title: str
+    reason: str
+    confidence: float
 
 
-class EntityResult(BaseModel):
-    """A single extracted entity."""
+class LinkSuggestionsResponse(BaseModel):
+    """Wikilink suggestions for a note."""
 
-    name: str
-    entity_type: str  # concept | person | project | tool | technique | insight | question
-    description: str
+    note_id: str
+    suggestions: list[LinkSuggestion]

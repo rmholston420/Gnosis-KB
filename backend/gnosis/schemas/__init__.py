@@ -1,1 +1,1 @@
-"""Pydantic request/response schemas for Gnosis API."""
+"""Pydantic schemas for request/response validation."""
