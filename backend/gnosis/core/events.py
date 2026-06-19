@@ -1,16 +1,11 @@
-"""FastAPI lifespan event handlers.
-
-Handles startup and shutdown logic:
-- Startup: init DB, ensure vault dirs, start vault watcher, init LightRAG
-- Shutdown: stop vault watcher, close connections
-"""
+"""FastAPI lifespan: startup / shutdown."""
 
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 from fastapi import FastAPI
-from sqlalchemy import select, text
+from sqlalchemy import select
 
 from gnosis.config import get_settings
 from gnosis.core.auth import get_password_hash
@@ -21,75 +16,64 @@ logger = logging.getLogger(__name__)
 
 
 async def _ensure_default_user() -> None:
-    """Create the default admin user if it does not exist.
-
-    In single-user mode, this is the only user. The password defaults to
-    'gnosis' and should be changed immediately in production.
-    """
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(User).where(User.username == "admin"))
-        user = result.scalar_one_or_none()
-        if user is None:
-            admin = User(
+        if result.scalar_one_or_none() is None:
+            db.add(User(
                 username="admin",
                 email="admin@gnosis.local",
                 hashed_password=get_password_hash("gnosis"),
                 is_active=True,
                 is_superuser=True,
-            )
-            db.add(admin)
+            ))
             await db.commit()
-            logger.info("Default admin user created (username=admin, password=gnosis)")
+            logger.info("Default admin user created (username=admin password=gnosis)")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """FastAPI lifespan context manager.
-
-    Runs startup tasks before yield and shutdown tasks after yield.
-    """
     settings = get_settings()
-    logger.info("Starting Gnosis Knowledge Base v%s", settings.app_version)
+    logger.info("Starting Gnosis KB v%s", settings.app_version)
 
-    # 1. Initialize database and vault directories
-    await init_db()
+    # 1. DB
+    try:
+        await init_db()
+    except Exception as exc:
+        logger.error("DB init failed: %s", exc)
+        raise
 
-    # 2. Ensure default admin user exists
+    # 2. Default user
     try:
         await _ensure_default_user()
-    except Exception as e:
-        logger.warning("Could not create default user (DB may not be migrated yet): %s", e)
+    except Exception as exc:
+        logger.warning("Could not create default user: %s", exc)
 
-    # 3. Start vault filesystem watcher
+    # 3. Vault watcher
     try:
         from gnosis.services.vault_sync import start_vault_watcher
-        watcher = await start_vault_watcher()
-        app.state.vault_watcher = watcher
-        logger.info("Vault watcher started for path: %s", settings.vault_path)
-    except Exception as e:
-        logger.warning("Vault watcher could not start: %s", e)
+        app.state.vault_watcher = await start_vault_watcher()
+        logger.info("Vault watcher started")
+    except Exception as exc:
+        logger.warning("Vault watcher unavailable: %s", exc)
         app.state.vault_watcher = None
 
-    # 4. Initialize LightRAG (non-blocking — degrades gracefully if Ollama unavailable)
+    # 4. LightRAG — entirely optional, degrades gracefully
     try:
         from gnosis.services.graph_rag import init_lightrag
         await init_lightrag()
         logger.info("LightRAG initialized")
-    except Exception as e:
-        logger.warning("LightRAG initialization failed (AI features degraded): %s", e)
+    except Exception as exc:
+        logger.warning("LightRAG unavailable (AI graph features disabled): %s", exc)
 
-    logger.info("Gnosis startup complete. API on :8010, MCP on :8011")
+    logger.info("Gnosis startup complete")
+    yield
 
-    yield  # Application runs here
-
-    # --- Shutdown ---
-    logger.info("Shutting down Gnosis...")
-
-    if getattr(app.state, "vault_watcher", None):
+    # Shutdown
+    watcher = getattr(app.state, "vault_watcher", None)
+    if watcher:
         try:
-            app.state.vault_watcher.stop()
-            app.state.vault_watcher.join()
-        except Exception as e:
-            logger.warning("Error stopping vault watcher: %s", e)
-
+            watcher.stop()
+            watcher.join()
+        except Exception as exc:
+            logger.warning("Vault watcher stop error: %s", exc)
     logger.info("Gnosis shutdown complete")

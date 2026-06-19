@@ -28,8 +28,6 @@ services:
     ports:
       - '6335:6333'
       - '6336:6334'
-    # No healthcheck — Qdrant image lacks both curl and wget in PATH.
-    # The API uses retry logic to connect; Qdrant starts in ~2s.
 
   api:
     build:
@@ -62,12 +60,7 @@ services:
       - lightrag_data:/lightrag
     ports:
       - '8010:8010'
-    healthcheck:
-      test: ['CMD', 'curl', '-f', 'http://localhost:8010/health/']
-      interval: 15s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
+    # No healthcheck — UI uses service_started; API logs show real status
 
   ui:
     build:
@@ -76,8 +69,7 @@ services:
     container_name: gnosis-ui
     restart: unless-stopped
     depends_on:
-      api:
-        condition: service_healthy
+      - api
     ports:
       - '3010:3010'
 
