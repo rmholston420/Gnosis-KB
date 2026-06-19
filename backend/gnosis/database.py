@@ -6,6 +6,7 @@ Provides:
   - get_session_factory(): lazy async_sessionmaker
   - AsyncSessionLocal: alias for get_session_factory (callable → session)
   - get_db: FastAPI dependency for database sessions
+  - get_session: alias for get_db (backward-compat)
   - init_db: create schema and vault directories
 """
 
@@ -37,23 +38,13 @@ def get_engine():
         _engine = create_async_engine(
             settings.database_url,
             echo=settings.debug,
-            pool_size=10,
-            max_overflow=20,
             pool_pre_ping=True,
         )
     return _engine
 
 
 def get_session_factory() -> async_sessionmaker:
-    """Return the async session factory, creating it if needed.
-
-    Usage in background services (e.g. vault_sync)::
-
-        from gnosis.database import get_session_factory
-
-        async with get_session_factory()() as session:
-            ...
-    """
+    """Return the async session factory, creating it if needed."""
     global _session_factory
     if _session_factory is None:
         _session_factory = async_sessionmaker(
@@ -64,7 +55,7 @@ def get_session_factory() -> async_sessionmaker:
     return _session_factory
 
 
-# Convenience alias — vault_sync.py imports this and calls it as:
+# Convenience alias — vault_sync.py and others import this and call it as:
 #   async with AsyncSessionLocal() as session: ...
 AsyncSessionLocal = get_session_factory
 
@@ -78,6 +69,10 @@ async def get_db():
     """
     async with get_session_factory()() as session:
         yield session
+
+
+# Backward-compat alias — older routers imported `get_session`
+get_session = get_db
 
 
 async def init_db() -> None:
