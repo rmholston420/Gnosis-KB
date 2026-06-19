@@ -1,16 +1,5 @@
 /**
  * WikiLinkExtension — TipTap extension for [[Title]] wikilink autocomplete.
- *
- * Typing [[ triggers a live autocomplete dropdown populated from the vault API.
- * Selecting a note inserts [[Note Title]] as a styled inline mention node.
- * On render, wikilink nodes display as teal-accented links that navigate to
- * the linked note.
- *
- * Architecture:
- *   - Extends @tiptap/extension-mention (Mention)
- *   - suggestion.char = "[[" triggers the popup
- *   - Items fetched from GET /api/v1/notes?search=<query>&limit=10
- *   - Rendered as <span class="wikilink">[[Title]]</span>
  */
 import { Mention } from "@tiptap/extension-mention";
 import type { MentionNodeAttrs } from "@tiptap/extension-mention";
@@ -23,7 +12,6 @@ import { ReactRenderer } from "@tiptap/react";
 import tippy, { Instance as TippyInstance } from "tippy.js";
 import { forwardRef, useEffect, useImperativeHandle, useState } from "react";
 import React from "react";
-import type { Node } from "@tiptap/pm/model";
 
 /** Shape returned by the notes list endpoint. */
 interface NoteStub {
@@ -39,9 +27,7 @@ const WikiLinkList = forwardRef<
   const [selectedIndex, setSelectedIndex] = useState(0);
   const { items, command } = props;
 
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [items]);
+  useEffect(() => { setSelectedIndex(0); }, [items]);
 
   useImperativeHandle(ref, () => ({
     onKeyDown({ event }: SuggestionKeyDownProps) {
@@ -63,11 +49,7 @@ const WikiLinkList = forwardRef<
   }));
 
   if (!items.length) {
-    return React.createElement(
-      "div",
-      { className: "wikilink-popup empty" },
-      "No notes found"
-    );
+    return React.createElement("div", { className: "wikilink-popup empty" }, "No notes found");
   }
 
   return React.createElement(
@@ -89,7 +71,6 @@ const WikiLinkList = forwardRef<
 
 WikiLinkList.displayName = "WikiLinkList";
 
-/** Fetch note stubs from the API matching the given query string. */
 async function fetchNoteSuggestions(query: string): Promise<NoteStub[]> {
   const base = import.meta.env.VITE_API_BASE_URL ?? "";
   const url = `${base}/api/v1/notes?search=${encodeURIComponent(query)}&limit=10`;
@@ -105,11 +86,9 @@ async function fetchNoteSuggestions(query: string): Promise<NoteStub[]> {
   }
 }
 
-/** Build the TipTap suggestion plugin options. */
 const buildSuggestion = (): Omit<SuggestionOptions<NoteStub>, "editor"> => ({
   char: "[[",
   allowSpaces: true,
-
   items: async ({ query }: { query: string }): Promise<NoteStub[]> =>
     fetchNoteSuggestions(query),
 
@@ -121,13 +100,8 @@ const buildSuggestion = (): Omit<SuggestionOptions<NoteStub>, "editor"> => ({
     return {
       onStart(props: SuggestionProps<NoteStub>) {
         container = document.createElement("div");
-        component = new ReactRenderer(WikiLinkList, {
-          props,
-          editor: props.editor,
-        });
-
+        component = new ReactRenderer(WikiLinkList, { props, editor: props.editor });
         if (!props.clientRect) return;
-
         popup = tippy("body", {
           getReferenceClientRect: props.clientRect as () => DOMRect,
           appendTo: () => document.body,
@@ -138,28 +112,20 @@ const buildSuggestion = (): Omit<SuggestionOptions<NoteStub>, "editor"> => ({
           placement: "bottom-start",
         });
       },
-
       onUpdate(props: SuggestionProps<NoteStub>) {
         component?.updateProps(props);
         if (props.clientRect && popup?.[0]) {
-          popup[0].setProps({
-            getReferenceClientRect: props.clientRect as () => DOMRect,
-          });
+          popup[0].setProps({ getReferenceClientRect: props.clientRect as () => DOMRect });
         }
       },
-
       onKeyDown(props: SuggestionKeyDownProps): boolean {
-        if (props.event.key === "Escape") {
-          popup?.[0]?.hide();
-          return true;
-        }
+        if (props.event.key === "Escape") { popup?.[0]?.hide(); return true; }
         return (
           component?.ref as unknown as
             | { onKeyDown: (p: SuggestionKeyDownProps) => boolean }
             | null
         )?.onKeyDown(props) ?? false;
       },
-
       onExit() {
         popup?.[0]?.destroy();
         component?.destroy();
@@ -169,39 +135,23 @@ const buildSuggestion = (): Omit<SuggestionOptions<NoteStub>, "editor"> => ({
   },
 });
 
-/**
- * WikiLinkExtension — drop-in TipTap extension.
- *
- * Usage:
- *   import { WikiLinkExtension } from './WikiLinkExtension';
- *   const editor = useEditor({ extensions: [StarterKit, WikiLinkExtension] });
- */
 export const WikiLinkExtension = Mention.extend({
   name: "wikilink",
-
   addAttributes() {
     return {
       ...this.parent?.(),
       label: {
         default: null,
         parseHTML: (el: Element) => el.getAttribute("data-label"),
-        renderHTML: (attrs: Record<string, unknown>) => ({
-          "data-label": attrs.label,
-        }),
+        renderHTML: (attrs: Record<string, unknown>) => ({ "data-label": attrs.label }),
       },
     };
   },
 }).configure({
   HTMLAttributes: { class: "wikilink" },
-  // Use the precise types from TipTap — Node from @tiptap/pm/model,
-  // MentionNodeAttrs from @tiptap/extension-mention.
-  renderLabel({
-    node,
-  }: {
-    options: Record<string, unknown>;
-    node: Node & { attrs: MentionNodeAttrs };
-    suggestion: SuggestionOptions | null;
-  }): string {
+  // No parameter type annotation — let TS infer the full props shape from
+  // MentionOptions so there is no index-signature mismatch (TS2322).
+  renderLabel({ node }) {
     const attrs = node.attrs as MentionNodeAttrs;
     return `[[${attrs.label ?? attrs.id ?? ""}]]`;
   },
