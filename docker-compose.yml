@@ -28,13 +28,8 @@ services:
     ports:
       - '6335:6333'
       - '6336:6334'
-    healthcheck:
-      # Qdrant image has wget but not curl
-      test: ['CMD-SHELL', 'wget -qO- http://localhost:6333/health || exit 1']
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 15s
+    # No healthcheck — Qdrant image lacks both curl and wget in PATH.
+    # The API uses retry logic to connect; Qdrant starts in ~2s.
 
   api:
     build:
@@ -46,7 +41,7 @@ services:
       postgres:
         condition: service_healthy
       qdrant:
-        condition: service_healthy
+        condition: service_started
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-gnosis}:${POSTGRES_PASSWORD:-gnosis_secret}@postgres:5432/${POSTGRES_DB:-gnosis}
       DATABASE_URL_SYNC: postgresql+psycopg2://${POSTGRES_USER:-gnosis}:${POSTGRES_PASSWORD:-gnosis_secret}@postgres:5432/${POSTGRES_DB:-gnosis}
