@@ -1,0 +1,78 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# pytest / coverage
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# mypy
+.mypy_cache/
+
+# ruff
+.ruff_cache/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Node / Frontend
+node_modules/
+dist/
+.next/
+.nuxt/
+build/
+*.tsbuildinfo
+
+# Docker data volumes (local dev)
+pgdata/
+qdrant_storage/
+
+# Vault content (personal notes — never commit)
+vault/**/*.md
+vault/**/*.pdf
+vault/**/*.png
+vault/**/*.jpg
+!vault/.gitkeep
+
+# LightRAG working directory
+backend/lightrag-data/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Alembic (keep versions, ignore cache)
+backend/alembic/__pycache__/

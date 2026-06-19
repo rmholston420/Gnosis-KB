@@ -1,0 +1,105 @@
+version: "3.9"
+
+services:
+  gnosis-db:
+    image: postgres:16-alpine
+    container_name: gnosis-db
+    environment:
+      POSTGRES_DB: gnosis
+      POSTGRES_USER: gnosis
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gnosis_dev}
+    volumes:
+      - gnosis-db-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gnosis"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  gnosis-vector:
+    image: qdrant/qdrant:v1.13.0
+    container_name: gnosis-vector
+    volumes:
+      - gnosis-qdrant-data:/qdrant/storage
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: "6334"
+    restart: unless-stopped
+
+  gnosis-ollama:
+    image: ollama/ollama:latest
+    container_name: gnosis-ollama
+    volumes:
+      - gnosis-ollama-models:/root/.ollama
+    ports:
+      - "11434:11434"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    profiles:
+      - local-ai
+    restart: unless-stopped
+
+  gnosis-api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: gnosis-api
+    environment:
+      DATABASE_URL: postgresql+asyncpg://gnosis:${POSTGRES_PASSWORD:-gnosis_dev}@gnosis-db:5432/gnosis
+      QDRANT_URL: ${QDRANT_URL:-http://gnosis-vector:6333}
+      VAULT_PATH: /vault
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://gnosis-ollama:11434}
+      OLLAMA_LLM_MODEL: ${OLLAMA_LLM_MODEL:-qwen2.5:14b}
+      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-nomic-embed-text}
+      SECRET_KEY: ${SECRET_KEY:-change_in_production_immediately}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-10080}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DEBUG: ${DEBUG:-false}
+    volumes:
+      - ${VAULT_PATH:-./vault}:/vault
+      - ./backend:/app
+    ports:
+      - "8010:8010"
+      - "8011:8011"
+    depends_on:
+      gnosis-db:
+        condition: service_healthy
+      gnosis-vector:
+        condition: service_started
+    command: uvicorn gnosis.main:app --host 0.0.0.0 --port 8010 --reload
+    restart: unless-stopped
+
+  gnosis-ui:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: gnosis-ui
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8010}
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - gnosis-api
+    command: npm run dev -- --host
+    restart: unless-stopped
+
+volumes:
+  gnosis-db-data:
+  gnosis-qdrant-data:
+  gnosis-ollama-models:
