@@ -16,7 +16,7 @@ from gnosis.core.logging import configure_logging
 from gnosis.core.middleware import RequestIDMiddleware, TimingMiddleware, install_request_id_filter
 from gnosis.core.rate_limit import limiter
 from gnosis.database import init_db
-from gnosis.routers import auth, export, folders, graph, health, notes, review, search, tags
+from gnosis.routers import auth, export, folders, graph, health, notes, query, review, search, tags
 
 configure_logging()
 install_request_id_filter()
@@ -80,8 +80,10 @@ app.add_middleware(
 )
 
 # ── Routers ────────────────────────────────────────────────────────────────────
-for r in (notes.router, search.router, review.router, tags.router, folders.router,
-          graph.router, auth.router, export.router, health.router):
+for r in (
+    notes.router, search.router, review.router, tags.router, folders.router,
+    graph.router, auth.router, export.router, health.router, query.router,
+):
     app.include_router(r, prefix="/api/v1")
 
 # ── MCP Server ─────────────────────────────────────────────────────────────────
