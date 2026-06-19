@@ -13,6 +13,7 @@
  *   - Rendered as <span class="wikilink">[[Title]]</span>
  */
 import { Mention } from "@tiptap/extension-mention";
+import type { MentionNodeAttrs } from "@tiptap/extension-mention";
 import {
   SuggestionOptions,
   SuggestionProps,
@@ -20,9 +21,9 @@ import {
 } from "@tiptap/suggestion";
 import { ReactRenderer } from "@tiptap/react";
 import tippy, { Instance as TippyInstance } from "tippy.js";
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useState } from "react";
 import React from "react";
-import { createRoot } from "react-dom/client";
+import type { Node } from "@tiptap/pm/model";
 
 /** Shape returned by the notes list endpoint. */
 interface NoteStub {
@@ -54,9 +55,7 @@ const WikiLinkList = forwardRef<
       }
       if (event.key === "Enter") {
         const item = items[selectedIndex];
-        if (item) {
-          command({ id: item.id, label: item.title });
-        }
+        if (item) command({ id: item.id, label: item.title });
         return true;
       }
       return false;
@@ -154,7 +153,11 @@ const buildSuggestion = (): Omit<SuggestionOptions<NoteStub>, "editor"> => ({
           popup?.[0]?.hide();
           return true;
         }
-        return (component?.ref as unknown as { onKeyDown: (p: SuggestionKeyDownProps) => boolean } | null)?.onKeyDown(props) ?? false;
+        return (
+          component?.ref as unknown as
+            | { onKeyDown: (p: SuggestionKeyDownProps) => boolean }
+            | null
+        )?.onKeyDown(props) ?? false;
       },
 
       onExit() {
@@ -190,13 +193,17 @@ export const WikiLinkExtension = Mention.extend({
   },
 }).configure({
   HTMLAttributes: { class: "wikilink" },
+  // Use the precise types from TipTap — Node from @tiptap/pm/model,
+  // MentionNodeAttrs from @tiptap/extension-mention.
   renderLabel({
     node,
   }: {
     options: Record<string, unknown>;
-    node: { attrs: { label?: string; id?: string } };
-  }) {
-    return `[[${node.attrs.label ?? node.attrs.id ?? ""}]]`;
+    node: Node & { attrs: MentionNodeAttrs };
+    suggestion: SuggestionOptions | null;
+  }): string {
+    const attrs = node.attrs as MentionNodeAttrs;
+    return `[[${attrs.label ?? attrs.id ?? ""}]]`;
   },
   suggestion: buildSuggestion(),
 });
