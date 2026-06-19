@@ -21,6 +21,15 @@ Supported syntax (BNF-ish)::
 Allowed fields: title, status, note_type, folder, word_count,
                 created_at, modified_at, last_reviewed
 
+Namespace contract
+------------------
+``execute_query()`` accepts an optional ``owner_ids: set[int]`` parameter.
+When provided, the query is scoped to those user IDs via
+``core.namespace.scoped_note_stmt()`` — the same helper used by all other
+note-reading paths.  When ``owner_ids`` is omitted (``None``), all
+non-deleted notes are visible (legacy behaviour, used by tests and internal
+cron jobs that run without a user context).
+
 Examples::
 
     FROM 10-zettelkasten WHERE status=draft SORT modified DESC LIMIT 20
@@ -58,7 +67,6 @@ _ALLOWED_FIELDS = {
 }
 
 _ALLOWED_SORT_FIELDS = set(_ALLOWED_FIELDS)
-# Alias convenience
 _SORT_ALIAS = {"modified": "modified_at", "created": "created_at"}
 
 _SELECT_COLS = {
@@ -81,12 +89,12 @@ _SELECT_COLS = {
 
 @dataclass
 class ParsedQuery:
-    from_folder: str | None = None                    # LIKE prefix
+    from_folder: str | None = None
     conditions: list[dict[str, Any]] = field(default_factory=list)
     sort_field: str = "modified_at"
     sort_dir: str = "DESC"
     limit: int = 50
-    select_cols: list[str] = field(default_factory=list)  # empty = all
+    select_cols: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +106,6 @@ class GQLParseError(ValueError):
 
 
 def _tokenise(query: str) -> list[str]:
-    """Split a GQL string into upper-cased keyword tokens + values."""
     return re.split(r"\s+", query.strip())
 
 
@@ -132,7 +139,6 @@ def parse_query(raw: str) -> ParsedQuery:  # noqa: C901
                 if tokens[i].upper() == "AND":
                     i += 1
                     continue
-                # Expect: field OP value  OR  tags CONTAINS value
                 if tokens[i].upper() == "TAGS":
                     i += 1
                     if i >= len(tokens) or tokens[i].upper() != "CONTAINS":
@@ -143,7 +149,6 @@ def parse_query(raw: str) -> ParsedQuery:  # noqa: C901
                     result.conditions.append({"type": "tag", "tag": tokens[i].lower()})
                     i += 1
                 else:
-                    # field=value  or  field > value  or  field < value
                     expr = tokens[i]
                     m = re.match(r"^(\w+)([=<>!]+)(.+)$", expr)
                     if m:
@@ -153,13 +158,17 @@ def parse_query(raw: str) -> ParsedQuery:  # noqa: C901
                         fname, op, val = tokens[i], tokens[i + 1], tokens[i + 2]
                         i += 3
                     else:
-                        raise GQLParseError(f"Cannot parse WHERE condition at token {i!r}: {tokens[i]!r}")
+                        raise GQLParseError(
+                            f"Cannot parse WHERE condition at token {i!r}: {tokens[i]!r}"
+                        )
                     fname = fname.lower()
                     if fname not in _ALLOWED_FIELDS:
                         raise GQLParseError(
                             f"Unknown field {fname!r}. Allowed: {sorted(_ALLOWED_FIELDS)}"
                         )
-                    result.conditions.append({"type": "field", "field": fname, "op": op, "value": val})
+                    result.conditions.append(
+                        {"type": "field", "field": fname, "op": op, "value": val}
+                    )
 
         elif tok == "SORT":
             i += 1
@@ -196,7 +205,9 @@ def parse_query(raw: str) -> ParsedQuery:  # noqa: C901
             cols = [c.strip().lower() for c in cols_raw if c.strip()]
             bad = [c for c in cols if c not in _SELECT_COLS]
             if bad:
-                raise GQLParseError(f"Unknown SELECT column(s): {bad}. Allowed: {sorted(_SELECT_COLS)}")
+                raise GQLParseError(
+                    f"Unknown SELECT column(s): {bad}. Allowed: {sorted(_SELECT_COLS)}"
+                )
             result.select_cols = cols
             i += 1
 
@@ -223,18 +234,37 @@ _OP_MAP = {
 async def execute_query(
     parsed: ParsedQuery,
     db: AsyncSession,
+    owner_ids: set[int] | None = None,
 ) -> tuple[list[dict[str, Any]], float]:
     """Execute a ParsedQuery against the database.
 
-    Returns a tuple of (rows, query_time_ms).
+    Args:
+        parsed:    Validated ParsedQuery AST from ``parse_query()``.
+        db:        Async SQLAlchemy session.
+        owner_ids: Set of user IDs whose notes the caller may read.  When
+                   provided, results are scoped to those owners (plus the
+                   legacy NULL-owner sentinel) via ``scoped_note_stmt()``.
+                   When ``None``, all non-deleted notes are returned
+                   (backward-compatible behaviour for internal callers).
+
+    Returns:
+        Tuple of (rows, query_time_ms).
     """
     t0 = time.perf_counter()
 
-    stmt = (
+    base = (
         select(Note)
         .options(selectinload(Note.tags))
         .where(Note.is_deleted.is_(False))
     )
+
+    # Apply vault namespace filter when caller supplies owner context
+    if owner_ids is not None:
+        # Local import to avoid circular dependency at module load time
+        from gnosis.core.namespace import scoped_note_stmt
+        stmt = scoped_note_stmt(base, owner_ids)
+    else:
+        stmt = base
 
     # FROM clause — folder prefix filter
     if parsed.from_folder:
@@ -244,7 +274,6 @@ async def execute_query(
     filters = []
     for cond in parsed.conditions:
         if cond["type"] == "tag":
-            # Sub-select: note has a tag with this name
             tag_sub = select(Tag.id).where(Tag.name == cond["tag"])
             from gnosis.models.tag import NoteTag
             filters.append(
@@ -258,11 +287,9 @@ async def execute_query(
             col = _ALLOWED_FIELDS[cond["field"]]
             op_fn = _OP_MAP.get(cond["op"])
             if op_fn is None:
-                continue  # skip unknown ops (already validated in parser)
-            # Coerce value types
+                continue
             try:
                 raw_val: Any = cond["value"]
-                # Numeric coercion for word_count
                 if cond["field"] == "word_count":
                     raw_val = int(raw_val)
             except ValueError:
