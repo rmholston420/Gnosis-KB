@@ -6,6 +6,14 @@ Manages the 'gnosis_notes' Qdrant collection with three named vectors:
   - 'colbert': colbertv2.0 (128-dim, multivector) — reranking
 
 Search pipeline: prefetch dense + sparse → RRF fusion → ColBERT rerank.
+
+Namespace contract
+------------------
+Every point upserted into Qdrant must carry ``owner_id`` in its payload.
+``hybrid_search()`` then filters on this field so cross-vault vectors
+are never returned.  ``owner_id=None`` is stored as the sentinel value
+``0`` (Qdrant payload integers cannot be NULL) so legacy points remain
+visible when ``include_legacy=True`` is passed to the search helper.
 """
 
 import logging
@@ -18,6 +26,9 @@ from gnosis.config import get_settings
 from gnosis.services.embeddings import embed_dense, embed_colbert
 
 logger = logging.getLogger(__name__)
+
+# Sentinel stored in Qdrant for notes whose owner is unknown (legacy / null)
+_LEGACY_OWNER_SENTINEL = 0
 
 _client: Optional[QdrantClient] = None
 
@@ -87,11 +98,17 @@ def upsert_note(
     note_type: str,
     status: str,
     tags: list[str],
+    owner_id: Optional[int] = None,
 ) -> None:
     """Upsert a note into the Qdrant collection.
 
     Generates dense and ColBERT embeddings. Sparse (BM25) embeddings
     are computed by Qdrant server-side via the fastembed-server integration.
+
+    The ``owner_id`` is stored in the payload as an integer.  Callers
+    should always pass the note's ``owner_id``; ``None`` is stored as the
+    legacy sentinel (``0``) and will be visible to all users until a
+    backfill re-indexes the note with the correct owner.
 
     Args:
         note_id: Note primary key.
@@ -101,6 +118,7 @@ def upsert_note(
         note_type: Note type string.
         status: Note status string.
         tags: List of tag names.
+        owner_id: User ID that owns this note, or None for legacy notes.
     """
     client = get_qdrant_client()
     settings = get_settings()
@@ -128,6 +146,9 @@ def upsert_note(
             "status": status,
             "tags": tags,
             "text_snippet": body[:500],
+            # Store sentinel 0 for legacy/unowned notes so the field is
+            # always present and filterable.
+            "owner_id": owner_id if owner_id is not None else _LEGACY_OWNER_SENTINEL,
         },
     )
 
@@ -135,7 +156,7 @@ def upsert_note(
         collection_name=settings.qdrant_collection_name,
         points=[point],
     )
-    logger.debug("Upserted note %s into Qdrant", note_id)
+    logger.debug("Upserted note %s (owner=%s) into Qdrant", note_id, owner_id)
 
 
 def delete_note(note_id: str) -> None:

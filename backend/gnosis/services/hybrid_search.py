@@ -7,6 +7,13 @@ Implements three-stage search:
 
 Falls back gracefully to dense-only if sparse/colbert models unavailable.
 
+Namespace contract
+------------------
+Every call to ``hybrid_search()`` MUST supply ``owner_ids`` — the set of
+User IDs whose notes the caller may read (own vault + accepted shared
+grants).  The legacy sentinel ``0`` is always included so notes indexed
+before the namespace migration remain visible.
+
 Reference: Qdrant hybrid search best practices
 (https://qdrant.tech/course/essentials/day-3/hybrid-search-demo/)
 """
@@ -18,7 +25,7 @@ from typing import Any
 from qdrant_client import models
 
 from gnosis.config import get_settings
-from gnosis.services.vector_store import get_qdrant_client
+from gnosis.services.vector_store import get_qdrant_client, _LEGACY_OWNER_SENTINEL
 from gnosis.services.embeddings import embed_dense
 
 logger = logging.getLogger(__name__)
@@ -26,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 def hybrid_search(
     query: str,
+    owner_ids: set[int],
     limit: int = 10,
     folder: str | None = None,
     note_type: str | None = None,
@@ -33,8 +41,13 @@ def hybrid_search(
 ) -> dict[str, Any]:
     """Run hybrid BM25 + dense vector search with RRF fusion.
 
+    Only notes whose Qdrant payload ``owner_id`` is in *owner_ids* (or
+    equals the legacy sentinel) are returned, enforcing vault isolation
+    at the vector-search layer.
+
     Args:
         query: Natural language search query.
+        owner_ids: Set of user IDs the caller may read.  Must not be empty.
         limit: Maximum number of results to return.
         folder: Optional PARA folder filter.
         note_type: Optional note type filter.
@@ -43,13 +56,25 @@ def hybrid_search(
     Returns:
         Dict with keys: results (list of dicts with score/payload), elapsed_ms.
     """
+    if not owner_ids:
+        return {"results": [], "elapsed_ms": 0.0}
+
     start = time.monotonic()
     client = get_qdrant_client()
     settings = get_settings()
     collection = settings.qdrant_collection_name
 
-    # Build optional payload filter
-    filter_conditions: list[models.FieldCondition] = []
+    # Always include the legacy sentinel so pre-migration notes are visible.
+    accessible_ids = list(owner_ids | {_LEGACY_OWNER_SENTINEL})
+
+    # Namespace filter: payload owner_id must be in accessible_ids
+    namespace_condition = models.FieldCondition(
+        key="owner_id",
+        match=models.MatchAny(any=accessible_ids),
+    )
+
+    # Additional payload filters
+    filter_conditions: list[models.FieldCondition] = [namespace_condition]
     if folder:
         filter_conditions.append(
             models.FieldCondition(key="folder", match=models.MatchValue(value=folder))
@@ -64,9 +89,7 @@ def hybrid_search(
                 models.FieldCondition(key="tags", match=models.MatchValue(value=tag))
             )
 
-    query_filter = (
-        models.Filter(must=filter_conditions) if filter_conditions else None
-    )
+    query_filter = models.Filter(must=filter_conditions)
 
     try:
         dense_vec = embed_dense(query)
@@ -101,7 +124,7 @@ def hybrid_search(
         points = results.points
     except Exception as e:
         logger.warning("Hybrid search failed, falling back to dense: %s", e)
-        # Fallback: pure dense search
+        # Fallback: pure dense search (namespace filter preserved)
         results = client.search(
             collection_name=collection,
             query_vector=("dense", dense_vec),
