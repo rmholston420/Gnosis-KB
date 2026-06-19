@@ -11,7 +11,7 @@ get_settings      : () -> Settings  -- lru_cache shim for FastAPI Depends()
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -37,10 +37,21 @@ class Settings(BaseSettings):
     # Multi-user vault root (parent dir containing per-user slug dirs)
     vault_root: str = "./vaults"
 
+    # LightRAG / graph-RAG working directory
+    lightrag_data_dir: str = "./lightrag_data"
+
     # Auth
     secret_key: str = "CHANGE_ME_IN_PRODUCTION_USE_OPENSSL_RAND_HEX_32"
+    algorithm: str = "HS256"
     access_token_expire_minutes: int = 10080  # 7 days
     auth_required: bool = False
+
+    # CORS
+    cors_origins: List[str] = [
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://localhost:8000",
+    ]
 
     # AI providers
     ollama_base_url: str = "http://localhost:11434"
@@ -63,18 +74,11 @@ class Settings(BaseSettings):
     @computed_field  # type: ignore[misc]
     @property
     def database_url_sync(self) -> str:
-        """Database URL for Alembic / sync drivers.
-
-        async_engine_from_config (used by alembic/env.py) accepts the
-        same aiosqlite/asyncpg URLs as the async engine, so we just
-        return ``database_url`` unchanged.  The property exists so that
-        ``get_settings().database_url_sync`` resolves without AttributeError
-        regardless of which driver is configured.
-        """
+        """Sync database URL for Alembic (returns database_url unchanged)."""
         return self.database_url
 
 
-# Singleton — import directly when you don’t need DI.
+# Singleton — import directly when you don't need DI.
 settings = Settings()
 
 
