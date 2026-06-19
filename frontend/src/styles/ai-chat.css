@@ -1,0 +1,269 @@
+/**
+ * AiChat component styles — Gnosis design system
+ */
+
+.ai-chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--color-bg, #f7f6f2);
+}
+
+.ai-chat__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 0.75rem);
+  padding: var(--space-4, 1rem) var(--space-6, 1.5rem);
+  border-bottom: 1px solid var(--color-divider, #dcd9d5);
+  background: var(--color-surface, #f9f8f5);
+  font-weight: 600;
+  font-size: var(--text-base, 1rem);
+  color: var(--color-text, #28251d);
+  flex-shrink: 0;
+}
+
+.ai-chat__mode-selector {
+  display: flex;
+  gap: var(--space-1, 0.25rem);
+  margin-left: auto;
+}
+
+.ai-chat__mode-btn {
+  padding: var(--space-1, 0.25rem) var(--space-3, 0.75rem);
+  border-radius: var(--radius-full, 9999px);
+  font-size: var(--text-xs, 0.75rem);
+  font-weight: 500;
+  color: var(--color-text-muted, #7a7974);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all var(--transition-interactive, 180ms);
+  min-height: 44px;
+}
+
+.ai-chat__mode-btn.active {
+  background: var(--color-primary-highlight, #cedcd8);
+  color: var(--color-primary, #01696f);
+  border-color: var(--color-primary-highlight, #cedcd8);
+}
+
+.ai-chat__mode-btn:hover:not(.active) {
+  background: var(--color-surface-offset, #f3f0ec);
+}
+
+.ai-chat__messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-6, 1.5rem);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4, 1rem);
+  min-height: 0;
+}
+
+.ai-chat__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3, 0.75rem);
+  height: 100%;
+  color: var(--color-text-muted, #7a7974);
+  text-align: center;
+}
+
+.ai-chat__hint {
+  font-size: var(--text-sm, 0.875rem);
+  max-width: 40ch;
+}
+
+.ai-chat__message {
+  display: flex;
+  gap: var(--space-3, 0.75rem);
+  align-items: flex-start;
+  max-width: 100%;
+}
+
+.ai-chat__message--user {
+  flex-direction: row-reverse;
+}
+
+.ai-chat__message-icon {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-full, 9999px);
+  background: var(--color-surface-offset, #f3f0ec);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted, #7a7974);
+}
+
+.ai-chat__message--user .ai-chat__message-icon {
+  background: var(--color-primary-highlight, #cedcd8);
+  color: var(--color-primary, #01696f);
+}
+
+.ai-chat__message-content {
+  flex: 1;
+  padding: var(--space-3, 0.75rem) var(--space-4, 1rem);
+  border-radius: var(--radius-lg, 0.75rem);
+  font-size: var(--text-base, 1rem);
+  line-height: 1.6;
+  background: var(--color-surface, #f9f8f5);
+  color: var(--color-text, #28251d);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-width: 75ch;
+}
+
+.ai-chat__message--user .ai-chat__message-content {
+  background: var(--color-primary, #01696f);
+  color: var(--color-text-inverse, #f9f8f4);
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.ai-chat__cursor {
+  display: inline-block;
+  animation: blink 1s step-start infinite;
+  color: var(--color-primary, #01696f);
+  margin-left: 2px;
+}
+
+.ai-chat__input-area {
+  display: flex;
+  gap: var(--space-3, 0.75rem);
+  padding: var(--space-4, 1rem) var(--space-6, 1.5rem);
+  border-top: 1px solid var(--color-divider, #dcd9d5);
+  background: var(--color-surface, #f9f8f5);
+  flex-shrink: 0;
+  align-items: flex-end;
+}
+
+.ai-chat__textarea {
+  flex: 1;
+  resize: none;
+  padding: var(--space-3, 0.75rem);
+  border-radius: var(--radius-md, 0.5rem);
+  border: 1px solid var(--color-border, #d4d1ca);
+  background: var(--color-bg, #f7f6f2);
+  color: var(--color-text, #28251d);
+  font-family: var(--font-body, sans-serif);
+  font-size: var(--text-base, 1rem);
+  line-height: 1.5;
+  min-height: 60px;
+  outline: none;
+  transition: border-color var(--transition-interactive, 180ms);
+}
+
+.ai-chat__textarea:focus {
+  border-color: var(--color-primary, #01696f);
+}
+
+.ai-chat__textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.ai-chat__send-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-md, 0.5rem);
+  background: var(--color-primary, #01696f);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background var(--transition-interactive, 180ms);
+}
+
+.ai-chat__send-btn:hover:not(:disabled) {
+  background: var(--color-primary-hover, #0c4e54);
+}
+
+.ai-chat__send-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.ai-chat__stop-btn {
+  padding: var(--space-2, 0.5rem) var(--space-4, 1rem);
+  border-radius: var(--radius-md, 0.5rem);
+  border: 1px solid var(--color-border, #d4d1ca);
+  background: var(--color-surface-offset, #f3f0ec);
+  color: var(--color-text-muted, #7a7974);
+  font-size: var(--text-sm, 0.875rem);
+  min-height: 44px;
+  transition: background var(--transition-interactive, 180ms);
+}
+
+.ai-chat__stop-btn:hover {
+  background: var(--color-surface-dynamic, #e6e4df);
+}
+
+.ai-chat-page {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* WikiLink popup styles */
+.wikilink-popup {
+  background: var(--color-surface, #f9f8f5);
+  border: 1px solid var(--color-border, #d4d1ca);
+  border-radius: var(--radius-lg, 0.75rem);
+  box-shadow: var(--shadow-md, 0 4px 12px oklch(0.2 0.01 80 / 0.08));
+  list-style: none;
+  padding: var(--space-2, 0.5rem);
+  max-height: 240px;
+  overflow-y: auto;
+  min-width: 200px;
+}
+
+.wikilink-popup.empty {
+  padding: var(--space-4, 1rem);
+  color: var(--color-text-faint, #bab9b4);
+  font-size: var(--text-sm, 0.875rem);
+  text-align: center;
+}
+
+.wikilink-item {
+  padding: var(--space-2, 0.5rem) var(--space-3, 0.75rem);
+  border-radius: var(--radius-sm, 0.375rem);
+  cursor: pointer;
+  font-size: var(--text-sm, 0.875rem);
+  color: var(--color-text, #28251d);
+  transition: background var(--transition-interactive, 180ms);
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+}
+
+.wikilink-item.selected,
+.wikilink-item:hover {
+  background: var(--color-surface-offset, #f3f0ec);
+}
+
+/* Rendered wikilink nodes inside TipTap */
+.wikilink {
+  color: var(--color-primary, #01696f);
+  background: var(--color-primary-highlight, #cedcd8);
+  border-radius: var(--radius-sm, 0.375rem);
+  padding: 0 var(--space-1, 0.25rem);
+  cursor: pointer;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background var(--transition-interactive, 180ms);
+}
+
+.wikilink:hover {
+  background: color-mix(in oklab, var(--color-primary-highlight) 70%, var(--color-surface-dynamic));
+}

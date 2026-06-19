@@ -1,0 +1,103 @@
+/**
+ * Command Palette styles — Gnosis design system
+ * Uses CSS custom properties from the Nexus design tokens.
+ */
+
+.command-palette-backdrop {
+  position: fixed;
+  inset: 0;
+  background: oklch(from var(--color-bg, #f7f6f2) l c h / 0.75);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: clamp(80px, 12vh, 160px);
+  z-index: 9000;
+}
+
+.command-palette-container {
+  width: min(640px, calc(100vw - 2rem));
+  background: var(--color-surface, #f9f8f5);
+  border: 1px solid var(--color-border, #d4d1ca);
+  border-radius: var(--radius-xl, 1rem);
+  box-shadow: var(--shadow-lg, 0 12px 32px oklch(0.2 0.01 80 / 0.12));
+  overflow: hidden;
+}
+
+.command-palette-input {
+  width: 100%;
+  padding: var(--space-4, 1rem) var(--space-6, 1.5rem);
+  font-size: var(--text-base, 1rem);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--color-divider, #dcd9d5);
+  color: var(--color-text, #28251d);
+  outline: none;
+  font-family: var(--font-body, sans-serif);
+}
+
+.command-palette-input::placeholder {
+  color: var(--color-text-faint, #bab9b4);
+}
+
+.command-palette-list {
+  max-height: 400px;
+  overflow-y: auto;
+  padding: var(--space-2, 0.5rem);
+}
+
+.command-palette-empty {
+  padding: var(--space-8, 2rem);
+  text-align: center;
+  color: var(--color-text-muted, #7a7974);
+  font-size: var(--text-sm, 0.875rem);
+}
+
+/* Group heading */
+[cmdk-group-heading] {
+  padding: var(--space-2, 0.5rem) var(--space-4, 1rem) var(--space-1, 0.25rem);
+  font-size: var(--text-xs, 0.75rem);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-faint, #bab9b4);
+}
+
+.command-palette-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 0.75rem);
+  padding: var(--space-3, 0.75rem) var(--space-4, 1rem);
+  border-radius: var(--radius-md, 0.5rem);
+  cursor: pointer;
+  font-size: var(--text-sm, 0.875rem);
+  color: var(--color-text, #28251d);
+  transition: background var(--transition-interactive, 180ms cubic-bezier(0.16, 1, 0.3, 1));
+  min-height: 44px; /* Touch target */
+}
+
+.command-palette-item[data-selected="true"],
+.command-palette-item:hover {
+  background: var(--color-surface-offset, #f3f0ec);
+}
+
+.command-palette-item-icon {
+  display: flex;
+  align-items: center;
+  color: var(--color-text-muted, #7a7974);
+  flex-shrink: 0;
+}
+
+.command-palette-item-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-palette-item-folder {
+  font-size: var(--text-xs, 0.75rem);
+  color: var(--color-text-faint, #bab9b4);
+  flex-shrink: 0;
+}
