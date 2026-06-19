@@ -1,23 +1,16 @@
 /**
  * GraphCanvas: Cytoscape.js force-directed knowledge graph.
- *
- * Features:
- * - fCoSE layout (fast compound spring embedder)
- * - Node size ∝ backlink count
- * - Node color = note type
- * - Double-click node → navigate to note
- * - Right-click → ego-graph view
- * - Zoom controls
- * - Legend
  */
 
 import { useEffect, useRef } from 'react';
 import cytoscape from 'cytoscape';
-import fcose from 'cytoscape-fcose';
+// cytoscape-fcose has no bundled types — use require to bypass TS module resolution
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const fcose = require('cytoscape-fcose');
 import { useNavigate } from 'react-router-dom';
 import type { GraphData, NoteType } from '../types';
 
-cytoscape.use(fcose as cytoscape.Ext);
+cytoscape.use(fcose);
 
 const NOTE_TYPE_COLOR: Record<NoteType | string, string> = {
   permanent: '#58a6ff',
@@ -114,14 +107,12 @@ export default function GraphCanvas({ data, height = '100%', onNodeClick }: Grap
       } as cytoscape.LayoutOptions,
     });
 
-    // Double-click to navigate
     cy.on('dblclick', 'node', (e) => {
       const nodeId = e.target.data('id');
       if (onNodeClick) onNodeClick(nodeId);
       else navigate(`/notes/${nodeId}`);
     });
 
-    // Hover tooltip
     cy.on('mouseover', 'node', (e) => {
       e.target.style({ 'border-width': 2, 'border-color': '#58a6ff' });
     });
@@ -142,7 +133,6 @@ export default function GraphCanvas({ data, height = '100%', onNodeClick }: Grap
   return (
     <div className="relative" style={{ height }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
-      {/* Legend */}
       <div className="absolute bottom-4 left-4 bg-bg-secondary border border-border rounded p-2 text-xs space-y-1">
         {Object.entries(NOTE_TYPE_COLOR).map(([type, color]) => (
           <div key={type} className="flex items-center gap-1.5">

@@ -1,7 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 import NoteEditor from '../components/NoteEditor';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { Note } from '../types';
 import { Loader2 } from 'lucide-react';
 
@@ -33,7 +32,9 @@ export default function DailyNotePage() {
     <div className="h-full">
       <NoteEditor
         note={note}
-        onSave={async (body, title) => updateMutation.mutateAsync({ body, title })}
+        onSave={async (body, title) => {
+          await updateMutation.mutateAsync({ body, title });
+        }}
         isLoading={updateMutation.isPending}
       />
     </div>
