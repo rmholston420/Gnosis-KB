@@ -16,18 +16,25 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "review_cards",
-        sa.Column("note_id", sa.String(20), sa.ForeignKey("notes.id", ondelete="CASCADE"), primary_key=True),
-        sa.Column("easiness", sa.Float(), nullable=False, server_default="2.5"),
-        sa.Column("interval", sa.Integer(), nullable=False, server_default="1"),
-        sa.Column("repetitions", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("due_date", sa.Date(), nullable=False),
-        sa.Column("last_quality", sa.Integer(), nullable=True),
-    )
-    op.create_index("ix_review_cards_due_date", "review_cards", ["due_date"])
+    conn = op.get_bind()
+    conn.execute(sa.text("""
+        CREATE TABLE IF NOT EXISTS review_cards (
+            note_id     VARCHAR(20) NOT NULL PRIMARY KEY
+                        REFERENCES notes(id) ON DELETE CASCADE,
+            easiness    FLOAT   NOT NULL DEFAULT 2.5,
+            interval    INTEGER NOT NULL DEFAULT 1,
+            repetitions INTEGER NOT NULL DEFAULT 0,
+            due_date    DATE    NOT NULL,
+            last_quality INTEGER
+        )
+    """))
+    conn.execute(sa.text(
+        "CREATE INDEX IF NOT EXISTS ix_review_cards_due_date"
+        " ON review_cards (due_date)"
+    ))
 
 
 def downgrade() -> None:
-    op.drop_index("ix_review_cards_due_date", table_name="review_cards")
-    op.drop_table("review_cards")
+    conn = op.get_bind()
+    conn.execute(sa.text("DROP INDEX IF EXISTS ix_review_cards_due_date"))
+    conn.execute(sa.text("DROP TABLE IF EXISTS review_cards"))

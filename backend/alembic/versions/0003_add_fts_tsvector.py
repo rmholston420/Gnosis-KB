@@ -1,11 +1,12 @@
-"""Add full-text search tsvector column and trigger.
+"""Add full-text search column.
 
 Revision ID: 0003
 Revises:     0002
 Create Date: 2026-06-19
 
-Note: tsvector / GIN index are PostgreSQL-only. On SQLite the column
-is added as plain Text so the migration is cross-dialect safe.
+Adds a search_vector column to notes.
+On SQLite: plain TEXT (FTS handled at application layer).
+On PostgreSQL: tsvector with GIN index and auto-update trigger.
 """
 from __future__ import annotations
 
@@ -18,57 +19,65 @@ branch_labels = None
 depends_on = None
 
 
+def _column_exists(conn, table: str, column: str) -> bool:
+    rows = conn.execute(sa.text(f"PRAGMA table_info({table})")).fetchall()
+    return any(r[1] == column for r in rows)
+
+
 def upgrade() -> None:
-    bind = op.get_bind()
-    dialect = bind.dialect.name
+    conn = op.get_bind()
+    dialect = conn.dialect.name
 
     if dialect == "postgresql":
-        # Add tsvector column and GIN index
-        op.add_column("notes", sa.Column("search_vector", sa.Text(), nullable=True))
-        bind.execute(sa.text(
+        conn.execute(sa.text(
             "ALTER TABLE notes ADD COLUMN IF NOT EXISTS search_vector tsvector"
         ))
-        bind.execute(sa.text(
-            "CREATE INDEX IF NOT EXISTS ix_notes_search_vector "
-            "ON notes USING GIN(search_vector)"
+        conn.execute(sa.text(
+            "CREATE INDEX IF NOT EXISTS ix_notes_search_vector"
+            " ON notes USING GIN(search_vector)"
         ))
-        # Trigger to keep tsvector current
-        bind.execute(sa.text("""
-            CREATE OR REPLACE FUNCTION notes_search_vector_update() RETURNS trigger AS $$
+        conn.execute(sa.text("""
+            CREATE OR REPLACE FUNCTION notes_search_vector_update()
+            RETURNS trigger LANGUAGE plpgsql AS $$
             BEGIN
                 NEW.search_vector :=
                     setweight(to_tsvector('english', coalesce(NEW.title, '')), 'A') ||
-                    setweight(to_tsvector('english', coalesce(NEW.body, '')), 'B');
+                    setweight(to_tsvector('english', coalesce(NEW.body,  '')), 'B');
                 RETURN NEW;
             END;
-            $$ LANGUAGE plpgsql;
+            $$;
         """))
-        bind.execute(sa.text("""
+        conn.execute(sa.text("""
             DROP TRIGGER IF EXISTS notes_search_vector_trigger ON notes;
             CREATE TRIGGER notes_search_vector_trigger
             BEFORE INSERT OR UPDATE ON notes
             FOR EACH ROW EXECUTE FUNCTION notes_search_vector_update();
         """))
     else:
-        # SQLite: plain text column; FTS handled at application layer
-        with op.batch_alter_table("notes") as batch:
-            batch.add_column(sa.Column("search_vector", sa.Text(), nullable=True))
+        # SQLite: add plain TEXT column if not already present
+        if not _column_exists(conn, "notes", "search_vector"):
+            conn.execute(sa.text(
+                "ALTER TABLE notes ADD COLUMN search_vector TEXT"
+            ))
 
 
 def downgrade() -> None:
-    bind = op.get_bind()
-    dialect = bind.dialect.name
-
+    conn = op.get_bind()
+    dialect = conn.dialect.name
     if dialect == "postgresql":
-        bind.execute(sa.text(
+        conn.execute(sa.text(
             "DROP TRIGGER IF EXISTS notes_search_vector_trigger ON notes"
         ))
-        bind.execute(sa.text(
+        conn.execute(sa.text(
             "DROP FUNCTION IF EXISTS notes_search_vector_update"
         ))
-        bind.execute(sa.text(
+        conn.execute(sa.text(
             "DROP INDEX IF EXISTS ix_notes_search_vector"
         ))
-
-    with op.batch_alter_table("notes") as batch:
-        batch.drop_column("search_vector")
+    # SQLite: DROP COLUMN requires 3.35+; skip silently on older versions
+    try:
+        conn.execute(sa.text(
+            "ALTER TABLE notes DROP COLUMN IF EXISTS search_vector"
+        ))
+    except Exception:
+        pass
