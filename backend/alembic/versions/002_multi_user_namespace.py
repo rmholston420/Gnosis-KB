@@ -6,9 +6,9 @@ Create Date: 2026-06-19
 
 What this migration does
 ------------------------
-1. Adds vault_slug, vault_path, vault_display_name to users.
-2. Adds owner_id (FK -> users.id) to notes.
-3. Creates shared_vaults join table.
+1. Adds vault_slug, vault_path, vault_display_name to users (if absent).
+2. Adds owner_id (FK -> users.id) to notes (if absent).
+3. Creates shared_vaults join table (IF NOT EXISTS).
 4. Backfills notes.owner_id with the first superuser so legacy notes
    don't become orphaned.
 """
@@ -23,63 +23,59 @@ branch_labels = None
 depends_on = None
 
 
+def _column_exists(conn, table: str, column: str) -> bool:
+    rows = conn.execute(sa.text(f"PRAGMA table_info({table})")).fetchall()
+    return any(r[1] == column for r in rows)
+
+
 def upgrade() -> None:
     conn = op.get_bind()
-    dialect = conn.dialect.name
 
     # ------------------------------------------------------------------ users
-    # batch_alter_table is safe here: we're only adding nullable columns
-    # with no constraints, so SQLite doesn't need to rebuild the table.
-    with op.batch_alter_table("users", recreate="never") as batch:
-        batch.add_column(sa.Column("vault_slug", sa.String(80), nullable=True))
-        batch.add_column(sa.Column("vault_path", sa.Text, nullable=True))
-        batch.add_column(sa.Column("vault_display_name", sa.String(200), nullable=True))
+    # Add each vault column only if it doesn't already exist.
+    for col, ddl in (
+        ("vault_slug",         "ALTER TABLE users ADD COLUMN vault_slug VARCHAR(80)"),
+        ("vault_path",         "ALTER TABLE users ADD COLUMN vault_path TEXT"),
+        ("vault_display_name", "ALTER TABLE users ADD COLUMN vault_display_name VARCHAR(200)"),
+    ):
+        if not _column_exists(conn, "users", col):
+            conn.execute(sa.text(ddl))
 
-    # Unique index on vault_slug (created outside batch to avoid rebuild)
-    op.create_index("ix_users_vault_slug", "users", ["vault_slug"], unique=True)
+    conn.execute(sa.text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_vault_slug ON users (vault_slug)"
+    ))
 
     # ------------------------------------------------------------------ notes
-    # SQLite ALTER TABLE ADD COLUMN does not support FOREIGN KEY clauses,
-    # but the FK is enforced at the ORM layer and the column itself is just
-    # a nullable integer.  Use raw SQL so we avoid batch_alter_table
-    # rebuilding the entire table (which would fail on unnamed constraints).
-    if dialect == "sqlite":
+    # SQLite ALTER TABLE ADD COLUMN supports a REFERENCES clause but not
+    # a named FK constraint — that's fine, the FK is enforced at the ORM layer.
+    if not _column_exists(conn, "notes", "owner_id"):
         conn.execute(sa.text(
             "ALTER TABLE notes ADD COLUMN owner_id INTEGER REFERENCES users(id)"
         ))
-    else:
-        with op.batch_alter_table("notes") as batch:
-            batch.add_column(
-                sa.Column(
-                    "owner_id",
-                    sa.Integer,
-                    sa.ForeignKey("users.id", ondelete="CASCADE", name="fk_notes_owner_id"),
-                    nullable=True,
-                )
-            )
 
-    op.create_index("ix_notes_owner_id", "notes", ["owner_id"], unique=False)
+    conn.execute(sa.text(
+        "CREATE INDEX IF NOT EXISTS ix_notes_owner_id ON notes (owner_id)"
+    ))
 
     # --------------------------------------------------------- shared_vaults
-    op.create_table(
-        "shared_vaults",
-        sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-        sa.Column(
-            "owner_id", sa.Integer,
-            sa.ForeignKey("users.id", ondelete="CASCADE", name="fk_sv_owner"),
-            nullable=False, index=True,
-        ),
-        sa.Column(
-            "member_id", sa.Integer,
-            sa.ForeignKey("users.id", ondelete="CASCADE", name="fk_sv_member"),
-            nullable=False, index=True,
-        ),
-        sa.Column("permission", sa.String(10), nullable=False, server_default="read"),
-        sa.Column("invited_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
-        sa.Column("accepted_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("is_active", sa.Boolean, nullable=False, server_default="1"),
-        sa.UniqueConstraint("owner_id", "member_id", name="uq_shared_vault_pair"),
-    )
+    conn.execute(sa.text("""
+        CREATE TABLE IF NOT EXISTS shared_vaults (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            member_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            permission  VARCHAR(10) NOT NULL DEFAULT 'read',
+            invited_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+            accepted_at DATETIME,
+            is_active   BOOLEAN NOT NULL DEFAULT 1,
+            UNIQUE (owner_id, member_id)
+        )
+    """))
+    conn.execute(sa.text(
+        "CREATE INDEX IF NOT EXISTS ix_shared_vaults_owner_id  ON shared_vaults (owner_id)"
+    ))
+    conn.execute(sa.text(
+        "CREATE INDEX IF NOT EXISTS ix_shared_vaults_member_id ON shared_vaults (member_id)"
+    ))
 
     # ------------------------------------------------------- backfill legacy
     admin_row = conn.execute(
@@ -102,26 +98,17 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     conn = op.get_bind()
-
-    op.drop_table("shared_vaults")
-
+    conn.execute(sa.text("DROP INDEX IF EXISTS ix_shared_vaults_member_id"))
+    conn.execute(sa.text("DROP INDEX IF EXISTS ix_shared_vaults_owner_id"))
+    conn.execute(sa.text("DROP TABLE IF EXISTS shared_vaults"))
+    conn.execute(sa.text("DROP INDEX IF EXISTS ix_notes_owner_id"))
     try:
-        op.drop_index("ix_notes_owner_id", table_name="notes")
+        conn.execute(sa.text("ALTER TABLE notes DROP COLUMN IF EXISTS owner_id"))
     except Exception:
         pass
-
-    # SQLite does not support DROP COLUMN before 3.35; use raw SQL
-    # which is a no-op on older versions rather than crashing.
-    conn.execute(sa.text(
-        "ALTER TABLE notes DROP COLUMN IF EXISTS owner_id"
-    ))
-
-    try:
-        op.drop_index("ix_users_vault_slug", table_name="users")
-    except Exception:
-        pass
-
-    with op.batch_alter_table("users", recreate="never") as batch:
-        batch.drop_column("vault_display_name")
-        batch.drop_column("vault_path")
-        batch.drop_column("vault_slug")
+    conn.execute(sa.text("DROP INDEX IF EXISTS ix_users_vault_slug"))
+    for col in ("vault_display_name", "vault_path", "vault_slug"):
+        try:
+            conn.execute(sa.text(f"ALTER TABLE users DROP COLUMN IF EXISTS {col}"))
+        except Exception:
+            pass
