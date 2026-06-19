@@ -1,6 +1,4 @@
-# Gnosis API — Multi-stage Dockerfile
-# Stage 1: Build dependencies
-FROM python:3.12-slim AS base
+FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
@@ -12,12 +10,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY pyproject.toml ./
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -e . && \
-    pip install --no-cache-dir gunicorn uvicorn[standard]
-
+# Copy ALL source first so editable install can find the package
 COPY . .
 
-# Run Alembic migrations then start server
+# Upgrade pip, install deps from pyproject.toml, then gunicorn/uvicorn
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
+ && pip install --no-cache-dir -e . \
+ && pip install --no-cache-dir gunicorn "uvicorn[standard]"
+
+EXPOSE 8010
+
 CMD ["sh", "-c", "alembic upgrade head && uvicorn gnosis.main:app --host 0.0.0.0 --port 8010 --workers 2"]
