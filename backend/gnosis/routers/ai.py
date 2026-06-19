@@ -19,11 +19,11 @@ Dependencies:
 Namespace contract
 ------------------
 Every endpoint is scoped to the authenticated user's accessible vault set.
-- graph_rag calls carry user_id=current_user.id so LightRAG uses the correct
-  per-user working directory (chat + stream_chat endpoints only).
+- graph_rag calls carry owner_ids so LightRAG uses the correct per-user
+  working directory (chat + stream_chat endpoints).
 - Note fetches use scoped_note_stmt() via _get_note_or_404 so cross-vault
   notes are never surfaced, even if a caller guesses a note UUID.
-- Raw SQL in orphan_audit is filtered by owner_id IN (accessible_ids).
+- orphan_audit uses scoped_note_stmt (no raw SQL interpolation).
 - All scoped endpoints declare owner_ids: set[int] = Depends(get_vault_owner_ids)
   which honours the optional X-Vault-Owner-Id header for VaultSwitcher support.
 """
@@ -37,12 +37,13 @@ from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, func, text
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from gnosis.core.auth import get_current_user, get_vault_owner_ids
 from gnosis.core.namespace import scoped_note_stmt
 from gnosis.database import get_session
+from gnosis.models.link import Link
 from gnosis.models.note import Note
 from gnosis.models.user import User
 from gnosis.schemas.ai import (
@@ -150,10 +151,12 @@ async def chat(
     req: ChatRequest,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
+    owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> ChatResponse:
-    user_id = current_user.id
-    if await graph_rag.is_available(user_id):
-        answer = await graph_rag.query(req.message, user_id=user_id, mode=req.mode)
+    if await graph_rag.is_available(current_user.id):
+        answer = await graph_rag.query(
+            req.message, user_id=current_user.id, owner_ids=owner_ids, mode=req.mode
+        )
     elif llm_provider.is_available:
         answer = await llm_provider.complete(
             prompt=req.message,
@@ -292,7 +295,6 @@ async def critique_note(
         "Format as JSON: {\"atomicity\": {\"score\": N, \"suggestion\": \"...\"},...}"
     )
     raw = await llm_provider.complete(prompt, temperature=0.3)
-    # Try to parse structured JSON; fall back to raw text
     critique_data: dict = {}
     json_match = re.search(r"\{.*\}", raw, re.DOTALL)
     if json_match:
@@ -320,23 +322,23 @@ async def orphan_audit(
     session: AsyncSession = Depends(get_session),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> OrphanAuditResponse:
-    # Include legacy sentinel (0) so pre-migration notes are visible
-    accessible_ids = list(owner_ids | {0})
-    id_list = ",".join(str(i) for i in accessible_ids)
-    sql = text(f"""
-        SELECT n.id, n.title, n.body
-        FROM notes n
-        LEFT JOIN links l_out ON l_out.source_id = n.id
-        LEFT JOIN links l_in  ON l_in.target_id  = n.id
-        WHERE n.is_deleted = false
-          AND n.owner_id IN ({id_list})
-          AND l_out.id IS NULL
-          AND l_in.id  IS NULL
-        ORDER BY n.created_at DESC
-        LIMIT :limit
-    """)
-    result = await session.execute(sql, {"limit": limit})
-    rows = result.fetchall()
+    # Use scoped_note_stmt (no raw SQL interpolation, honours null-owner legacy)
+    linked_ids = (
+        select(Note.id)
+        .join(Link, (Link.source_id == Note.id) | (Link.target_id == Note.id))
+    )
+    base = (
+        select(Note)
+        .where(
+            Note.is_deleted.is_(False),
+            Note.id.not_in(linked_ids),
+        )
+        .order_by(Note.created_at.desc())
+        .limit(limit)
+    )
+    result = await session.execute(scoped_note_stmt(base, owner_ids))
+    rows = result.scalars().all()
+
     if not rows or not llm_provider.is_available:
         return OrphanAuditResponse(items=[], total=len(rows))
 
@@ -440,14 +442,16 @@ async def stream_chat(
     mode: str = Query("hybrid", pattern="^(hybrid|local|naive)$"),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
+    owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> StreamingResponse:
-    """SSE endpoint: streams the AI answer token-by-token."""
-    user_id = current_user.id
+    """SSE endpoint: streams the AI answer token-by-token, scoped to accessible vaults."""
 
     async def event_generator() -> AsyncGenerator[str, None]:
         try:
-            if await graph_rag.is_available(user_id):
-                async for token in graph_rag.stream(message, user_id=user_id, mode=mode):
+            if await graph_rag.is_available(current_user.id):
+                async for token in graph_rag.stream(
+                    message, user_id=current_user.id, owner_ids=owner_ids, mode=mode
+                ):
                     yield f"data: {json.dumps({'token': token})}\n\n"
             elif llm_provider.is_available:
                 async for token in llm_provider.stream(
@@ -485,7 +489,6 @@ async def generate_moc(
     if not topic:
         raise HTTPException(status_code=422, detail="Topic must not be empty.")
 
-    # Fetch relevant notes from accessible vaults
     base = (
         select(Note)
         .where(
@@ -504,7 +507,6 @@ async def generate_moc(
             detail=f"No notes found containing '{topic}'. Add some notes first.",
         )
 
-    # Build context for the LLM
     notes_context = "\n\n".join(
         f"### {n.title}\nType: {n.note_type} | Status: {n.status}\n{n.body[:400]}"
         for n in notes
@@ -515,9 +517,9 @@ async def generate_moc(
         f"Available notes (excerpts):\n{notes_context}\n\n"
         f"MOC title: {moc_title}\n\n"
         "Organise the notes into 3-6 thematic sections. For each section provide:\n"
-        "- A heading (short phrase)\n"
-        "- A one-sentence summary of the section's theme\n"
-        "- A list of note titles that belong in this section (use exact titles)\n\n"
+        "— A heading (short phrase)\n"
+        "— A one-sentence summary of the section's theme\n"
+        "— A list of note titles that belong in this section (use exact titles)\n\n"
         "Return as JSON:\n"
         "[{\"heading\": \"...\", \"summary\": \"...\", \"wikilinks\": [\"Note Title\", ...]}]\n"
         "Only include notes from the list above. No invented titles."
