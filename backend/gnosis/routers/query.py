@@ -12,10 +12,12 @@ POST /api/v1/query/saved/{id}/run   — execute a saved dashboard
 
 Namespace contract
 ------------------
-All query execution is scoped to the caller's accessible vault set via
-``get_accessible_owner_ids()``.  SavedQuery rows are owned by the user who
-created them (``owner_id`` column); list/get/update/delete are all filtered
-to ``current_user.id`` so users cannot read or modify each other's dashboards.
+All query execution is scoped to the caller's accessible vault set via the
+``get_vault_owner_ids`` dependency, which honours the optional
+``X-Vault-Owner-Id`` request header.  SavedQuery rows are owned by the user
+who created them (``owner_id`` column); list/get/update/delete are all
+filtered to ``current_user.id`` so users cannot read or modify each other's
+dashboards.
 
 GQL syntax examples::
 
@@ -30,8 +32,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from gnosis.core.auth import get_current_user
-from gnosis.core.namespace import get_accessible_owner_ids
+from gnosis.core.auth import get_current_user, get_vault_owner_ids
 from gnosis.database import get_db
 from gnosis.models.saved_query import SavedQuery
 from gnosis.models.user import User
@@ -55,7 +56,7 @@ router = APIRouter(prefix="/query", tags=["query"])
 async def run_query(
     payload: QueryRun,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> QueryResult:
     """Parse and execute a GQL string scoped to the caller's accessible vaults."""
     try:
@@ -63,7 +64,6 @@ async def run_query(
     except GQLParseError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    owner_ids = await get_accessible_owner_ids(db, current_user)
     rows, ms = await execute_query(parsed, db, owner_ids=owner_ids)
     return QueryResult(rows=rows, total=len(rows), query_time_ms=ms)
 
@@ -195,6 +195,7 @@ async def run_saved(
     sq_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> QueryResult:
     """Execute a saved dashboard scoped to the caller's accessible vaults."""
     result = await db.execute(
@@ -210,6 +211,5 @@ async def run_saved(
         parsed = parse_query(sq.query)
     except GQLParseError as exc:
         raise HTTPException(status_code=422, detail=f"Saved query has invalid syntax: {exc}") from exc
-    owner_ids = await get_accessible_owner_ids(db, current_user)
     rows, ms = await execute_query(parsed, db, owner_ids=owner_ids)
     return QueryResult(rows=rows, total=len(rows), query_time_ms=ms)

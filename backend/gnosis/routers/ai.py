@@ -20,10 +20,12 @@ Namespace contract
 ------------------
 Every endpoint is scoped to the authenticated user's accessible vault set.
 - graph_rag calls carry user_id=current_user.id so LightRAG uses the correct
-  per-user working directory.
+  per-user working directory (chat + stream_chat endpoints only).
 - Note fetches use scoped_note_stmt() via _get_note_or_404 so cross-vault
   notes are never surfaced, even if a caller guesses a note UUID.
 - Raw SQL in orphan_audit is filtered by owner_id IN (accessible_ids).
+- All scoped endpoints declare owner_ids: set[int] = Depends(get_vault_owner_ids)
+  which honours the optional X-Vault-Owner-Id header for VaultSwitcher support.
 """
 from __future__ import annotations
 
@@ -38,8 +40,8 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from gnosis.core.auth import get_current_user
-from gnosis.core.namespace import get_accessible_owner_ids, scoped_note_stmt
+from gnosis.core.auth import get_current_user, get_vault_owner_ids
+from gnosis.core.namespace import scoped_note_stmt
 from gnosis.database import get_session
 from gnosis.models.note import Note
 from gnosis.models.user import User
@@ -176,11 +178,10 @@ async def chat(
 async def summarize_note(
     note_id: str,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
+    owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> SummarizeResponse:
     if not llm_provider.is_available:
         raise HTTPException(status_code=503, detail="No LLM provider available")
-    owner_ids = await get_accessible_owner_ids(session, current_user)
     note = await _get_note_or_404(note_id, session, owner_ids)
     prompt = (
         f"Note title: {note.title}\n\nNote body:\n{note.body[:6000]}\n\n"
@@ -199,11 +200,10 @@ async def summarize_note(
 async def suggest_links(
     note_id: str,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
+    owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> LinkSuggestionsResponse:
     if not llm_provider.is_available:
         raise HTTPException(status_code=503, detail="No LLM provider available")
-    owner_ids = await get_accessible_owner_ids(session, current_user)
     note = await _get_note_or_404(note_id, session, owner_ids)
     # Candidate notes scoped to accessible vaults
     base = (
@@ -252,22 +252,20 @@ async def suggest_links(
 async def suggest_tags(
     note_id: str,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
+    owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> TagSuggestionsResponse:
     if not llm_provider.is_available:
         raise HTTPException(status_code=503, detail="No LLM provider available")
-    owner_ids = await get_accessible_owner_ids(session, current_user)
     note = await _get_note_or_404(note_id, session, owner_ids)
     prompt = (
         f"Note title: {note.title}\n\nBody:\n{note.body[:3000]}\n\n"
         "Suggest 3–8 concise, lowercase tags for this note. "
-        "Tags should be single words or hyphenated phrases. "
-        "Return a JSON array of strings only."
+        "Tags should be single words or short hyphenated phrases. "
+        "Return a JSON array of strings. Example: [\"zettelkasten\", \"spaced-repetition\"]"
     )
     raw = await llm_provider.complete(prompt, temperature=0.2)
     tags = _parse_json_list(raw)
-    tags = [t.lower().strip() for t in tags if t.strip()]
-    return TagSuggestionsResponse(note_id=note_id, suggested_tags=tags)
+    return TagSuggestionsResponse(note_id=note_id, tags=tags)
 
 
 # ---------------------------------------------------------------------------
@@ -278,34 +276,37 @@ async def suggest_tags(
 async def critique_note(
     note_id: str,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
+    owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> CritiqueResponse:
     if not llm_provider.is_available:
         raise HTTPException(status_code=503, detail="No LLM provider available")
-    owner_ids = await get_accessible_owner_ids(session, current_user)
     note = await _get_note_or_404(note_id, session, owner_ids)
     prompt = (
         f"Note title: {note.title}\n\nBody:\n{note.body[:4000]}\n\n"
-        "Evaluate this Zettelkasten permanent note on four criteria. "
-        "Return a JSON object with exactly these keys: "
-        '"atomicity", "connectivity", "self_containedness", "insight_density", "overall". '
-        "Each value should be 1–3 sentences of actionable feedback."
+        "Critique this note from a Zettelkasten perspective. Evaluate:\n"
+        "1. Atomicity: Does it contain exactly one idea?\n"
+        "2. Autonomy: Can it stand alone without external context?\n"
+        "3. Connections: Does it suggest links to other concepts?\n"
+        "4. Clarity: Is the core insight expressed clearly?\n\n"
+        "Provide a score (1-10) for each dimension and a brief suggestion for improvement. "
+        "Format as JSON: {\"atomicity\": {\"score\": N, \"suggestion\": \"...\"},...}"
     )
-    raw = await llm_provider.complete(prompt, temperature=0.2)
-    match = re.search(r"\{.*\}", raw, re.DOTALL)
-    if match:
+    raw = await llm_provider.complete(prompt, temperature=0.3)
+    # Try to parse structured JSON; fall back to raw text
+    critique_data: dict = {}
+    json_match = re.search(r"\{.*\}", raw, re.DOTALL)
+    if json_match:
         try:
-            data = json.loads(match.group())
-            return CritiqueResponse(note_id=note_id, **data)
-        except (json.JSONDecodeError, TypeError):
+            critique_data = json.loads(json_match.group())
+        except json.JSONDecodeError:
             pass
     return CritiqueResponse(
         note_id=note_id,
-        atomicity=raw,
-        connectivity="See above",
-        self_containedness="See above",
-        insight_density="See above",
-        overall="Critique returned in atomicity field (JSON parse failed).",
+        critique=critique_data or {"raw": raw},
+        overall_score=(
+            sum(v.get("score", 5) for v in critique_data.values() if isinstance(v, dict)) //
+            max(len(critique_data), 1)
+        ) if critique_data else 5,
     )
 
 
@@ -317,59 +318,61 @@ async def critique_note(
 async def orphan_audit(
     limit: int = Query(default=10, ge=1, le=50),
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
+    owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> OrphanAuditResponse:
-    owner_ids = await get_accessible_owner_ids(session, current_user)
     # Include legacy sentinel (0) so pre-migration notes are visible
     accessible_ids = list(owner_ids | {0})
     id_list = ",".join(str(i) for i in accessible_ids)
+    sql = text(f"""
+        SELECT n.id, n.title, n.body
+        FROM notes n
+        LEFT JOIN links l_out ON l_out.source_id = n.id
+        LEFT JOIN links l_in  ON l_in.target_id  = n.id
+        WHERE n.is_deleted = false
+          AND n.owner_id IN ({id_list})
+          AND l_out.id IS NULL
+          AND l_in.id  IS NULL
+        ORDER BY n.created_at DESC
+        LIMIT :limit
+    """)
+    result = await session.execute(sql, {"limit": limit})
+    rows = result.fetchall()
+    if not rows or not llm_provider.is_available:
+        return OrphanAuditResponse(items=[], total=len(rows))
 
-    orphan_result = await session.execute(
-        text(
-            f"""
-            SELECT n.id, n.title, n.body
-            FROM notes n
-            WHERE n.is_deleted = false
-              AND (n.owner_id IN ({id_list}) OR n.owner_id IS NULL)
-              AND NOT EXISTS (
-                  SELECT 1 FROM links l WHERE l.source_id = n.id
-              )
-              AND NOT EXISTS (
-                  SELECT 1 FROM links l WHERE l.target_id = n.id
-              )
-            ORDER BY n.created_at DESC
-            LIMIT :lim
-            """
-        ),
-        {"lim": limit},
+    titles_body = "\n".join(
+        f"- [{r.title}]: {r.body[:200]}..." for r in rows
     )
-    orphans = orphan_result.fetchall()
-
-    target_result = await session.execute(
-        scoped_note_stmt(
-            select(Note.title).where(Note.is_deleted.is_(False)).limit(60),
-            owner_ids,
-        )
+    prompt = (
+        f"These {len(rows)} notes have no incoming or outgoing wikilinks (orphans):\n\n"
+        f"{titles_body}\n\n"
+        "For each orphan note, suggest:\n"
+        "1. A reason it might be isolated (missing context, too broad, duplicate?).\n"
+        "2. A concrete action (link to X, split into Y and Z, archive).\n"
+        "Return as a JSON array: [{\"title\": \"...\", \"reason\": \"...\", \"action\": \"...\"}]\n"
+        "Be concise — one sentence per field."
     )
-    candidate_titles = [row[0] for row in target_result.all()]
-    titles_text = "\n".join(f"- {t}" for t in candidate_titles)
-
+    raw = await llm_provider.complete(prompt, temperature=0.4)
     items: list[OrphanAuditItem] = []
-    for orphan in orphans:
-        if not llm_provider.is_available:
-            suggestions: list[str] = []
-        else:
-            prompt = (
-                f"Orphan note title: {orphan.title}\n"
-                f"Body excerpt: {str(orphan.body)[:1500]}\n\n"
-                f"Vault note titles:\n{titles_text}\n\n"
-                "Suggest 3–5 vault notes this orphan should link to. "
-                "Return a JSON array of note titles only."
-            )
-            raw = await llm_provider.complete(prompt, temperature=0.3)
-            suggestions = _parse_json_list(raw)
-        items.append(OrphanAuditItem(note_id=orphan.id, title=orphan.title, suggestions=suggestions))
-    return OrphanAuditResponse(orphan_count=len(items), items=items)
+    json_match = re.search(r"\[.*\]", raw, re.DOTALL)
+    if json_match:
+        try:
+            parsed_items = json.loads(json_match.group())
+            items = [
+                OrphanAuditItem(
+                    note_id=next(
+                        (r.id for r in rows if r.title == item.get("title")), ""
+                    ),
+                    title=item.get("title", ""),
+                    reason=item.get("reason", ""),
+                    action=item.get("action", ""),
+                )
+                for item in parsed_items
+                if isinstance(item, dict)
+            ]
+        except json.JSONDecodeError:
+            pass
+    return OrphanAuditResponse(items=items, total=len(rows))
 
 
 # ---------------------------------------------------------------------------
@@ -379,10 +382,9 @@ async def orphan_audit(
 @router.post("/daily-review", response_model=DailyReviewResponse)
 async def daily_review(
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
+    owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> DailyReviewResponse:
     today_str = date.today().isoformat()
-    owner_ids = await get_accessible_owner_ids(session, current_user)
     base = (
         select(Note)
         .where(
@@ -390,96 +392,78 @@ async def daily_review(
             Note.is_deleted.is_(False),
             func.date(Note.created_at) == today_str,
         )
-        .order_by(Note.created_at)
+        .order_by(Note.created_at.desc())
+        .limit(20)
     )
     result = await session.execute(scoped_note_stmt(base, owner_ids))
-    inbox_notes = result.scalars().all()
-    if not inbox_notes:
+    notes = result.scalars().all()
+    if not notes or not llm_provider.is_available:
         return DailyReviewResponse(
-            date=today_str,
-            summary="No inbox notes captured today.",
-            inbox_note_count=0,
-            action_items=[],
+            date=today_str, summary="No inbox notes today.", suggestions=[], note_count=len(notes)
         )
-    notes_text = "\n\n---\n\n".join(
-        f"**{n.title}**\n{n.body[:800]}" for n in inbox_notes
+    notes_text = "\n\n".join(
+        f"### {n.title}\n{n.body[:500]}" for n in notes
     )
-    if not llm_provider.is_available:
-        return DailyReviewResponse(
-            date=today_str,
-            summary=f"{len(inbox_notes)} inbox note(s) captured today. LLM unavailable for synthesis.",
-            inbox_note_count=len(inbox_notes),
-            action_items=[],
-        )
     prompt = (
         f"Today's inbox notes ({today_str}):\n\n{notes_text}\n\n"
-        "1. Write a 2–4 sentence synthesis of today's captures.\n"
-        "2. List 3–5 concrete action items (process, link, or expand these notes).\n"
-        "Return as JSON: {\"summary\": \"...\", \"action_items\": [\"...\", ...]}"
+        "Provide:\n"
+        "1. A brief synthesis of today's captures (2-3 sentences).\n"
+        "2. 3-5 actionable suggestions (process, link, promote to project, etc).\n"
+        "Format: {\"summary\": \"...\", \"suggestions\": [\"...\", ...]}"
     )
     raw = await llm_provider.complete(prompt, temperature=0.3)
-    summary = "Daily review generated."
-    action_items: list[str] = []
-    match = re.search(r"\{.*\}", raw, re.DOTALL)
-    if match:
+    summary_text = raw
+    suggestions: list[str] = []
+    json_match = re.search(r"\{.*\}", raw, re.DOTALL)
+    if json_match:
         try:
-            data = json.loads(match.group())
-            summary = data.get("summary", summary)
-            action_items = data.get("action_items", [])
+            parsed = json.loads(json_match.group())
+            summary_text = parsed.get("summary", raw)
+            suggestions = parsed.get("suggestions", [])
         except json.JSONDecodeError:
-            summary = raw[:500]
+            pass
     return DailyReviewResponse(
         date=today_str,
-        summary=summary,
-        inbox_note_count=len(inbox_notes),
-        action_items=action_items,
+        summary=summary_text,
+        suggestions=suggestions,
+        note_count=len(notes),
     )
 
 
 # ---------------------------------------------------------------------------
-# GET /ai/stream/chat  (Server-Sent Events)
+# GET /ai/stream/chat  (SSE)
 # ---------------------------------------------------------------------------
 
-@router.get(
-    "/stream/chat",
-    summary="SSE streaming chat",
-    response_class=StreamingResponse,
-)
+@router.get("/stream/chat")
 async def stream_chat(
-    message: str = Query(..., min_length=1, max_length=8000),
-    mode: str = Query(default="hybrid"),
+    message: str = Query(..., min_length=1),
+    mode: str = Query("hybrid", pattern="^(hybrid|local|naive)$"),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> StreamingResponse:
+    """SSE endpoint: streams the AI answer token-by-token."""
     user_id = current_user.id
 
     async def event_generator() -> AsyncGenerator[str, None]:
-        if not llm_provider.is_available:
-            yield "data: No AI provider available. Start Ollama or configure GROQ_API_KEY.\n\n"
-            yield "data: [DONE]\n\n"
-            return
-        if await graph_rag.is_available(user_id):
-            context = await graph_rag.query(message, user_id=user_id, mode=mode)
-            system = (
-                "You are a knowledge base assistant. "
-                f"Use the following vault context to answer:\n\n{context[:4000]}"
-            )
-        else:
-            system = "You are a helpful knowledge management assistant."
         try:
-            async for chunk in llm_provider.stream(prompt=message, system=system):
-                safe_chunk = chunk.replace("\n", " ")
-                yield f"data: {safe_chunk}\n\n"
+            if await graph_rag.is_available(user_id):
+                async for token in graph_rag.stream(message, user_id=user_id, mode=mode):
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+            elif llm_provider.is_available:
+                async for token in llm_provider.stream(
+                    prompt=message,
+                    system="You are a knowledgeable assistant.",
+                ):
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+            else:
+                yield f"data: {json.dumps({'error': 'No AI provider available'})}\n\n"
         except Exception as exc:  # noqa: BLE001
-            logger.error("SSE stream error: %s", exc)
-            yield f"data: Stream error: {exc}\n\n"
-        yield "data: [DONE]\n\n"
+            logger.exception("SSE stream error")
+            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+        finally:
+            yield "data: [DONE]\n\n"
 
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 # ---------------------------------------------------------------------------
@@ -490,117 +474,77 @@ async def stream_chat(
 async def generate_moc(
     req: MocRequest,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
+    owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> MocResponse:
     if not llm_provider.is_available:
         raise HTTPException(
             status_code=503,
             detail="No LLM provider available. Start Ollama or configure GROQ_API_KEY.",
         )
-    owner_ids = await get_accessible_owner_ids(session, current_user)
+    topic = req.topic.strip()
+    if not topic:
+        raise HTTPException(status_code=422, detail="Topic must not be empty.")
 
-    # ---- 1. Gather candidate notes (scoped) --------------------------------
+    # Fetch relevant notes from accessible vaults
     base = (
         select(Note)
-        .where(Note.is_deleted.is_(False))
-        .order_by(Note.modified_at.desc())
-        .limit(req.max_notes)
-    )
-    if req.folder:
-        base = base.where(Note.folder.ilike(f"{req.folder}%"))
-    if req.tag:
-        from gnosis.models.tag import NoteTag, Tag
-        tag_sub = select(NoteTag.note_id).join(Tag).where(
-            Tag.name == req.tag.lower()
+        .where(
+            Note.is_deleted.is_(False),
+            Note.body.ilike(f"%{topic}%"),
         )
-        base = base.where(Note.id.in_(tag_sub))
-
+        .order_by(func.random())
+        .limit(req.max_notes or 40)
+    )
     result = await session.execute(scoped_note_stmt(base, owner_ids))
     notes = result.scalars().all()
 
-    if len(notes) < 2:
+    if not notes:
         raise HTTPException(
-            status_code=422,
-            detail=(
-                f"Only {len(notes)} note(s) matched the filter. "
-                "A MOC needs at least 2 notes. Broaden the topic, tag, or folder."
-            ),
+            status_code=404,
+            detail=f"No notes found containing '{topic}'. Add some notes first.",
         )
 
-    # ---- 2. Build compact note index for the prompt ------------------------
-    note_index_lines = []
-    for n in notes:
-        note_index_lines.append(f"- title: {n.title} | folder: {n.folder or 'root'}")
-    note_index = "\n".join(note_index_lines)
-
-    # ---- 3. LLM prompt ------------------------------------------------------
-    moc_title = f"MOC — {req.topic.title()}"
-    prompt = (
-        f"You are a Zettelkasten knowledge architect. "
-        f"Generate a Map of Content (MOC) for the topic: '{req.topic}'.\n\n"
-        f"Notes available in the vault ({len(notes)} total):\n{note_index}\n\n"
-        "Instructions:\n"
-        "1. Group these notes into 3–8 meaningful thematic sections.\n"
-        "2. Each section gets a short heading (3–6 words), a one-sentence description, "
-        "and a list of note titles that belong to it.\n"
-        "3. Every note title you include MUST appear exactly as given above.\n"
-        "4. Return ONLY valid JSON matching this schema — no prose before or after:\n\n"
-        "{\n"
-        '  "moc_title": "<concise title for the MOC note>",\n'
-        '  "sections": [\n'
-        "    {\n"
-        '      "heading": "<section heading>",\n'
-        '      "summary": "<one sentence>",\n'
-        '      "wikilinks": ["<note title A>", "<note title B>"]\n'
-        "    }\n"
-        "  ]\n"
-        "}"
+    # Build context for the LLM
+    notes_context = "\n\n".join(
+        f"### {n.title}\nType: {n.note_type} | Status: {n.status}\n{n.body[:400]}"
+        for n in notes
     )
-    raw = await llm_provider.complete(prompt, temperature=0.35, max_tokens=2000)
-
-    # ---- 4. Parse LLM JSON --------------------------------------------------
+    moc_title = req.title or f"MOC — {topic.title()}"
+    prompt = (
+        f"Create a Map of Content (MOC) for the topic: **{topic}**\n\n"
+        f"Available notes (excerpts):\n{notes_context}\n\n"
+        f"MOC title: {moc_title}\n\n"
+        "Organise the notes into 3-6 thematic sections. For each section provide:\n"
+        "- A heading (short phrase)\n"
+        "- A one-sentence summary of the section's theme\n"
+        "- A list of note titles that belong in this section (use exact titles)\n\n"
+        "Return as JSON:\n"
+        "[{\"heading\": \"...\", \"summary\": \"...\", \"wikilinks\": [\"Note Title\", ...]}]\n"
+        "Only include notes from the list above. No invented titles."
+    )
+    raw = await llm_provider.complete(prompt, temperature=0.4, max_tokens=2000)
     sections: list[MocSection] = []
-    parsed_title = moc_title
-    match = re.search(r"\{.*\}", raw, re.DOTALL)
-    if match:
+    json_match = re.search(r"\[.*\]", raw, re.DOTALL)
+    if json_match:
         try:
-            data = json.loads(match.group())
-            parsed_title = data.get("moc_title", moc_title)
-            for sec in data.get("sections", []):
-                sections.append(
-                    MocSection(
-                        heading=sec.get("heading", "Untitled Section"),
-                        summary=sec.get("summary", ""),
-                        wikilinks=[
-                            str(w) for w in sec.get("wikilinks", []) if isinstance(w, str)
-                        ],
-                    )
+            parsed_sections = json.loads(json_match.group())
+            sections = [
+                MocSection(
+                    heading=s.get("heading", "Section"),
+                    summary=s.get("summary", ""),
+                    wikilinks=s.get("wikilinks", []),
                 )
-        except (json.JSONDecodeError, KeyError, TypeError) as exc:
-            logger.warning("MOC JSON parse failed: %s", exc)
+                for s in parsed_sections
+                if isinstance(s, dict)
+            ]
+        except json.JSONDecodeError:
+            pass
 
-    if not sections:
-        sections = [
-            MocSection(
-                heading="All Notes",
-                summary=f"All {len(notes)} notes related to {req.topic}.",
-                wikilinks=[n.title for n in notes],
-            )
-        ]
-
-    # ---- 5. Build vault_path slug -------------------------------------------
-    from python_slugify import slugify  # type: ignore[import-untyped]
-    slug = slugify(parsed_title, max_length=80)
-    vault_path = f"80-meta/{slug}.md"
-
-    # ---- 6. Render full Markdown --------------------------------------------
-    markdown = _build_moc_markdown(req.topic, parsed_title, sections)
-
+    moc_body = _build_moc_markdown(topic, moc_title, sections)
     return MocResponse(
-        topic=req.topic,
-        moc_title=parsed_title,
-        vault_path=vault_path,
+        title=moc_title,
+        topic=topic,
         sections=sections,
-        markdown=markdown,
+        markdown=moc_body,
         note_count=len(notes),
     )

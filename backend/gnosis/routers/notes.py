@@ -14,6 +14,22 @@ cross-vault reads are impossible at the router layer.  The only exception
 is the internal ``_get_note_or_404`` helper, which applies the scope itself
 and additionally raises HTTP 403 when the authenticated user does not own
 (or share) the requested note.
+
+Dependency pattern
+------------------
+All read endpoints declare::
+
+    owner_ids: set[int] = Depends(get_vault_owner_ids)
+
+Write endpoints (update, delete, daily-note creation) that also need the
+calling user's identity keep::
+
+    current_user: User = Depends(get_current_user)
+    owner_ids:    set[int] = Depends(get_vault_owner_ids)
+
+get_vault_owner_ids honours the optional ``X-Vault-Owner-Id`` request header
+so the frontend VaultSwitcher can scope a request to a shared vault without
+any router-level changes.
 """
 
 import math
@@ -29,7 +45,7 @@ from sqlalchemy.orm import selectinload
 
 from gnosis.config import get_settings
 from gnosis.core.exceptions import NoteConflictError, NoteNotFoundError, VaultWriteError
-from gnosis.core.namespace import get_accessible_owner_ids, scoped_note_stmt
+from gnosis.core.namespace import scoped_note_stmt
 from gnosis.database import get_db
 from gnosis.models.link import Link
 from gnosis.models.note import Note
@@ -47,7 +63,7 @@ from gnosis.services.markdown_parser import (
     generate_note_id,
     write_note_file,
 )
-from gnosis.auth import get_current_user  # JWT dependency – raises 401 if missing
+from gnosis.core.auth import get_current_user, get_vault_owner_ids
 
 router = APIRouter(prefix="/api/v1/notes", tags=["notes"])
 
@@ -152,7 +168,7 @@ async def list_notes(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> NoteListResponse:
     """List notes with optional filters and pagination.
 
@@ -168,13 +184,11 @@ async def list_notes(
         page: Page number (1-indexed).
         page_size: Items per page.
         db: Database session.
-        current_user: Authenticated user (from JWT).
+        owner_ids: Resolved vault scope (from get_vault_owner_ids).
 
     Returns:
         Paginated NoteListResponse.
     """
-    owner_ids = await get_accessible_owner_ids(current_user, db)
-
     query = scoped_note_stmt(
         select(Note)
         .options(selectinload(Note.tags))
@@ -263,7 +277,7 @@ async def create_note(
     title = data.title
     slug = slugify(title)
 
-    # Slug collision scoped to this user's vault
+    # Slug collision scoped to this user's own vault only (not shared vaults)
     owner_ids = {current_user.id}
     existing_stmt = scoped_note_stmt(
         select(Note).where(Note.slug == slug, Note.is_deleted.is_(False)),
@@ -336,7 +350,8 @@ async def create_note(
     await db.commit()
     await db.refresh(note)
 
-    owner_ids_full = await get_accessible_owner_ids(current_user, db)
+    # Re-fetch with full accessible scope for the response
+    owner_ids_full = {current_user.id}
     note = await _get_note_or_404(note_id, db, owner_ids_full)
     return _note_to_read(note)
 
@@ -349,20 +364,18 @@ async def create_note(
 @router.get("/orphans", response_model=list[NoteListItem], summary="Get orphan notes")
 async def get_orphan_notes(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> list[NoteListItem]:
     """Return notes with zero incoming AND zero outgoing links within
     the caller's accessible vaults.
 
     Args:
         db: Database session.
-        current_user: Authenticated user (from JWT).
+        owner_ids: Resolved vault scope (from get_vault_owner_ids).
 
     Returns:
         List of orphan NoteListItem instances.
     """
-    owner_ids = await get_accessible_owner_ids(current_user, db)
-
     notes_with_links = (
         select(Note.id)
         .where(
@@ -406,6 +419,7 @@ async def get_orphan_notes(
 async def get_or_create_daily_note(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> NoteRead:
     """Get today's daily note or create it if it does not exist.
 
@@ -414,14 +428,13 @@ async def get_or_create_daily_note(
 
     Args:
         db: Database session.
-        current_user: Authenticated user (from JWT).
+        current_user: Authenticated user (needed to write to their vault).
+        owner_ids: Resolved vault scope (from get_vault_owner_ids).
 
     Returns:
         Today's daily NoteRead.
     """
     from gnosis.core.namespace import resolve_vault_path
-
-    owner_ids = await get_accessible_owner_ids(current_user, db)
 
     today = date.today()
     today_str = today.isoformat()
@@ -491,7 +504,7 @@ async def get_or_create_daily_note(
 async def get_note(
     note_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> NoteRead:
     """Retrieve a note by its timestamp ID.
 
@@ -500,12 +513,11 @@ async def get_note(
     Args:
         note_id: The note's timestamp ID (e.g., '20260619-143022').
         db: Database session.
-        current_user: Authenticated user (from JWT).
+        owner_ids: Resolved vault scope (from get_vault_owner_ids).
 
     Returns:
         Full NoteRead with backlinks and outlinks.
     """
-    owner_ids = await get_accessible_owner_ids(current_user, db)
     note = await _get_note_or_404(note_id, db, owner_ids)
     return _note_to_read(note)
 
@@ -521,6 +533,7 @@ async def update_note(
     data: NoteUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> NoteRead:
     """Update an existing note and write changes to the vault file.
 
@@ -531,14 +544,14 @@ async def update_note(
         note_id: The note's timestamp ID.
         data: Partial update data.
         db: Database session.
-        current_user: Authenticated user (from JWT).
+        current_user: Authenticated user (for ownership write-check).
+        owner_ids: Resolved vault scope (from get_vault_owner_ids).
 
     Returns:
         Updated NoteRead.
     """
     from gnosis.core.namespace import resolve_vault_path
 
-    owner_ids = await get_accessible_owner_ids(current_user, db)
     note = await _get_note_or_404(note_id, db, owner_ids)
 
     # Write access: only the note's actual owner may mutate it.
@@ -612,6 +625,7 @@ async def delete_note(
     note_id: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> None:
     """Soft-delete a note (sets is_deleted=True; vault file is preserved).
 
@@ -620,9 +634,9 @@ async def delete_note(
     Args:
         note_id: The note's timestamp ID.
         db: Database session.
-        current_user: Authenticated user (from JWT).
+        current_user: Authenticated user (for ownership check).
+        owner_ids: Resolved vault scope (from get_vault_owner_ids).
     """
-    owner_ids = await get_accessible_owner_ids(current_user, db)
     note = await _get_note_or_404(note_id, db, owner_ids)
 
     # Delete is an owner-only operation
@@ -645,20 +659,18 @@ async def delete_note(
 async def get_backlinks(
     note_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> list[NoteListItem]:
     """Return all notes (in accessible vaults) that link TO this note.
 
     Args:
         note_id: The target note's ID.
         db: Database session.
-        current_user: Authenticated user (from JWT).
+        owner_ids: Resolved vault scope (from get_vault_owner_ids).
 
     Returns:
         List of NoteListItem for all notes with an outgoing link to note_id.
     """
-    owner_ids = await get_accessible_owner_ids(current_user, db)
-
     base_stmt = (
         select(Note)
         .options(selectinload(Note.tags))
@@ -682,20 +694,18 @@ async def get_backlinks(
 async def get_outlinks(
     note_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> list[NoteListItem]:
     """Return all notes (in accessible vaults) that this note links TO.
 
     Args:
         note_id: The source note's ID.
         db: Database session.
-        current_user: Authenticated user (from JWT).
+        owner_ids: Resolved vault scope (from get_vault_owner_ids).
 
     Returns:
         List of NoteListItem for all notes linked from note_id.
     """
-    owner_ids = await get_accessible_owner_ids(current_user, db)
-
     base_stmt = (
         select(Note)
         .options(selectinload(Note.tags))
