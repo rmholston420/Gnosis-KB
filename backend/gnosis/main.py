@@ -1,101 +1,95 @@
-"""FastAPI application factory with MCP mount, rate limiting, CORS, and request tracing."""
+"""
+Gnosis FastAPI application entry point.
+
+Routers registered:
+  /api/v1/health   — liveness + readiness probes
+  /api/v1/auth     — JWT login
+  /api/v1/notes    — CRUD
+  /api/v1/search   — FTS + semantic
+  /api/v1/ai       — LLM features
+  /api/v1/graph    — wikilink graph
+  /api/v1/query    — saved queries
+  /api/v1/review   — spaced repetition
+  /api/v1/export   — vault export
+  /api/v1/tags     — tag list
+  /api/v1/ingest   — vault watcher ingest
+  /api/v1/users    — user profiles + vault sharing (multi-user)
+"""
 from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+from typing import AsyncIterator
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from slowapi import _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
 
-from gnosis.core.logging import configure_logging
-from gnosis.core.middleware import RequestIDMiddleware, TimingMiddleware, install_request_id_filter
-from gnosis.core.rate_limit import limiter
-from gnosis.database import init_db
-from gnosis.routers import auth, export, folders, graph, health, notes, query, review, search, tags
+from gnosis.config import settings
+from gnosis.database import engine, Base
+from gnosis.routers import (
+    ai,
+    auth,
+    export,
+    graph,
+    health,
+    ingest,
+    notes,
+    query,
+    review,
+    search,
+    tags,
+    users,
+)
 
-configure_logging()
-install_request_id_filter()
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-8s  %(name)s: %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Startup / shutdown lifecycle hook."""
-    logger.info("Gnosis API starting up")
-    await init_db()
-    await _bootstrap_admin()
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Create tables on startup (dev convenience; production uses Alembic)."""
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    logger.info("Gnosis API ready — database tables ensured")
     yield
     logger.info("Gnosis API shutting down")
 
 
-async def _bootstrap_admin() -> None:
-    """Create the default admin user on first run if no users exist."""
-    from sqlalchemy import select
-    from gnosis.core.auth import get_password_hash
-    from gnosis.config import settings
-    from gnosis.database import AsyncSessionLocal
-    from gnosis.models.user import User
-
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(User).limit(1))
-        if result.scalar_one_or_none() is None:
-            user = User(
-                email=settings.initial_admin_email,
-                hashed_password=get_password_hash(settings.initial_admin_password),
-                is_superuser=True,
-            )
-            db.add(user)
-            await db.commit()
-            logger.info("Bootstrap admin created: %s", settings.initial_admin_email)
-
-
 app = FastAPI(
     title="Gnosis Knowledge Base API",
-    version="1.0.0",
-    description="Sovereign, AI-augmented personal knowledge base with MCP server.",
+    version="0.4.0",
+    description=(
+        "REST + SSE backend for the Gnosis personal knowledge management system. "
+        "Features: vault sync, Zettelkasten notes, LightRAG graph-RAG, "
+        "spaced-repetition review, AI critique, multi-user vault sharing."
+    ),
     lifespan=lifespan,
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
 )
 
-# ── Rate limiting ──────────────────────────────────────────────────────────────
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
-app.add_middleware(SlowAPIMiddleware)
-
-# ── Request tracing & timing ───────────────────────────────────────────────────
-app.add_middleware(RequestIDMiddleware)
-app.add_middleware(TimingMiddleware)
-
-# ── CORS ───────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://localhost:80"],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ── Routers ────────────────────────────────────────────────────────────────────
-for r in (
-    notes.router, search.router, review.router, tags.router, folders.router,
-    graph.router, auth.router, export.router, health.router, query.router,
-):
-    app.include_router(r, prefix="/api/v1")
-
-# ── MCP Server ─────────────────────────────────────────────────────────────────
-try:
-    from fastapi_mcp import FastApiMCP
-    mcp = FastApiMCP(
-        app,
-        name="gnosis-kb",
-        description="Gnosis Knowledge Base MCP — read/write/search/reason over your personal knowledge graph.",
-        base_url="http://localhost:8010",
-    )
-    mcp.mount()
-    logger.info("MCP server mounted at /mcp")
-except ImportError:
-    logger.warning("fastapi-mcp not installed — MCP server disabled")
+API_V1 = "/api/v1"
+app.include_router(health.router, prefix=API_V1)
+app.include_router(auth.router, prefix=API_V1)
+app.include_router(notes.router, prefix=API_V1)
+app.include_router(search.router, prefix=API_V1)
+app.include_router(ai.router, prefix=API_V1)
+app.include_router(graph.router, prefix=API_V1)
+app.include_router(query.router, prefix=API_V1)
+app.include_router(review.router, prefix=API_V1)
+app.include_router(export.router, prefix=API_V1)
+app.include_router(tags.router, prefix=API_V1)
+app.include_router(ingest.router, prefix=API_V1)
+app.include_router(users.router, prefix=API_V1)   # ← new

@@ -1,27 +1,28 @@
-"""Note model."""
+"""Note model — extended with owner_id for multi-user vault support."""
 
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Boolean, Date, DateTime, Integer, JSON, String, Text, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, JSON, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from gnosis.database import Base
 
 if TYPE_CHECKING:
     from gnosis.models.review import ReviewCard
+    from gnosis.models.user import User
 
 
 class Note(Base):
     """A single note in the Gnosis vault.
 
+    Multi-user changes:
+      - ``owner_id`` FK to ``users.id`` (nullable so existing rows survive migration).
+      - All note queries in routers must filter ``Note.owner_id == current_user.id``.
+        The helper ``_scoped_notes(session, user_id)`` enforces this.
+
     The primary key is a timestamp-based ID (e.g., '20260619-143022').
     Notes are never hard-deleted; is_deleted=True marks them as deleted.
-
-    ``frontmatter`` uses SQLAlchemy's generic ``JSON`` type so the model
-    works with both PostgreSQL (stores as jsonb) and SQLite (used in CI).
-    PostgreSQL automatically maps JSON columns to jsonb storage; no
-    dialect-specific import is needed here.
     """
 
     __tablename__ = "notes"
@@ -47,15 +48,28 @@ class Note(Base):
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
     vector_indexed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     graph_indexed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    # JSON (not JSONB) keeps the model dialect-agnostic; PostgreSQL stores
-    # it as jsonb anyway.  SQLite CI tests no longer fail on an unknown type.
     frontmatter: Mapped[Optional[dict]] = mapped_column(
         JSON().with_variant(JSON(), "sqlite"),
         default=dict,
         nullable=True,
     )
 
+    # ---- Multi-user: owner FK ----------------------------------------------
+    owner_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,   # nullable so legacy rows survive; migration backfills admin
+        index=True,
+        comment="FK to users.id — the user who owns this note",
+    )
+
     # Relationships
+    owner: Mapped[Optional["User"]] = relationship(
+        "User",
+        back_populates="notes",
+        foreign_keys=[owner_id],
+        lazy="noload",
+    )
     tags: Mapped[list] = relationship(
         "Tag",
         secondary="note_tags",
