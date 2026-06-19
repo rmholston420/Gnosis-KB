@@ -1,7 +1,7 @@
-"""add review_cards table
+"""Add review_cards table.
 
-Revision ID: 0002_add_review_cards
-Revises: 0001
+Revision ID: 0002
+Revises:     001_initial
 Create Date: 2026-06-19
 """
 from __future__ import annotations
@@ -9,9 +9,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-# revision identifiers, used by Alembic.
-revision = "0002_add_review_cards"
-down_revision = None   # set to your previous revision id if one exists
+revision = "0002"
+down_revision = "001_initial"
 branch_labels = None
 depends_on = None
 
