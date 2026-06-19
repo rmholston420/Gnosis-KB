@@ -1,82 +1,109 @@
-import React from 'react';
-import { Routes, Route, NavLink } from 'react-router-dom';
-import { BookOpen, Search, GitBranch, RotateCcw, Settings, Table2, Network } from 'lucide-react';
-import NotesPage from './pages/NotesPage';
-import NoteEditor from './pages/NoteEditor';
-import SearchPage from './pages/SearchPage';
-import ReviewPage from './pages/ReviewPage';
-import GraphPage from './pages/GraphPage';
-import SettingsPage from './pages/SettingsPage';
-import QueryPage from './pages/QueryPage';
-import MocPage from './pages/MocPage';
-import VaultSwitcher, { VaultContextBanner } from './components/VaultSwitcher';
+import React, { useCallback } from 'react';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { Toaster, toast } from 'react-hot-toast';
 
-const navItems = [
-  { to: '/', icon: BookOpen, label: 'Notes' },
-  { to: '/search', icon: Search, label: 'Search' },
-  { to: '/graph', icon: GitBranch, label: 'Graph' },
-  { to: '/query', icon: Table2, label: 'Query' },
-  { to: '/moc', icon: Network, label: 'MOC' },
-  { to: '/review', icon: RotateCcw, label: 'Review' },
-  { to: '/settings', icon: Settings, label: 'Settings' },
-];
+import { OfflineBanner }    from '@/components/OfflineBanner';
+import { useOfflineSync }   from '@/hooks/useOfflineSync';
+import { registerSW, skipWaiting } from '@/registerSW';
+
+// Lazy-load all pages to keep the initial bundle small
+const LoginPage        = React.lazy(() => import('@/pages/LoginPage'));
+const NotesPage        = React.lazy(() => import('@/pages/NotesPage'));
+const NoteEditorPage   = React.lazy(() => import('@/pages/NoteEditorPage'));
+const GraphPage        = React.lazy(() => import('@/pages/GraphPage'));
+const SearchPage       = React.lazy(() => import('@/pages/SearchPage'));
+const AIPage           = React.lazy(() => import('@/pages/AIPage'));
+const SettingsPage     = React.lazy(() => import('@/pages/SettingsPage'));
+const QueryPage        = React.lazy(() => import('@/pages/QueryPage'));
+
+// Register SW once at app startup (idempotent)
+registerSW({
+  onNeedRefresh: () => {
+    toast(
+      (t) => (
+        <span>
+          A new version of Gnosis is available.{' '}
+          <button
+            onClick={() => {
+              skipWaiting();
+              toast.dismiss(t.id);
+            }}
+            style={{ fontWeight: 600, textDecoration: 'underline', cursor: 'pointer' }}
+          >
+            Reload now
+          </button>
+        </span>
+      ),
+      { duration: Infinity, id: 'sw-update' }
+    );
+  },
+  onOfflineReady: () => {
+    toast.success('Gnosis is ready to work offline.', { id: 'sw-ready', duration: 4000 });
+  },
+});
 
 export default function App() {
+  // Wire offline/sync state into the toast system
+  const handleToast = useCallback(
+    (message: string, variant: 'info' | 'success' | 'warning') => {
+      if (variant === 'success') toast.success(message, { duration: 4000 });
+      else if (variant === 'warning') toast(message, { icon: '⚠️', duration: Infinity });
+      else toast(message, { duration: 4000 });
+    },
+    []
+  );
+
+  const { isOnline, queuedCount, triggerSync } = useOfflineSync(handleToast);
+
   return (
-    <div className="flex h-screen flex-col bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100">
-      {/* Vault context banner — only visible when browsing a foreign vault */}
-      <VaultContextBanner />
+    <BrowserRouter>
+      {/* Offline banner sits above everything, sticky to the top */}
+      <OfflineBanner
+        isOnline={isOnline}
+        queuedCount={queuedCount}
+        onSyncClick={triggerSync}
+      />
 
-      <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar nav */}
-        <nav
-          aria-label="Main navigation"
-          className="flex w-14 flex-col items-center gap-1 border-r border-gray-200 dark:border-gray-800 py-4"
-        >
-          {/* Vault switcher always at the top */}
-          <VaultSwitcher />
-
-          {/* Divider */}
+      <React.Suspense
+        fallback={
           <div
-            aria-hidden
-            className="my-1 h-px w-8 rounded bg-gray-200 dark:bg-gray-800"
-          />
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              height: '100dvh',
+              color: 'var(--color-text-muted)',
+              fontSize: 'var(--text-sm)',
+            }}
+          >
+            Loading…
+          </div>
+        }
+      >
+        <Routes>
+          <Route path="/login"         element={<LoginPage />} />
+          <Route path="/"              element={<NotesPage />} />
+          <Route path="/notes/:id"     element={<NoteEditorPage />} />
+          <Route path="/graph"         element={<GraphPage />} />
+          <Route path="/search"        element={<SearchPage />} />
+          <Route path="/ai"            element={<AIPage />} />
+          <Route path="/settings"      element={<SettingsPage />} />
+          <Route path="/query"         element={<QueryPage />} />
+          <Route path="*"              element={<Navigate to="/" replace />} />
+        </Routes>
+      </React.Suspense>
 
-          {/* Page nav items */}
-          {navItems.map(({ to, icon: Icon, label }) => (
-            <NavLink
-              key={to}
-              to={to}
-              title={label}
-              end={to === '/'}
-              className={({ isActive }) =>
-                `flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
-                  isActive
-                    ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-400'
-                    : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'
-                }`
-              }
-            >
-              <Icon size={20} />
-            </NavLink>
-          ))}
-        </nav>
-
-        {/* Main content */}
-        <main className="flex flex-1 flex-col overflow-hidden">
-          <Routes>
-            <Route path="/" element={<NotesPage />} />
-            <Route path="/notes/:id" element={<NoteEditor />} />
-            <Route path="/notes/new" element={<NoteEditor />} />
-            <Route path="/search" element={<SearchPage />} />
-            <Route path="/graph" element={<GraphPage />} />
-            <Route path="/query" element={<QueryPage />} />
-            <Route path="/moc" element={<MocPage />} />
-            <Route path="/review" element={<ReviewPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-          </Routes>
-        </main>
-      </div>
-    </div>
+      <Toaster
+        position="bottom-right"
+        toastOptions={{
+          style: {
+            background: 'var(--color-surface-2)',
+            color:      'var(--color-text)',
+            border:     '1px solid var(--color-border)',
+            fontSize:   'var(--text-sm)',
+          },
+        }}
+      />
+    </BrowserRouter>
   );
 }
