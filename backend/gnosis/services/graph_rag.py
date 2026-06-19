@@ -1,111 +1,119 @@
-"""LightRAG integration for dual-level graph-aware retrieval.
-
-LightRAG automatically extracts entities and relationships from notes
-during ingestion and builds a knowledge graph on top of the vector index.
-
-Three query modes:
-  - local:   specific entity lookups
-  - global:  thematic synthesis across all notes
-  - hybrid:  combines local + global (default for chat)
-
-Entity types tuned to knowledge base domain:
-  concept, person, organization, project, tool, technique, insight, question
 """
+LightRAG integration for dual-level graph-aware retrieval.
+
+Query modes:
+  local  — specific entity lookups ("what does note X say about Y?")
+  global — thematic synthesis ("recurring themes in my EEG notes?")
+  hybrid — combines both (default for /ai/chat endpoint)
+
+The LightRAG working directory persists both the knowledge graph
+and the vector cache between restarts.
+"""
+from __future__ import annotations
 
 import logging
-from typing import Optional
+from pathlib import Path
+from typing import Any
 
 from gnosis.config import get_settings
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
-_rag: Optional[object] = None
+# Lazy imports — LightRAG is optional; degrade gracefully if not installed
+try:
+    from lightrag import LightRAG, QueryParam  # type: ignore[import]
+    from lightrag.llm.ollama import ollama_model_complete, ollama_embed  # type: ignore[import]
 
-
-async def init_lightrag() -> None:
-    """Initialize LightRAG with Ollama backend.
-
-    Must be called once at application startup (from lifespan handler).
-    Gracefully degrades if Ollama is not running.
-    """
-    global _rag
-    settings = get_settings()
-
-    try:
-        from lightrag import LightRAG  # type: ignore[import-untyped]
-        from lightrag.llm.ollama import ollama_model_complete, ollama_embed  # type: ignore[import-untyped]
-        from lightrag.utils import EmbeddingFunc  # type: ignore[import-untyped]
-        import os
-
-        os.makedirs(settings.lightrag_working_dir, exist_ok=True)
-
-        _rag = LightRAG(
-            working_dir=settings.lightrag_working_dir,
-            llm_model_func=ollama_model_complete,
-            llm_model_name=settings.ollama_llm_model,
-            llm_model_kwargs={"host": settings.ollama_base_url, "options": {"num_ctx": 32768}},
-            embedding_func=EmbeddingFunc(
-                embedding_dim=768,
-                max_token_size=512,
-                func=lambda texts: ollama_embed(
-                    texts,
-                    embed_model=settings.ollama_embed_model,
-                    host=settings.ollama_base_url,
-                ),
-            ),
-            entity_types=[
-                "concept", "person", "organization", "project",
-                "tool", "technique", "insight", "question",
-            ],
-        )
-        logger.info("LightRAG initialized with model: %s", settings.ollama_llm_model)
-    except Exception as e:
-        logger.warning(
-            "LightRAG init failed — AI chat will be degraded. Error: %s", e
-        )
-        _rag = None
+    _LIGHTRAG_AVAILABLE = True
+except ImportError:
+    _LIGHTRAG_AVAILABLE = False
+    logger.warning(
+        "lightrag-hku not installed — graph-RAG chat will fall back to plain LLM completion."
+    )
 
 
-async def ingest_note(note_id: str, title: str, body: str) -> None:
-    """Ingest a note into LightRAG for graph-aware retrieval.
+class GraphRAGService:
+    """Wraps LightRAG lifecycle and exposes ingest / query helpers."""
 
-    Called after a note is created or updated.
+    def __init__(self) -> None:
+        self._rag: Any = None
+        self._working_dir = Path(settings.lightrag_data_dir)
 
-    Args:
-        note_id: Note primary key (for logging).
-        title: Note title.
-        body: Note body Markdown text.
-    """
-    if _rag is None:
-        logger.debug("LightRAG not initialized; skipping ingest for %s", note_id)
-        return
-    try:
-        text = f"# {title}\n\n{body}"
-        await _rag.ainsert(text)  # type: ignore[union-attr]
-        logger.debug("LightRAG ingested note %s", note_id)
-    except Exception as e:
-        logger.warning("LightRAG ingest failed for note %s: %s", note_id, e)
+    async def initialize(self) -> None:
+        """Initialize LightRAG on application startup."""
+        if not _LIGHTRAG_AVAILABLE:
+            logger.warning("GraphRAGService: LightRAG unavailable — skipping init")
+            return
+
+        self._working_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            self._rag = LightRAG(
+                working_dir=str(self._working_dir),
+                llm_model_func=ollama_model_complete,
+                llm_model_name=settings.ollama_llm_model,
+                embedding_func=ollama_embed,
+                embedding_model=settings.ollama_embed_model,
+                entity_types=[
+                    "concept",
+                    "person",
+                    "project",
+                    "tool",
+                    "technique",
+                    "insight",
+                    "question",
+                ],
+            )
+            logger.info(
+                "GraphRAGService: LightRAG initialized at %s", self._working_dir
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("GraphRAGService: LightRAG init failed: %s", exc)
+            self._rag = None
+
+    @property
+    def is_available(self) -> bool:
+        """Return True when LightRAG is initialized and ready."""
+        return self._rag is not None
+
+    async def ingest_note(self, title: str, body: str) -> None:
+        """Ingest a note into the LightRAG knowledge graph.
+
+        Args:
+            title: Note title prepended to the body for context.
+            body: Markdown body of the note.
+        """
+        if not self.is_available:
+            return
+        try:
+            await self._rag.ainsert(f"{title}\n\n{body}")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("GraphRAGService.ingest_note failed: %s", exc)
+
+    async def query(
+        self, question: str, mode: str = "hybrid"
+    ) -> str:
+        """Query the knowledge graph.
+
+        Args:
+            question: Natural language question.
+            mode: One of 'local', 'global', or 'hybrid'.
+
+        Returns:
+            Answer string from LightRAG, or a fallback message.
+        """
+        if not self.is_available:
+            return (
+                "Graph-RAG is unavailable (LightRAG not initialised). "
+                "Ensure Ollama is running and lightrag-hku is installed."
+            )
+        try:
+            return await self._rag.aquery(question, param=QueryParam(mode=mode))
+        except Exception as exc:  # noqa: BLE001
+            logger.error("GraphRAGService.query failed: %s", exc)
+            return f"Query failed: {exc}"
 
 
-async def query_vault(question: str, mode: str = "hybrid") -> str:
-    """Query the knowledge graph using LightRAG.
-
-    Args:
-        question: Natural language question about the vault.
-        mode: LightRAG query mode: 'local', 'global', or 'hybrid'.
-
-    Returns:
-        LightRAG response string, or a fallback message if unavailable.
-    """
-    if _rag is None:
-        return (
-            "LightRAG is not available. Please ensure Ollama is running and "
-            "the LLM model is configured correctly."
-        )
-    try:
-        from lightrag import QueryParam  # type: ignore[import-untyped]
-        result = await _rag.aquery(question, param=QueryParam(mode=mode))  # type: ignore[union-attr]
-        return str(result)
-    except Exception as e:
-        logger.error("LightRAG query failed: %s", e)
-        return f"Query failed: {e}"
+# Module-level singleton
+graph_rag = GraphRAGService()

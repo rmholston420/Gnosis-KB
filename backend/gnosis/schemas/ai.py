@@ -1,73 +1,90 @@
-"""AI / RAG-related Pydantic schemas."""
+"""Pydantic schemas for AI router requests and responses."""
+from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel
-
-
-class ChatMessage(BaseModel):
-    """A single chat message."""
-
-    role: str  # user | assistant | system
-    content: str
-    timestamp: Optional[str] = None
+from pydantic import BaseModel, Field
 
 
 class ChatRequest(BaseModel):
-    """Chat request payload."""
+    """Request body for /ai/chat."""
 
-    message: str
-    history: list[ChatMessage] = []
-    mode: str = "hybrid"  # hybrid | local | global
-    session_id: Optional[str] = None
+    message: str = Field(..., min_length=1, max_length=8000, description="User message")
+    mode: str = Field(
+        default="hybrid",
+        description="LightRAG query mode: local | global | hybrid",
+    )
+    session_id: Optional[str] = Field(
+        default=None, description="Optional chat session ID for history"
+    )
 
 
 class ChatResponse(BaseModel):
-    """Chat response payload."""
+    """Response from /ai/chat."""
 
     answer: str
-    sources: list[str] = []
-    mode: str = "hybrid"
+    mode: str
     session_id: Optional[str] = None
 
 
 class SummarizeResponse(BaseModel):
-    """Note summarization result."""
+    """Response from /ai/summarize/{note_id}."""
 
     note_id: str
-    title: str
     summary: str
-    key_concepts: list[str]
+
+
+class LinkSuggestionsResponse(BaseModel):
+    """Response from /ai/suggest-links/{note_id}."""
+
+    note_id: str
+    suggestions: list[str] = Field(
+        description="List of suggested note titles to link to"
+    )
+    rationale: list[str] = Field(
+        description="Matching rationale for each suggestion"
+    )
+
+
+class TagSuggestionsResponse(BaseModel):
+    """Response from /ai/suggest-tags/{note_id}."""
+
+    note_id: str
     suggested_tags: list[str]
 
 
 class CritiqueResponse(BaseModel):
-    """Zettelkasten critique result."""
+    """Response from /ai/critique/{note_id}."""
 
     note_id: str
-    atomicity_score: int
-    atomicity_feedback: str
-    connectivity_score: int
-    connectivity_feedback: str
-    self_containedness_score: int
-    self_containedness_feedback: str
-    insight_density_score: int
-    insight_density_feedback: str
-    overall_feedback: str
+    atomicity: str = Field(description="Is there exactly one idea?")
+    connectivity: str = Field(description="Does it have sufficient outgoing links?")
+    self_containedness: str = Field(
+        description="Can it be understood without external context?"
+    )
+    insight_density: str = Field(description="Does it capture why this matters?")
+    overall: str = Field(description="Overall Zettelkasten quality assessment")
+
+
+class OrphanAuditItem(BaseModel):
+    """A single orphan note with AI-suggested connections."""
+
+    note_id: str
+    title: str
+    suggestions: list[str]
+
+
+class OrphanAuditResponse(BaseModel):
+    """Response from GET /ai/orphan-audit."""
+
+    orphan_count: int
+    items: list[OrphanAuditItem]
+
+
+class DailyReviewResponse(BaseModel):
+    """Response from POST /ai/daily-review."""
+
+    date: str
+    summary: str
+    inbox_note_count: int
     action_items: list[str]
-
-
-class LinkSuggestion(BaseModel):
-    """A single wikilink suggestion."""
-
-    target_note_id: str
-    target_title: str
-    reason: str
-    confidence: float
-
-
-class LinkSuggestionsResponse(BaseModel):
-    """Wikilink suggestions for a note."""
-
-    note_id: str
-    suggestions: list[LinkSuggestion]

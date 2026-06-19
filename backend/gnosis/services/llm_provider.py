@@ -1,195 +1,183 @@
-"""Multi-provider LLM service with automatic fallback.
-
-Provider priority: Ollama (local) → Groq → OpenAI/OpenRouter
-
-If the primary provider is unavailable, the service automatically
-falls back to the next available provider. If no provider is available,
-raises LLMUnavailableError.
-
-All providers are accessed via the OpenAI-compatible client API.
 """
+Multi-provider LLM service with three-tier auto-fallback:
+  Tier 1: Ollama (local, sovereign)
+  Tier 2: Groq (fast cloud fallback)
+  Tier 3: OpenAI (final fallback)
+
+All providers share the OpenAI-compatible API surface.
+"""
+from __future__ import annotations
 
 import logging
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, Any
+
+import httpx
+from openai import AsyncOpenAI
 
 from gnosis.config import get_settings
-from gnosis.core.exceptions import LLMUnavailableError
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 
-async def chat_completion(
-    messages: list[dict[str, str]],
-    stream: bool = False,
-    temperature: float = 0.7,
-    max_tokens: int = 2048,
-) -> str:
-    """Generate a chat completion using the best available LLM provider.
+class LLMProvider:
+    """Three-tier LLM provider with automatic fallback."""
 
-    Tries providers in order: Ollama → Groq → OpenAI.
-    Returns the complete response text.
+    def __init__(self) -> None:
+        self._ollama_client: AsyncOpenAI | None = None
+        self._groq_client: AsyncOpenAI | None = None
+        self._openai_client: AsyncOpenAI | None = None
+        self._available: list[str] = []
 
-    Args:
-        messages: List of {role, content} dicts.
-        stream: If True, use streaming (returns full text after stream).
-        temperature: Sampling temperature.
-        max_tokens: Maximum tokens in response.
-
-    Returns:
-        Response text string.
-
-    Raises:
-        LLMUnavailableError: If no provider is available.
-    """
-    settings = get_settings()
-    errors: list[str] = []
-
-    # Provider 1: Ollama
-    try:
-        return await _ollama_chat(messages, temperature, max_tokens)
-    except Exception as e:
-        errors.append(f"Ollama: {e}")
-        logger.debug("Ollama unavailable: %s", e)
-
-    # Provider 2: Groq
-    if settings.groq_api_key:
+    async def initialize(self) -> None:
+        """Probe each provider tier and record which are available."""
+        # Tier 1: Ollama
         try:
-            return await _openai_compatible_chat(
-                messages=messages,
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                resp = await client.get(f"{settings.ollama_base_url}/api/tags")
+                if resp.status_code == 200:
+                    self._ollama_client = AsyncOpenAI(
+                        base_url=f"{settings.ollama_base_url}/v1",
+                        api_key="ollama",
+                    )
+                    self._available.append("ollama")
+                    logger.info("LLM provider: Ollama available at %s", settings.ollama_base_url)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("LLM provider: Ollama not reachable (%s) — will skip", exc)
+
+        # Tier 2: Groq
+        if settings.groq_api_key:
+            self._groq_client = AsyncOpenAI(
                 base_url="https://api.groq.com/openai/v1",
                 api_key=settings.groq_api_key,
-                model=settings.groq_model,
-                temperature=temperature,
-                max_tokens=max_tokens,
             )
-        except Exception as e:
-            errors.append(f"Groq: {e}")
-            logger.debug("Groq unavailable: %s", e)
+            self._available.append("groq")
+            logger.info("LLM provider: Groq configured")
 
-    # Provider 3: OpenAI
-    if settings.openai_api_key:
-        try:
-            return await _openai_compatible_chat(
-                messages=messages,
-                base_url="https://api.openai.com/v1",
-                api_key=settings.openai_api_key,
-                model=settings.openai_model,
-                temperature=temperature,
-                max_tokens=max_tokens,
+        # Tier 3: OpenAI
+        if settings.openai_api_key:
+            self._openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+            self._available.append("openai")
+            logger.info("LLM provider: OpenAI configured")
+
+        if not self._available:
+            logger.warning(
+                "LLM provider: No providers available. "
+                "Start Ollama or set GROQ_API_KEY / OPENAI_API_KEY."
             )
-        except Exception as e:
-            errors.append(f"OpenAI: {e}")
-            logger.debug("OpenAI unavailable: %s", e)
 
-    # Provider 4: OpenRouter
-    if settings.openrouter_api_key:
-        try:
-            return await _openai_compatible_chat(
-                messages=messages,
-                base_url=settings.openrouter_base_url,
-                api_key=settings.openrouter_api_key,
-                model=settings.openrouter_model,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-        except Exception as e:
-            errors.append(f"OpenRouter: {e}")
+    @property
+    def is_available(self) -> bool:
+        """Return True if at least one provider is reachable."""
+        return bool(self._available)
 
-    logger.error("All LLM providers failed: %s", "; ".join(errors))
-    raise LLMUnavailableError()
+    def _get_client_and_model(self) -> tuple[AsyncOpenAI, str]:
+        """Return the highest-priority available client and its model name."""
+        if "ollama" in self._available and self._ollama_client:
+            return self._ollama_client, settings.ollama_llm_model
+        if "groq" in self._available and self._groq_client:
+            return self._groq_client, "llama-3.3-70b-versatile"
+        if "openai" in self._available and self._openai_client:
+            return self._openai_client, "gpt-4o-mini"
+        raise RuntimeError("No LLM provider available")
+
+    async def complete(
+        self,
+        prompt: str,
+        system: str = "You are a helpful knowledge management assistant.",
+        temperature: float = 0.3,
+        max_tokens: int = 2048,
+    ) -> str:
+        """Generate a completion. Cascades through providers on failure.
+
+        Args:
+            prompt: User message content.
+            system: System instruction prepended to the conversation.
+            temperature: Sampling temperature (0.0–1.0).
+            max_tokens: Maximum tokens in the response.
+
+        Returns:
+            The assistant's response text.
+        """
+        providers = list(self._available)
+        last_exc: Exception | None = None
+
+        for provider in providers:
+            client, model = self._get_client_for(provider)
+            try:
+                response = await client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                return response.choices[0].message.content or ""
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("LLM provider %s failed: %s — trying next", provider, exc)
+                last_exc = exc
+                continue
+
+        raise RuntimeError(f"All LLM providers failed. Last error: {last_exc}")
+
+    async def stream(
+        self,
+        prompt: str,
+        system: str = "You are a helpful knowledge management assistant.",
+        temperature: float = 0.3,
+        max_tokens: int = 2048,
+    ) -> AsyncGenerator[str, None]:
+        """Stream completion tokens. Cascades through providers on failure.
+
+        Args:
+            prompt: User message content.
+            system: System instruction.
+            temperature: Sampling temperature.
+            max_tokens: Maximum tokens in the response.
+
+        Yields:
+            Incremental text chunks from the streaming response.
+        """
+        providers = list(self._available)
+        last_exc: Exception | None = None
+
+        for provider in providers:
+            client, model = self._get_client_for(provider)
+            try:
+                stream = await client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    stream=True,
+                )
+                async for chunk in stream:
+                    delta = chunk.choices[0].delta.content
+                    if delta:
+                        yield delta
+                return
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("LLM stream provider %s failed: %s — trying next", provider, exc)
+                last_exc = exc
+                continue
+
+        raise RuntimeError(f"All LLM stream providers failed. Last error: {last_exc}")
+
+    def _get_client_for(self, provider: str) -> tuple[AsyncOpenAI, str]:
+        """Return (client, model) for the named provider."""
+        if provider == "ollama" and self._ollama_client:
+            return self._ollama_client, settings.ollama_llm_model
+        if provider == "groq" and self._groq_client:
+            return self._groq_client, "llama-3.3-70b-versatile"
+        if provider == "openai" and self._openai_client:
+            return self._openai_client, "gpt-4o-mini"
+        raise ValueError(f"Unknown or unconfigured provider: {provider}")
 
 
-async def stream_chat_completion(
-    messages: list[dict[str, str]],
-    temperature: float = 0.7,
-    max_tokens: int = 2048,
-) -> AsyncGenerator[str, None]:
-    """Stream a chat completion using the best available provider.
-
-    Yields text chunks as they arrive from the LLM.
-
-    Args:
-        messages: List of {role, content} dicts.
-        temperature: Sampling temperature.
-        max_tokens: Maximum tokens in response.
-
-    Yields:
-        Text chunk strings.
-    """
-    settings = get_settings()
-
-    # Try Ollama streaming first
-    try:
-        async for chunk in _ollama_stream(messages, temperature, max_tokens):
-            yield chunk
-        return
-    except Exception as e:
-        logger.debug("Ollama stream unavailable: %s", e)
-
-    # Fallback: non-streaming via other providers, yield full response
-    try:
-        response = await chat_completion(messages, temperature=temperature, max_tokens=max_tokens)
-        yield response
-    except LLMUnavailableError:
-        yield "[Error: No LLM provider available]"
-
-
-async def _ollama_chat(
-    messages: list[dict[str, str]],
-    temperature: float,
-    max_tokens: int,
-) -> str:
-    """Send a chat request to the local Ollama instance."""
-    import ollama  # type: ignore[import-untyped]
-    from ollama import AsyncClient
-
-    settings = get_settings()
-    client = AsyncClient(host=settings.ollama_base_url)
-    response = await client.chat(
-        model=settings.ollama_llm_model,
-        messages=messages,  # type: ignore[arg-type]
-        options={"temperature": temperature, "num_predict": max_tokens},
-    )
-    return str(response.message.content)
-
-
-async def _ollama_stream(
-    messages: list[dict[str, str]],
-    temperature: float,
-    max_tokens: int,
-) -> AsyncGenerator[str, None]:
-    """Stream chat chunks from the local Ollama instance."""
-    from ollama import AsyncClient
-
-    settings = get_settings()
-    client = AsyncClient(host=settings.ollama_base_url)
-    async for chunk in await client.chat(
-        model=settings.ollama_llm_model,
-        messages=messages,  # type: ignore[arg-type]
-        stream=True,
-        options={"temperature": temperature, "num_predict": max_tokens},
-    ):
-        if chunk.message and chunk.message.content:
-            yield chunk.message.content
-
-
-async def _openai_compatible_chat(
-    messages: list[dict[str, str]],
-    base_url: str,
-    api_key: str,
-    model: str,
-    temperature: float,
-    max_tokens: int,
-) -> str:
-    """Send a chat request to any OpenAI-compatible API."""
-    from openai import AsyncOpenAI
-
-    client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-    response = await client.chat.completions.create(
-        model=model,
-        messages=messages,  # type: ignore[arg-type]
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
-    content = response.choices[0].message.content
-    return str(content) if content else ""
+# Module-level singleton — initialized at application startup via lifespan
+llm_provider = LLMProvider()
