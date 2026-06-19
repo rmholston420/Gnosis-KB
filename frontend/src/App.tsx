@@ -2,21 +2,25 @@ import React, { useCallback } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { Toaster, toast } from 'react-hot-toast';
 
-import { OfflineBanner }    from '@/components/OfflineBanner';
-import { useOfflineSync }   from '@/hooks/useOfflineSync';
-import { registerSW, skipWaiting } from '@/registerSW';
+import { OfflineBanner }             from '@/components/OfflineBanner';
+import { useOfflineSync }            from '@/hooks/useOfflineSync';
+import { registerSW, skipWaiting }   from '@/registerSW';
 
-// Lazy-load all pages to keep the initial bundle small
-const LoginPage        = React.lazy(() => import('@/pages/LoginPage'));
-const NotesPage        = React.lazy(() => import('@/pages/NotesPage'));
-const NoteEditorPage   = React.lazy(() => import('@/pages/NoteEditorPage'));
-const GraphPage        = React.lazy(() => import('@/pages/GraphPage'));
-const SearchPage       = React.lazy(() => import('@/pages/SearchPage'));
-const AIPage           = React.lazy(() => import('@/pages/AIPage'));
-const SettingsPage     = React.lazy(() => import('@/pages/SettingsPage'));
-const QueryPage        = React.lazy(() => import('@/pages/QueryPage'));
+// Pages — lazy loaded for smaller initial bundle
+const LoginPage      = React.lazy(() => import('@/pages/LoginPage'));
+const NotesPage      = React.lazy(() => import('@/pages/NotesPage'));
+const NoteEditorPage = React.lazy(() => import('@/pages/NoteEditorPage'));
+const GraphPage      = React.lazy(() => import('@/pages/GraphPage'));
+const SearchPage     = React.lazy(() => import('@/pages/SearchPage'));
+const AIPage         = React.lazy(() => import('@/pages/AIChatPage'));
+const SettingsPage   = React.lazy(() => import('@/pages/SettingsPage'));
+const QueryPage      = React.lazy(() => import('@/pages/QueryPage'));
+const DailyNotePage  = React.lazy(() => import('@/pages/DailyNotePage'));
+const ReviewPage     = React.lazy(() => import('@/pages/ReviewPage'));
+const IngestPage     = React.lazy(() => import('@/pages/IngestPage'));
+const MocPage        = React.lazy(() => import('@/pages/MocPage'));
 
-// Register SW once at app startup (idempotent)
+// Register SW once at app startup (idempotent — safe to call multiple times)
 registerSW({
   onNeedRefresh: () => {
     toast(
@@ -24,10 +28,7 @@ registerSW({
         <span>
           A new version of Gnosis is available.{' '}
           <button
-            onClick={() => {
-              skipWaiting();
-              toast.dismiss(t.id);
-            }}
+            onClick={() => { skipWaiting(); toast.dismiss(t.id); }}
             style={{ fontWeight: 600, textDecoration: 'underline', cursor: 'pointer' }}
           >
             Reload now
@@ -43,7 +44,6 @@ registerSW({
 });
 
 export default function App() {
-  // Wire offline/sync state into the toast system
   const handleToast = useCallback(
     (message: string, variant: 'info' | 'success' | 'warning') => {
       if (variant === 'success') toast.success(message, { duration: 4000 });
@@ -57,7 +57,6 @@ export default function App() {
 
   return (
     <BrowserRouter>
-      {/* Offline banner sits above everything, sticky to the top */}
       <OfflineBanner
         isOnline={isOnline}
         queuedCount={queuedCount}
@@ -66,30 +65,28 @@ export default function App() {
 
       <React.Suspense
         fallback={
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              height: '100dvh',
-              color: 'var(--color-text-muted)',
-              fontSize: 'var(--text-sm)',
-            }}
-          >
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            height: '100dvh', color: 'var(--color-text-muted)', fontSize: 'var(--text-sm)',
+          }}>
             Loading…
           </div>
         }
       >
         <Routes>
-          <Route path="/login"         element={<LoginPage />} />
-          <Route path="/"              element={<NotesPage />} />
-          <Route path="/notes/:id"     element={<NoteEditorPage />} />
-          <Route path="/graph"         element={<GraphPage />} />
-          <Route path="/search"        element={<SearchPage />} />
-          <Route path="/ai"            element={<AIPage />} />
-          <Route path="/settings"      element={<SettingsPage />} />
-          <Route path="/query"         element={<QueryPage />} />
-          <Route path="*"              element={<Navigate to="/" replace />} />
+          <Route path="/login"     element={<LoginPage />} />
+          <Route path="/"          element={<NotesPage />} />
+          <Route path="/notes/:id" element={<NoteEditorPage />} />
+          <Route path="/graph"     element={<GraphPage />} />
+          <Route path="/search"    element={<SearchPage />} />
+          <Route path="/ai"        element={<AIPage />} />
+          <Route path="/settings"  element={<SettingsPage />} />
+          <Route path="/query"     element={<QueryPage />} />
+          <Route path="/daily"     element={<DailyNotePage />} />
+          <Route path="/review"    element={<ReviewPage />} />
+          <Route path="/ingest"    element={<IngestPage />} />
+          <Route path="/moc"       element={<MocPage />} />
+          <Route path="*"          element={<Navigate to="/" replace />} />
         </Routes>
       </React.Suspense>
 
