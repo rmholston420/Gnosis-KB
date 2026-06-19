@@ -3,6 +3,8 @@
 Configures uvicorn + application loggers to emit structured JSON lines
 suitable for log aggregators (Loki, Datadog, CloudWatch).
 When LOG_FORMAT=text (default in dev), falls back to human-readable output.
+Every log line emitted inside a request will carry a `request_id` field
+(populated by RequestIDFilter installed at startup).
 """
 from __future__ import annotations
 
@@ -19,11 +21,11 @@ class JSONFormatter(logging.Formatter):
     """Emit log records as single-line JSON objects."""
 
     def format(self, record: logging.LogRecord) -> str:  # noqa: A003
-        """Serialise *record* to a JSON string."""
         log_obj: dict[str, Any] = {
             "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
             "level": record.levelname,
             "logger": record.name,
+            "request_id": getattr(record, "request_id", "-"),
             "msg": record.getMessage(),
         }
         if record.exc_info:
@@ -39,7 +41,9 @@ def configure_logging() -> None:
         handler.setFormatter(JSONFormatter())
     else:
         handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)-8s %(name)s — %(message)s")
+            logging.Formatter(
+                "%(asctime)s %(levelname)-8s [%(request_id)s] %(name)s — %(message)s"
+            )
         )
     root = logging.getLogger()
     root.setLevel(level)

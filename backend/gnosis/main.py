@@ -1,4 +1,4 @@
-"""FastAPI application factory with MCP mount, rate limiting, and CORS."""
+"""FastAPI application factory with MCP mount, rate limiting, CORS, and request tracing."""
 from __future__ import annotations
 
 import logging
@@ -13,11 +13,13 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from gnosis.core.logging import configure_logging
+from gnosis.core.middleware import RequestIDMiddleware, TimingMiddleware, install_request_id_filter
 from gnosis.core.rate_limit import limiter
 from gnosis.database import init_db
 from gnosis.routers import auth, export, folders, graph, health, notes, review, search, tags
 
 configure_logging()
+install_request_id_filter()
 logger = logging.getLogger(__name__)
 
 
@@ -63,6 +65,10 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 app.add_middleware(SlowAPIMiddleware)
+
+# ── Request tracing & timing ───────────────────────────────────────────────────
+app.add_middleware(RequestIDMiddleware)
+app.add_middleware(TimingMiddleware)
 
 # ── CORS ───────────────────────────────────────────────────────────────────────
 app.add_middleware(

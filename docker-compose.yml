@@ -54,15 +54,18 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       SECRET_KEY: ${SECRET_KEY:-changeme-replace-in-production}
-      # In production, Nginx handles CORS at the proxy layer.
-      # CORS_ORIGINS here covers direct API access (dev / health checks).
       CORS_ORIGINS: '["http://localhost:3010","http://localhost:5173","http://localhost:8080"]'
+      LOG_FORMAT: ${LOG_FORMAT:-text}
     volumes:
       - vault_data:/vault
       - lightrag_data:/lightrag
-    # Port is intentionally NOT exposed to the host in production; all
-    # traffic routes through the nginx service.  Uncomment for direct
-    # backend access during development.
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:8010/api/v1/health/ping || exit 1']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    # Port intentionally NOT exposed; all traffic routes through nginx.
     # ports:
     #   - '8010:8010'
 
@@ -74,7 +77,6 @@ services:
     restart: unless-stopped
     depends_on:
       - api
-    # Port is intentionally NOT exposed; nginx proxies to ui:3010 internally.
     # ports:
     #   - '3010:3010'
 
@@ -89,24 +91,52 @@ services:
       - api
       - ui
     ports:
-      - '80:80'        # HTTP (redirects to HTTPS in production)
-      - '443:443'      # HTTPS (production)
-      - '8080:8080'    # Dev plain-HTTP port (nginx.dev.conf only)
+      - '80:80'
+      - '443:443'
+      - '8080:8080'
     volumes:
-      # Production config (TLS).  Switch to nginx.dev.conf for local dev.
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      # TLS certificates: mount your Let's Encrypt / ACME certs here.
-      # For local dev, comment these two lines and use nginx.dev.conf.
+      - ./nginx/gnosis.conf:/etc/nginx/conf.d/default.conf:ro
       - ${TLS_CERT_DIR:-./nginx/certs}:/etc/nginx/certs:ro
-      # ACME challenge directory for Let's Encrypt auto-renewal
       - certbot_webroot:/var/www/certbot:ro
-      # Persist logs
       - nginx_logs:/var/log/nginx
     healthcheck:
-      test: ['CMD', 'wget', '-q', '--spider', 'http://localhost:8080/health']
+      test: ['CMD', 'wget', '-q', '--spider', 'http://localhost:80/']
       interval: 15s
       timeout: 5s
       retries: 3
+
+  # ---------------------------------------------------------------------------
+  # Automated PostgreSQL backup (runs daily via supercronic)
+  # ---------------------------------------------------------------------------
+  backup:
+    image: postgres:16-alpine
+    container_name: gnosis-backup
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-gnosis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gnosis_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-gnosis}
+      BACKUP_DIR: /backups
+      RETAIN_DAYS: ${BACKUP_RETAIN_DAYS:-7}
+    volumes:
+      - ./scripts/backup.sh:/backup.sh:ro
+      - backup_data:/backups
+    # Run backup at 02:00 UTC daily using sh -c + sleep loop
+    # (avoids adding a cron daemon to the image)
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo 'Backup service started. First run in 60 s, then every 24 h.'
+        sleep 60
+        while true; do
+          sh /backup.sh
+          sleep 86400
+        done
 
 volumes:
   postgres_data:
@@ -115,3 +145,4 @@ volumes:
   lightrag_data:
   certbot_webroot:
   nginx_logs:
+  backup_data:

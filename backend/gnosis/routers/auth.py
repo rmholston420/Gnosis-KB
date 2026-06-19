@@ -1,7 +1,12 @@
-"""Auth router — token issue, user registration, me endpoint."""
+"""Auth router — token issue, user registration, me endpoint.
+
+Rate limits applied:
+  POST /token    — 10/minute per IP  (brute-force protection)
+  POST /register — 10/minute per IP  (registration spam protection)
+"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +18,7 @@ from gnosis.core.auth import (
     require_user,
     verify_password,
 )
+from gnosis.core.rate_limit import auth_limit, limiter
 from gnosis.database import get_db
 from gnosis.models.user import User
 from gnosis.schemas.auth import Token, UserCreate, UserRead
@@ -21,7 +27,12 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/token", response_model=Token, summary="Issue JWT token")
-async def login(form: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)) -> Token:
+@auth_limit
+async def login(
+    request: Request,
+    form: OAuth2PasswordRequestForm = Depends(),
+    db: AsyncSession = Depends(get_db),
+) -> Token:
     """Exchange username+password for a bearer JWT."""
     result = await db.execute(select(User).where(User.email == form.username))
     user = result.scalar_one_or_none()
@@ -32,8 +43,13 @@ async def login(form: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = 
 
 
 @router.post("/register", response_model=UserRead, status_code=201, summary="Register a new user")
-async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)) -> User:
-    """Create a new user account (open if AUTH_REQUIRED=false, else superuser-only via first-run)."""
+@auth_limit
+async def register(
+    request: Request,
+    payload: UserCreate,
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """Create a new user account."""
     result = await db.execute(select(User).where(User.email == payload.email))
     if result.scalar_one_or_none() is not None:
         raise HTTPException(status_code=400, detail="Email already registered")
