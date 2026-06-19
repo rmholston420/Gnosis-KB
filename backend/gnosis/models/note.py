@@ -1,12 +1,15 @@
 """Note model."""
 
 from datetime import date, datetime
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Boolean, Column, Date, DateTime, Integer, JSON, String, Text, func
+from sqlalchemy import Boolean, Date, DateTime, Integer, JSON, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from gnosis.database import Base
+
+if TYPE_CHECKING:
+    from gnosis.models.review import ReviewCard
 
 
 class Note(Base):
@@ -70,5 +73,12 @@ class Note(Base):
         "Link",
         foreign_keys="Link.target_id",
         back_populates="target_note",
+        lazy="selectin",
+    )
+    review_card: Mapped[Optional["ReviewCard"]] = relationship(
+        "ReviewCard",
+        back_populates="note",
+        uselist=False,
+        cascade="all, delete-orphan",
         lazy="selectin",
     )

@@ -9,6 +9,7 @@ from gnosis.config import get_settings
 from gnosis.core.events import lifespan
 from gnosis.core.exceptions import gnosis_exception_handler
 from gnosis.routers import notes, search, graph, ai, ingest, tags, health
+from gnosis.routers import review
 
 logging.basicConfig(
     level=logging.INFO,
@@ -47,8 +48,9 @@ def create_app() -> FastAPI:
     app.include_router(ai.router)
     app.include_router(ingest.router)
     app.include_router(tags.router)
+    app.include_router(review.router)
 
-    # Mount MCP server — lazy so import failure doesn’t crash the whole app
+    # Mount MCP server — lazy so import failure doesn't crash the whole app
     try:
         from fastapi_mcp import FastApiMCP  # type: ignore[import-untyped]
         mcp = FastApiMCP(

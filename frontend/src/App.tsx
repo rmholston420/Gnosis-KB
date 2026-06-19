@@ -8,6 +8,7 @@ import AIChatPage from './pages/AIChatPage';
 import IngestPage from './pages/IngestPage';
 import DailyNotePage from './pages/DailyNotePage';
 import SettingsPage from './pages/SettingsPage';
+import ReviewPage from './pages/ReviewPage';
 
 export default function App() {
   return (
@@ -23,6 +24,7 @@ export default function App() {
         <Route path="ingest" element={<IngestPage />} />
         <Route path="daily" element={<DailyNotePage />} />
         <Route path="settings" element={<SettingsPage />} />
+        <Route path="review" element={<ReviewPage />} />
       </Route>
     </Routes>
   );
