@@ -2,9 +2,16 @@
 
 All values read from environment variables (with .env file support).
 Sensible defaults allow the app to start without any env vars set.
+
+Exports
+-------
+settings     : Settings   -- singleton instance (import directly for speed)
+get_settings : () -> Settings -- callable shim used by FastAPI Depends()
+                                 and any code that prefers the function form
 """
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Optional
 
 from pydantic import field_validator
@@ -14,7 +21,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Central config object — instantiated once and imported everywhere."""
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
 
     # Database
     database_url: str = "sqlite+aiosqlite:///./gnosis_dev.db"
@@ -49,5 +58,19 @@ class Settings(BaseSettings):
     initial_admin_email: str = "admin@gnosis.local"
     initial_admin_password: str = "gnosis_admin"
 
+    # Multi-user vault root  (parent directory that contains per-user slug dirs)
+    vault_root: str = "./vaults"
 
+
+# Singleton — import `settings` directly when you don’t need DI.
 settings = Settings()
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    """Return the cached Settings singleton.
+
+    Compatible with FastAPI’s ``Depends(get_settings)`` pattern and with
+    plain ``get_settings()`` call sites (routers, alembic env.py, etc.).
+    """
+    return settings
