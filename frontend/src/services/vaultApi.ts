@@ -2,8 +2,13 @@
  * Typed API wrappers for vault / sharing endpoints.
  *
  * All functions read the JWT from localStorage under the key used by the
- * existing auth flow ("gnosis_token"). Adjust the key name if your auth
- * service uses a different one.
+ * existing auth flow ("gnosis_token").
+ *
+ * NOTE: These calls intentionally bypass the main api.ts request() wrapper
+ * because they are used to bootstrap the vault context itself (circular
+ * dependency if they went through it). They do NOT inject X-Vault-Owner-Id
+ * because vault-management endpoints always operate on the caller's own
+ * account regardless of which vault they're browsing.
  */
 
 export interface VaultGrant {
@@ -19,7 +24,7 @@ export interface VaultGrant {
   pending: boolean;
 }
 
-const BASE = '/api';
+const BASE = '/api/v1';
 
 function authHeaders(): HeadersInit {
   const token = localStorage.getItem('gnosis_token') ?? '';
@@ -27,7 +32,11 @@ function authHeaders(): HeadersInit {
 }
 
 /** Fetch the authenticated user's own profile. */
-export async function fetchMe(): Promise<{ id: number; vault_display_name: string | null; email: string }> {
+export async function fetchMe(): Promise<{
+  id: number;
+  vault_display_name: string | null;
+  email: string;
+}> {
   const res = await fetch(`${BASE}/users/me`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`fetchMe: ${res.status}`);
   return res.json();
@@ -48,7 +57,6 @@ export async function fetchMyVaultGrants(): Promise<VaultGrant[]> {
     accepted_at: string | null;
   }> = grantsRes.ok ? await grantsRes.json() : [];
 
-  // Own vault is always first entry
   const ownEntry: VaultGrant = {
     ownerId: me.id,
     label: me.vault_display_name ?? me.email ?? 'My Vault',

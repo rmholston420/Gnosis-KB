@@ -2,21 +2,51 @@
  * Gnosis API service layer.
  * All HTTP calls go through typed fetch wrappers.
  * Base URL: /api/v1 (proxied by Vite dev server to :8010 in dev)
+ *
+ * Vault scoping
+ * -------------
+ * When the user is browsing a shared vault, useVaultStore holds a non-null
+ * activeVaultOwnerId.  request() reads this synchronously via Zustand's
+ * getState() selector (safe outside React components) and appends the header
+ *   X-Vault-Owner-Id: <owner_id>
+ * to every request.  The backend reads this header in a FastAPI dependency
+ * (core/auth.py) and passes it to get_accessible_owner_ids() so note queries
+ * are automatically scoped to the foreign vault when the header is present and
+ * the caller has a valid grant, or fall back to their own vault otherwise.
  */
 
+import { useVaultStore } from '../store/useVaultStore';
+
 const BASE_URL = '/api/v1';
+
+/** Headers injected into every request: auth token + optional vault scope. */
+function buildCommonHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const token = localStorage.getItem('gnosis_token') ?? '';
+  const { activeVaultOwnerId } = useVaultStore.getState();
+
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    ...extra,
+  };
+
+  if (activeVaultOwnerId !== null) {
+    headers['X-Vault-Owner-Id'] = String(activeVaultOwnerId);
+  }
+
+  return headers;
+}
 
 async function request<T>(
   method: string,
   path: string,
   body?: unknown,
-  headers?: Record<string, string>
+  extraHeaders?: Record<string, string>
 ): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     method,
     headers: {
       'Content-Type': 'application/json',
-      ...headers,
+      ...buildCommonHeaders(extraHeaders),
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
@@ -89,28 +119,34 @@ export const api = {
   suggestLinks: (id: string) => request('POST', `/ai/suggest-links/${id}`),
 
   // --- Ingest ---
+  // FormData requests can't use Content-Type: application/json, so they
+  // build headers manually via buildCommonHeaders() (no Content-Type override).
   ingestFile: (file: File, folder = '70-sources') => {
     const form = new FormData();
     form.append('file', file);
     form.append('folder', folder);
-    return fetch(`${BASE_URL}/ingest/file`, { method: 'POST', body: form }).then(
-      async (res) => {
-        if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
-        return res.json();
-      }
-    );
+    return fetch(`${BASE_URL}/ingest/file`, {
+      method: 'POST',
+      headers: buildCommonHeaders(),
+      body: form,
+    }).then(async (res) => {
+      if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+      return res.json();
+    });
   },
 
   ingestUrl: (url: string, folder = '70-sources') => {
     const form = new FormData();
     form.append('url', url);
     form.append('folder', folder);
-    return fetch(`${BASE_URL}/ingest/url`, { method: 'POST', body: form }).then(
-      async (res) => {
-        if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
-        return res.json();
-      }
-    );
+    return fetch(`${BASE_URL}/ingest/url`, {
+      method: 'POST',
+      headers: buildCommonHeaders(),
+      body: form,
+    }).then(async (res) => {
+      if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+      return res.json();
+    });
   },
 };
 
