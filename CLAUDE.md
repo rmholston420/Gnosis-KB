@@ -1,89 +1,113 @@
-# Gnosis KB — AI Agent Context
+# Gnosis KB — CLAUDE.md
 
-This file is the entry point for AI coding agents (Claude Code, OpenHands, Cursor) working on this codebase.
+Project context for AI coding agents. Read this file at the start of every session.
 
-## Project Identity
+## What is Gnosis?
 
-- **Name**: Gnosis Knowledge Base
-- **Owner**: rmholston420 (Retired Systems Scientist / Tibetan Buddhist Lama)
-- **Purpose**: Sovereign, Linux-native, AI-augmented personal knowledge base
-- **Stack**: FastAPI (Python 3.12) + React/TypeScript (Vite 6) + PostgreSQL 16 + Qdrant 1.13 + LightRAG
-- **Philosophy**: Plain Markdown files are the source of truth. DB + Qdrant are derived caches. Zero vendor lock-in.
+Gnosis is a sovereign, Linux-native, AI-augmented personal knowledge base built on
+FastAPI + React + PostgreSQL + Qdrant + LightRAG. All notes are plain Markdown files
+in `~/gnosis-vault/`. The PostgreSQL DB and Qdrant vector store are **derived caches**
+— deleting them loses no knowledge.
 
-## Spec Document
-
-The canonical build spec is in the Gnosis-KB Space as `Gnosis-Knowledge-Base-Build-Spec.md`. Always treat it as the single source of truth.
-
-## Directory Layout
+## Repo Layout
 
 ```
-Gnosis-KB/
-├── backend/           # FastAPI app (gnosis Python package)
-│   ├── gnosis/        # Main application package
-│   │   ├── main.py    # FastAPI app factory + MCP mount
-│   │   ├── config.py  # pydantic-settings config
-│   │   ├── database.py
-│   │   ├── models/    # SQLAlchemy ORM models
-│   │   ├── schemas/   # Pydantic request/response schemas
-│   │   ├── routers/   # FastAPI route handlers
-│   │   ├── services/  # Business logic
-│   │   └── core/      # Auth, events, exceptions
-│   ├── tests/
-│   ├── alembic/
-│   ├── pyproject.toml
-│   └── Dockerfile
-├── frontend/          # React + Vite app
-│   ├── src/
-│   ├── package.json
-│   └── Dockerfile
-├── vault/             # Default dev vault (gitignored content)
-├── docker-compose.yml
-├── .env.example
-├── .github/workflows/ci.yml
-├── DEVELOPMENT.md
-└── CLAUDE.md          # This file
+backend/gnosis/
+  config.py          — pydantic-settings; all env vars live here
+  database.py        — async SQLAlchemy engine + get_db dependency
+  main.py            — FastAPI app factory, middleware, router registration, MCP mount
+  core/
+    auth.py          — JWT + bcrypt; AUTH_REQUIRED=false auto-logins as admin
+    rate_limit.py    — slowapi Limiter singleton
+    logging.py       — JSON or text structured logging
+  models/            — SQLAlchemy ORM (note.py, user.py, tag.py, review_card.py)
+  schemas/           — Pydantic request/response (note.py, auth.py, graph.py, search.py)
+  routers/           — FastAPI route handlers
+    notes.py         — CRUD + backlinks
+    search.py        — hybrid (Qdrant+FTS), fulltext, suggest
+    review.py        — SM-2 spaced repetition
+    tags.py / folders.py
+    graph.py         — /graph/, /neighborhood, /path, /clusters, /stats
+    auth.py          — /auth/token, /register, /me
+    export.py        — /export/vault.zip, /export/note/{id}.md, /export/note/{id}.pdf
+    health.py        — /health/ (readiness), /health/ping (liveness)
+  services/
+    fts.py           — PostgreSQL tsvector fulltext_search + suggest_completions
+    hybrid_search.py — Qdrant BM25+dense RRF fusion
+    vault_sync.py    — watchdog filesystem → DB sync
+    embeddings.py    — fastembed dense + ColBERT
+    vector_store.py  — Qdrant collection management
+    graph_rag.py     — LightRAG integration
+  alembic/versions/
+    001_initial_schema.py
+    0002_add_review_cards.py
+    0003_add_fts_tsvector.py
+    0004_add_users.py
+
+frontend/src/
+  App.tsx            — router + sidebar nav
+  main.tsx           — ReactDOM mount + service worker registration
+  registerSW.ts      — PWA service worker registration
+  sw.ts              — Service worker (cache-first static, network-first API)
+  pages/
+    NotesPage.tsx    — vault browser
+    NoteEditor.tsx   — TipTap editor + wikilink preview + backlinks
+    SearchPage.tsx   — hybrid/fulltext/suggest search UI
+    ReviewPage.tsx   — SM-2 spaced repetition UI
+    GraphPage.tsx    — react-force-graph-2d knowledge graph
+    SettingsPage.tsx — health dashboard + vault export
+  components/
+    WikilinkPreview.tsx / WikilinkPopup.tsx / BacklinkPanel.tsx
+  api/client.ts      — axios instance
+
+nginx/gnosis.conf    — HTTP reverse proxy with CSP headers
+public/manifest.json — PWA manifest
 ```
 
-## Build Slices
+## Key Conventions
 
-| Slice | Phase | Status |
-|---|---|---|
-| 1 | Scaffold + Docker + Config | ✅ Complete |
-| 2 | DB Models + Migrations + Auth | 🔄 In Progress |
-| 3 | Vault Sync + Notes CRUD | Pending |
-| 4 | Hybrid Search (Qdrant) | Pending |
-| 5 | Graph Router + NetworkX | Pending |
-| 6 | AI / LightRAG / LLM Provider | Pending |
-| 7 | Document Ingest Pipeline | Pending |
-| 8 | MCP Server | Pending |
-| 9 | Frontend (React/Vite) | Pending |
-| 10 | CI/CD + Polish | Pending |
+- **Two-call DB pattern**: `AsyncSessionLocal = get_session_factory(engine)` then
+  `async with AsyncSessionLocal() as db:` — never call `get_session_factory()` twice.
+- **AUTH_REQUIRED=false** (default): every request auto-resolves to the bootstrap admin;
+  no login screen needed for single-user local deployment.
+- **Rate limits**: 200 req/min globally via slowapi; apply `@limiter.limit("N/minute")`
+  per-route for stricter endpoints.
+- **Migrations**: always add new Alembic migrations in `alembic/versions/` with sequential
+  IDs (0005, 0006, …). Never edit existing migration files.
+- **JSON logging**: set `LOG_FORMAT=json` in production for log aggregators.
+- **PDF export**: disabled by default; set `ENABLE_PDF_EXPORT=true` and install weasyprint.
 
-## Key Architectural Decisions
+## Session 3 Slices Completed (F–K)
 
-1. **Vault watcher** (`watchdog`) syncs filesystem → PostgreSQL + Qdrant. It is a background asyncio task started in FastAPI lifespan.
-2. **MCP exposure**: `fastapi-mcp` auto-exposes all FastAPI routes as MCP tools. Mounts at `/mcp` on port 8011.
-3. **Hybrid search**: Qdrant three-vector collection: `dense` (BAAI/bge-base-en-v1.5, 768-dim) + `sparse` (BM25/IDF) + `colbert` (128-dim, multivector reranking). Fused with RRF.
-4. **LightRAG**: Dual-level graph-RAG for multi-hop knowledge queries. Uses Ollama `qwen2.5:14b` + `nomic-embed-text`.
-5. **Auth**: JWT via `python-jose`. No auth on MCP endpoints (localhost only).
-6. **Soft deletes**: Notes are never hard-deleted from DB. `is_deleted=True` flag. Vault file preserved.
-7. **Wikilinks**: `[[Title]]` syntax. Extracted by regex, stored in `links` table. Bidirectional.
+- **F. Auth** — JWT + bcrypt single/multi-user; `core/auth.py`, `routers/auth.py`,
+  `models/user.py`, migration `0004_add_users.py`, bootstrap admin on first run.
+- **G. Graph view** — `routers/graph.py` (5 endpoints), `schemas/graph.py`,
+  `GraphPage.tsx` with react-force-graph-2d, colour legend, stats overlay, zoom controls.
+- **H. Export** — `routers/export.py` (vault.zip, single-note .md, optional PDF via
+  WeasyPrint); `SettingsPage.tsx` with one-click download.
+- **I. PWA** — `public/manifest.json`, `src/sw.ts` (cache-first static / network-first API),
+  `src/registerSW.ts`, meta tags in `index.html`.
+- **J. Rate limiting** — `core/rate_limit.py` (slowapi Limiter), wired in `main.py`;
+  `nginx/gnosis.conf` updated with CSP + security headers.
+- **K. Observability** — `core/logging.py` (JSON/text structured logging),
+  `routers/health.py` (`/health/` readiness + `/health/ping` liveness with DB+Qdrant checks).
 
-## Environment Variables
-
-All config in `backend/gnosis/config.py` via pydantic-settings. Copy `.env.example` → `.env`.
-
-## Running Tests
+## Environment Variables (key ones)
 
 ```bash
-cd backend
-pip install -e ".[dev]"
-pytest --cov=gnosis --cov-report=term-missing
+AUTH_REQUIRED=false          # true = enforce JWT login
+SECRET_KEY=<openssl rand>    # change before exposing publicly
+INITIAL_ADMIN_EMAIL=admin@gnosis.local
+INITIAL_ADMIN_PASSWORD=gnosis_admin
+LOG_FORMAT=json              # production structured logging
+ENABLE_PDF_EXPORT=false      # true + pip install weasyprint
 ```
 
-## Coding Standards
+## Next Session Hooks
 
-- Python: ruff for linting, mypy for types, Google-style docstrings, no bare `Any`
-- TypeScript: strict mode, no `any`, JSDoc on all functions
-- Every router function must have at least one test
-- 85% minimum coverage on `gnosis/services/` and `gnosis/routers/`
+- **AI Router** — `routers/ai.py` (LightRAG chat, summarise, suggest-links, critique,
+  orphan audit, SSE streaming) — the largest remaining feature.
+- **Ingest Router** — `routers/ingest.py` (PDF/DOCX/PPTX/XLSX/image → literature note).
+- **TipTap WikiLink extension** — `components/editor/WikiLinkExtension.ts`.
+- **Command palette** — `components/search/CommandPalette.tsx` (cmdk, Cmd+K).
+- **Playwright E2E tests** — `tests/e2e/test_workflow.py`.

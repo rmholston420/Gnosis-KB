@@ -1,50 +1,180 @@
+import React, { useCallback, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import api from '../services/api';
-import GraphCanvas from '../components/GraphCanvas';
-import type { GraphData, GraphStats } from '../types';
-import { Loader2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { apiClient } from '../api/client';
+import { Loader2, ZoomIn, ZoomOut, RotateCcw, BarChart2 } from 'lucide-react';
+
+/** Colours keyed by note_type — matches spec §GraphView2D */
+const NODE_COLORS: Record<string, string> = {
+  permanent: '#3b82f6',
+  fleeting: '#94a3b8',
+  project: '#f59e0b',
+  area: '#10b981',
+  resource: '#8b5cf6',
+  journal: '#ec4899',
+  moc: '#ef4444',
+  literature: '#06b6d4',
+};
+
+interface GraphNode {
+  id: string;
+  title: string;
+  note_type: string;
+  incoming_link_count: number;
+}
+
+interface GraphEdge {
+  source: string;
+  target: string;
+}
+
+interface GraphData {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
+interface GraphStats {
+  node_count: number;
+  edge_count: number;
+  density: number;
+  avg_degree: number;
+  orphan_count: number;
+}
+
+/** Lazy-load react-force-graph-2d to avoid SSR issues */
+const ForceGraph2D = React.lazy(() => import('react-force-graph-2d'));
 
 export default function GraphPage() {
+  const navigate = useNavigate();
+  const fgRef = useRef<unknown>(null);
+  const [highlighted, setHighlighted] = useState<string | null>(null);
+  const [showStats, setShowStats] = useState(false);
+
   const { data: graphData, isLoading } = useQuery<GraphData>({
     queryKey: ['graph'],
-    queryFn: () => api.getFullGraph() as Promise<GraphData>,
+    queryFn: () => apiClient.get('/api/v1/graph/').then((r) => r.data),
+    staleTime: 60_000,
   });
 
   const { data: stats } = useQuery<GraphStats>({
     queryKey: ['graph-stats'],
-    queryFn: () => api.getGraphStats() as Promise<GraphStats>,
+    queryFn: () => apiClient.get('/api/v1/graph/stats').then((r) => r.data),
+    enabled: showStats,
   });
+
+  const handleNodeClick = useCallback(
+    (node: GraphNode) => navigate(`/notes/${node.id}`),
+    [navigate],
+  );
+
+  const handleNodeHover = useCallback((node: GraphNode | null) => {
+    setHighlighted(node?.id ?? null);
+  }, []);
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="animate-spin text-text-muted" size={24} />
+      <div className="flex h-screen items-center justify-center">
+        <Loader2 className="animate-spin text-blue-500" size={40} />
       </div>
     );
   }
 
+  const fgData = {
+    nodes: (graphData?.nodes ?? []).map((n) => ({ ...n })),
+    links: (graphData?.edges ?? []).map((e) => ({ source: e.source, target: e.target })),
+  };
+
   return (
-    <div className="flex flex-col h-full">
-      <div className="px-4 py-2 border-b border-border flex items-center justify-between flex-shrink-0">
-        <h1 className="text-sm font-semibold text-text-primary">Knowledge Graph</h1>
-        {stats && (
-          <div className="flex gap-4 text-xs text-text-muted">
-            <span>{stats.total_notes} notes</span>
-            <span>{stats.total_links} links</span>
-            <span>{stats.orphan_count} orphans</span>
-            <span>density {(stats.density * 100).toFixed(2)}%</span>
-          </div>
-        )}
+    <div className="relative h-screen w-full bg-gray-950">
+      {/* Toolbar */}
+      <div className="absolute left-4 top-4 z-10 flex gap-2">
+        <button
+          className="rounded bg-gray-800 p-2 text-white hover:bg-gray-700"
+          title="Zoom in"
+          onClick={() => (fgRef.current as any)?.zoom(1.5, 400)}
+        >
+          <ZoomIn size={16} />
+        </button>
+        <button
+          className="rounded bg-gray-800 p-2 text-white hover:bg-gray-700"
+          title="Zoom out"
+          onClick={() => (fgRef.current as any)?.zoom(0.67, 400)}
+        >
+          <ZoomOut size={16} />
+        </button>
+        <button
+          className="rounded bg-gray-800 p-2 text-white hover:bg-gray-700"
+          title="Reset zoom"
+          onClick={() => (fgRef.current as any)?.zoomToFit(400)}
+        >
+          <RotateCcw size={16} />
+        </button>
+        <button
+          className={`rounded p-2 text-white hover:bg-gray-700 ${
+            showStats ? 'bg-blue-700' : 'bg-gray-800'
+          }`}
+          title="Stats panel"
+          onClick={() => setShowStats((s) => !s)}
+        >
+          <BarChart2 size={16} />
+        </button>
       </div>
-      {graphData && graphData.nodes.length > 0 ? (
-        <div className="flex-1 overflow-hidden">
-          <GraphCanvas data={graphData} height="100%" />
-        </div>
-      ) : (
-        <div className="flex items-center justify-center h-64 text-text-muted text-sm">
-          No notes in the graph yet. Create some notes and link them with [[wikilinks]].
+
+      {/* Stats overlay */}
+      {showStats && stats && (
+        <div className="absolute right-4 top-4 z-10 rounded-lg bg-gray-900/90 p-4 text-sm text-white shadow-xl">
+          <h3 className="mb-2 font-semibold">Graph Stats</h3>
+          <dl className="space-y-1">
+            {([
+              ['Nodes', stats.node_count],
+              ['Edges', stats.edge_count],
+              ['Density', stats.density.toFixed(4)],
+              ['Avg degree', stats.avg_degree.toFixed(2)],
+              ['Orphans', stats.orphan_count],
+            ] as [string, string | number][]).map(([k, v]) => (
+              <div key={k} className="flex justify-between gap-6">
+                <dt className="text-gray-400">{k}</dt>
+                <dd className="font-mono">{v}</dd>
+              </div>
+            ))}
+          </dl>
         </div>
       )}
+
+      {/* Legend */}
+      <div className="absolute bottom-4 left-4 z-10 rounded-lg bg-gray-900/80 p-3 text-xs text-white">
+        {Object.entries(NODE_COLORS).map(([type, color]) => (
+          <div key={type} className="flex items-center gap-2">
+            <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: color }} />
+            {type}
+          </div>
+        ))}
+      </div>
+
+      <React.Suspense fallback={<div className="flex h-screen items-center justify-center text-white">Loading graph…</div>}>
+        <ForceGraph2D
+          ref={fgRef as React.MutableRefObject<unknown>}
+          graphData={fgData}
+          nodeColor={(node: unknown) => {
+            const n = node as GraphNode & { id: string };
+            const color = NODE_COLORS[n.note_type] ?? '#6b7280';
+            return highlighted === n.id ? '#ffffff' : color;
+          }}
+          nodeVal={(node: unknown) => {
+            const n = node as GraphNode;
+            return Math.sqrt(n.incoming_link_count + 1) * 3;
+          }}
+          nodeLabel={(node: unknown) => (node as GraphNode).title}
+          linkWidth={1}
+          linkDirectionalArrowLength={3}
+          linkDirectionalArrowRelPos={1}
+          onNodeClick={handleNodeClick as (node: unknown) => void}
+          onNodeHover={handleNodeHover as (node: unknown | null) => void}
+          enableNodeDrag
+          cooldownTicks={100}
+          backgroundColor="#030712"
+        />
+      </React.Suspense>
     </div>
   );
 }

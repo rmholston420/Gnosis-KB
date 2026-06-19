@@ -1,0 +1,37 @@
+{
+  "name": "Gnosis Knowledge Base",
+  "short_name": "Gnosis",
+  "description": "Sovereign, AI-augmented personal knowledge base",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#3b82f6",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "New Note",
+      "url": "/notes/new",
+      "description": "Capture a new note into the inbox"
+    },
+    {
+      "name": "Daily Note",
+      "url": "/daily",
+      "description": "Open today's daily note"
+    }
+  ],
+  "categories": ["productivity", "utilities"]
+}

@@ -1,71 +1,93 @@
-"""Gnosis Knowledge Base — FastAPI application factory."""
+"""FastAPI application factory with MCP mount, rate limiting, and CORS."""
+from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
-from gnosis.config import get_settings
-from gnosis.core.events import lifespan
-from gnosis.core.exceptions import gnosis_exception_handler
-from gnosis.routers import notes, search, graph, ai, ingest, tags, health
-from gnosis.routers import review
+from gnosis.core.logging import configure_logging
+from gnosis.core.rate_limit import limiter
+from gnosis.database import init_db
+from gnosis.routers import auth, export, folders, graph, health, notes, review, search, tags
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-)
+configure_logging()
 logger = logging.getLogger(__name__)
 
-settings = get_settings()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Startup / shutdown lifecycle hook."""
+    logger.info("Gnosis API starting up")
+    await init_db()
+    await _bootstrap_admin()
+    yield
+    logger.info("Gnosis API shutting down")
 
 
-def create_app() -> FastAPI:
-    app = FastAPI(
-        title=settings.app_name,
-        version=settings.app_version,
-        description="Gnosis sovereign AI-augmented personal knowledge base.",
-        docs_url="/docs",
-        redoc_url="/redoc",
-        openapi_url="/openapi.json",
-        lifespan=lifespan,
+async def _bootstrap_admin() -> None:
+    """Create the default admin user on first run if no users exist."""
+    from sqlalchemy import select
+    from gnosis.core.auth import get_password_hash
+    from gnosis.config import settings
+    from gnosis.database import AsyncSessionLocal
+    from gnosis.models.user import User
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(User).limit(1))
+        if result.scalar_one_or_none() is None:
+            user = User(
+                email=settings.initial_admin_email,
+                hashed_password=get_password_hash(settings.initial_admin_password),
+                is_superuser=True,
+            )
+            db.add(user)
+            await db.commit()
+            logger.info("Bootstrap admin created: %s", settings.initial_admin_email)
+
+
+app = FastAPI(
+    title="Gnosis Knowledge Base API",
+    version="1.0.0",
+    description="Sovereign, AI-augmented personal knowledge base with MCP server.",
+    lifespan=lifespan,
+)
+
+# ── Rate limiting ──────────────────────────────────────────────────────────────
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
+app.add_middleware(SlowAPIMiddleware)
+
+# ── CORS ───────────────────────────────────────────────────────────────────────
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://localhost:80"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ── Routers ────────────────────────────────────────────────────────────────────
+for r in (notes.router, search.router, review.router, tags.router, folders.router,
+          graph.router, auth.router, export.router, health.router):
+    app.include_router(r, prefix="/api/v1")
+
+# ── MCP Server ─────────────────────────────────────────────────────────────────
+try:
+    from fastapi_mcp import FastApiMCP
+    mcp = FastApiMCP(
+        app,
+        name="gnosis-kb",
+        description="Gnosis Knowledge Base MCP — read/write/search/reason over your personal knowledge graph.",
+        base_url="http://localhost:8010",
     )
-
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.cors_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
-    app.add_exception_handler(Exception, gnosis_exception_handler)  # type: ignore[arg-type]
-
-    app.include_router(health.router)
-    app.include_router(notes.router)
-    app.include_router(search.router)
-    app.include_router(graph.router)
-    app.include_router(ai.router)
-    app.include_router(ingest.router)
-    app.include_router(tags.router)
-    app.include_router(review.router)
-
-    # Mount MCP server — lazy so import failure doesn't crash the whole app
-    try:
-        from fastapi_mcp import FastApiMCP  # type: ignore[import-untyped]
-        mcp = FastApiMCP(
-            app,
-            name="gnosis-kb",
-            description="Gnosis Knowledge Base MCP server.",
-            base_url="http://localhost:8010",
-        )
-        mcp.mount()
-        logger.info("MCP server mounted at /mcp")
-    except Exception as exc:
-        logger.warning("fastapi-mcp not available — MCP endpoint disabled: %s", exc)
-
-    logger.info("Gnosis API ready. Docs: /docs")
-    return app
-
-
-app = create_app()
+    mcp.mount()
+    logger.info("MCP server mounted at /mcp")
+except ImportError:
+    logger.warning("fastapi-mcp not installed — MCP server disabled")

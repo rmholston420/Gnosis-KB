@@ -1,4 +1,5 @@
-"""User model."""
+"""SQLAlchemy User model."""
+from __future__ import annotations
 
 from datetime import datetime
 from typing import Optional
@@ -10,18 +11,16 @@ from gnosis.database import Base
 
 
 class User(Base):
-    """Application user (single-user mode: always 'admin')."""
+    """Single-user or multi-user account record."""
 
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
-    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
-    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    is_superuser: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), onupdate=func.now())
-
-    def __repr__(self) -> str:
-        return f"<User id={self.id} username={self.username!r}>"
+    email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False, index=True)
+    hashed_password: Mapped[str] = mapped_column(String(200), nullable=False)
+    full_name: Mapped[Optional[str]] = mapped_column(String(200))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_superuser: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

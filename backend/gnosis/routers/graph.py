@@ -1,211 +1,136 @@
-"""Graph router — knowledge graph traversal and visualization."""
+"""Graph router — knowledge graph endpoints for visualization and traversal.
 
+All endpoints return data formatted for react-force-graph-2d:
+  { nodes: [{id, title, type, incomingLinkCount}], edges: [{source, target}] }
+"""
+from __future__ import annotations
+
+import json
 from typing import Any
 
 import networkx as nx
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from gnosis.database import get_db
-from gnosis.models.link import Link
 from gnosis.models.note import Note
-from gnosis.schemas.graph import (
-    ClusterResult,
-    GraphData,
-    GraphEdge,
-    GraphNode,
-    GraphStats,
-    PathResult,
-)
+from gnosis.schemas.graph import GraphData, GraphEdge, GraphNode, GraphStats
 
-router = APIRouter(prefix="/api/v1/graph", tags=["graph"])
+router = APIRouter(prefix="/graph", tags=["graph"])
 
 
-async def _build_nx_graph(db: AsyncSession) -> nx.DiGraph:
-    """Build a NetworkX DiGraph from the links table."""
-    g: nx.DiGraph = nx.DiGraph()
-
-    notes_result = await db.execute(
-        select(Note.id, Note.title).where(Note.is_deleted.is_(False))
+async def _build_nx_graph(db: AsyncSession) -> tuple[nx.DiGraph, list[Note]]:
+    """Load all notes + links from DB and build a NetworkX DiGraph."""
+    result = await db.execute(
+        select(Note).where(Note.is_deleted == False)  # noqa: E712
     )
-    for row in notes_result:
-        g.add_node(row.id, title=row.title)
+    notes = result.scalars().all()
+    G: nx.DiGraph = nx.DiGraph()
+    for note in notes:
+        G.add_node(note.id, title=note.title, note_type=note.note_type)
 
-    links_result = await db.execute(select(Link.source_id, Link.target_id))
-    for row in links_result:
-        g.add_edge(row.source_id, row.target_id)
+    rows = await db.execute(text("SELECT source_id, target_id FROM links"))
+    for source_id, target_id in rows:
+        G.add_edge(source_id, target_id)
 
-    return g
+    return G, list(notes)
 
 
-@router.get("/", response_model=GraphData, summary="Full knowledge graph")
+@router.get("/", response_model=GraphData, summary="Full knowledge graph for visualization")
 async def get_full_graph(db: AsyncSession = Depends(get_db)) -> GraphData:
-    """Return the full graph (all notes + wikilinks) for visualization.
-
-    Returns:
-        GraphData with nodes and edges lists.
-    """
-    notes_result = await db.execute(
-        select(Note).where(Note.is_deleted.is_(False))
-    )
-    notes = notes_result.scalars().all()
-
-    # Compute incoming link counts
-    in_count_result = await db.execute(
-        select(Link.target_id, func.count(Link.id).label("cnt"))
-        .group_by(Link.target_id)
-    )
-    in_counts: dict[str, int] = {row.target_id: row.cnt for row in in_count_result}
-    out_count_result = await db.execute(
-        select(Link.source_id, func.count(Link.id).label("cnt"))
-        .group_by(Link.source_id)
-    )
-    out_counts: dict[str, int] = {row.source_id: row.cnt for row in out_count_result}
-
+    """Return all notes as nodes and all wikilinks as directed edges."""
+    G, notes = await _build_nx_graph(db)
+    in_degree = dict(G.in_degree())
     nodes = [
         GraphNode(
             id=n.id,
             title=n.title,
             note_type=n.note_type,
-            status=n.status,
-            folder=n.folder,
-            word_count=n.word_count,
-            tag_count=len(n.frontmatter.get("tags", [])) if n.frontmatter else 0,
-            incoming_link_count=in_counts.get(n.id, 0),
-            outgoing_link_count=out_counts.get(n.id, 0),
+            status=getattr(n, "status", "draft"),
+            folder=getattr(n, "folder", ""),
+            incoming_link_count=in_degree.get(n.id, 0),
         )
         for n in notes
     ]
-
-    links_result = await db.execute(select(Link))
     edges = [
-        GraphEdge(
-            source=lnk.source_id,
-            target=lnk.target_id,
-            link_text=lnk.link_text,
-            link_type=lnk.link_type,
-        )
-        for lnk in links_result.scalars().all()
+        GraphEdge(source=u, target=v)
+        for u, v in G.edges()
     ]
-
     return GraphData(nodes=nodes, edges=edges)
 
 
-@router.get("/neighborhood/{note_id}", response_model=GraphData, summary="Ego graph")
-async def get_neighborhood(
-    note_id: str, db: AsyncSession = Depends(get_db)
-) -> GraphData:
-    """Return the ego-graph: the given note plus all 1-hop neighbors.
-
-    Args:
-        note_id: The central note ID.
-        db: Database session.
-
-    Returns:
-        GraphData with the note and its immediate neighbors.
-    """
-    g = await _build_nx_graph(db)
-    if note_id not in g:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Note {note_id} not found in graph")
-
-    ego = nx.ego_graph(g, note_id, radius=1)
-    neighbor_ids = set(ego.nodes())
-
-    notes_result = await db.execute(
-        select(Note).where(Note.id.in_(list(neighbor_ids)), Note.is_deleted.is_(False))
-    )
-    notes = notes_result.scalars().all()
+@router.get("/neighborhood/{note_id}", response_model=GraphData, summary="Ego-graph: note + 1-hop neighbours")
+async def get_neighborhood(note_id: str, db: AsyncSession = Depends(get_db)) -> GraphData:
+    """Return the target note plus all notes directly linked to/from it."""
+    G, notes = await _build_nx_graph(db)
+    if note_id not in G:
+        raise HTTPException(status_code=404, detail="Note not found in graph")
+    note_map = {n.id: n for n in notes}
+    neighbours = set(G.predecessors(note_id)) | set(G.successors(note_id)) | {note_id}
+    sub = G.subgraph(neighbours)
+    in_degree = dict(sub.in_degree())
     nodes = [
         GraphNode(
-            id=n.id, title=n.title, note_type=n.note_type, status=n.status,
-            folder=n.folder, word_count=n.word_count, tag_count=0,
-            incoming_link_count=0, outgoing_link_count=0,
+            id=nid,
+            title=note_map[nid].title if nid in note_map else nid,
+            note_type=note_map[nid].note_type if nid in note_map else "unknown",
+            status=getattr(note_map.get(nid), "status", "draft"),
+            folder=getattr(note_map.get(nid), "folder", ""),
+            incoming_link_count=in_degree.get(nid, 0),
         )
-        for n in notes
+        for nid in sub.nodes()
     ]
-
-    links_result = await db.execute(
-        select(Link).where(
-            Link.source_id.in_(list(neighbor_ids)),
-            Link.target_id.in_(list(neighbor_ids)),
-        )
-    )
-    edges = [
-        GraphEdge(source=lnk.source_id, target=lnk.target_id, link_text=lnk.link_text, link_type=lnk.link_type)
-        for lnk in links_result.scalars().all()
-    ]
+    edges = [GraphEdge(source=u, target=v) for u, v in sub.edges()]
     return GraphData(nodes=nodes, edges=edges)
 
 
-@router.get("/path/{from_id}/{to_id}", response_model=PathResult, summary="Shortest path between notes")
-async def get_path(
-    from_id: str, to_id: str, db: AsyncSession = Depends(get_db)
-) -> PathResult:
-    """Find the shortest path between two notes using NetworkX.
-
-    Args:
-        from_id: Source note ID.
-        to_id: Target note ID.
-        db: Database session.
-
-    Returns:
-        PathResult with path list and length.
-    """
-    g = await _build_nx_graph(db)
+@router.get("/path/{from_id}/{to_id}", summary="Shortest path between two notes")
+async def get_path(from_id: str, to_id: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """Return the shortest directed path from *from_id* to *to_id* as an ordered list of note IDs."""
+    G, _ = await _build_nx_graph(db)
     try:
-        path = nx.shortest_path(g, from_id, to_id)
-        return PathResult(from_id=from_id, to_id=to_id, path=path, length=len(path) - 1, exists=True)
-    except (nx.NetworkXNoPath, nx.NodeNotFound):
-        return PathResult(from_id=from_id, to_id=to_id, path=[], length=0, exists=False)
+        path = nx.shortest_path(G, source=from_id, target=to_id)
+        return {"path": path, "length": len(path) - 1}
+    except nx.NetworkXNoPath:
+        raise HTTPException(status_code=404, detail="No path found")
+    except nx.NodeNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
-@router.get("/clusters", response_model=list[ClusterResult], summary="Community detection")
-async def get_clusters(db: AsyncSession = Depends(get_db)) -> list[ClusterResult]:
-    """Detect note communities using NetworkX Louvain algorithm.
-
-    Returns:
-        List of ClusterResult, each with cluster_id, node_ids, and size.
-    """
-    g = await _build_nx_graph(db)
-    undirected = g.to_undirected()
-    if len(undirected.nodes) == 0:
-        return []
-
-    communities = nx.community.louvain_communities(undirected, seed=42)
-    return [
-        ClusterResult(cluster_id=i, node_ids=list(community), size=len(community))
-        for i, community in enumerate(communities)
-    ]
+@router.get("/clusters", summary="Community detection (Louvain)")
+async def get_clusters(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """Detect note communities using the Louvain algorithm on the undirected projection."""
+    G, _ = await _build_nx_graph(db)
+    undirected = G.to_undirected()
+    try:
+        import community as community_louvain  # python-louvain
+        partition = community_louvain.best_partition(undirected)
+    except ImportError:
+        # Fallback to connected components if python-louvain not installed
+        partition = {}
+        for i, comp in enumerate(nx.connected_components(undirected)):
+            for node in comp:
+                partition[node] = i
+    clusters: dict[int, list[str]] = {}
+    for node, cluster_id in partition.items():
+        clusters.setdefault(cluster_id, []).append(node)
+    return {"clusters": clusters, "count": len(clusters)}
 
 
 @router.get("/stats", response_model=GraphStats, summary="Graph statistics")
-async def get_graph_stats(db: AsyncSession = Depends(get_db)) -> GraphStats:
-    """Return summary statistics for the knowledge graph.
-
-    Returns:
-        GraphStats: node count, edge count, orphans, density, avg degree, top nodes.
-    """
-    g = await _build_nx_graph(db)
-
-    n = g.number_of_nodes()
-    e = g.number_of_edges()
-    density = nx.density(g) if n > 1 else 0.0
-    avg_degree = (2 * e / n) if n > 0 else 0.0
-
-    orphan_count = sum(1 for node in g.nodes() if g.degree(node) == 0)
-
-    degree_sorted = sorted(g.degree(), key=lambda x: x[1], reverse=True)[:10]
-    most_connected = [
-        {"note_id": node_id, "degree": deg, "title": g.nodes[node_id].get("title", "")}
-        for node_id, deg in degree_sorted
-    ]
-
+async def get_stats(db: AsyncSession = Depends(get_db)) -> GraphStats:
+    """Return high-level graph metrics: node count, edge count, density, orphan count."""
+    G, _ = await _build_nx_graph(db)
+    orphans = [n for n in G.nodes() if G.in_degree(n) == 0 and G.out_degree(n) == 0]
+    density = nx.density(G) if len(G.nodes()) > 1 else 0.0
+    avg_degree = (
+        sum(dict(G.degree()).values()) / len(G.nodes()) if len(G.nodes()) > 0 else 0.0
+    )
     return GraphStats(
-        total_notes=n,
-        total_links=e,
-        orphan_count=orphan_count,
-        avg_degree=avg_degree,
-        density=density,
-        most_connected=most_connected,
+        node_count=G.number_of_nodes(),
+        edge_count=G.number_of_edges(),
+        density=round(density, 6),
+        avg_degree=round(avg_degree, 3),
+        orphan_count=len(orphans),
     )

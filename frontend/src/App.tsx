@@ -1,31 +1,57 @@
-import { Routes, Route } from 'react-router-dom';
-import Layout from './components/Layout';
+import React from 'react';
+import { Routes, Route, NavLink } from 'react-router-dom';
+import { BookOpen, Search, GitBranch, Calendar, RotateCcw, Settings } from 'lucide-react';
 import NotesPage from './pages/NotesPage';
-import NoteEditorPage from './pages/NoteEditorPage';
-import GraphPage from './pages/GraphPage';
+import NoteEditor from './pages/NoteEditor';
 import SearchPage from './pages/SearchPage';
-import AIChatPage from './pages/AIChatPage';
-import IngestPage from './pages/IngestPage';
-import DailyNotePage from './pages/DailyNotePage';
-import SettingsPage from './pages/SettingsPage';
 import ReviewPage from './pages/ReviewPage';
+import GraphPage from './pages/GraphPage';
+import SettingsPage from './pages/SettingsPage';
+
+const navItems = [
+  { to: '/', icon: BookOpen, label: 'Notes' },
+  { to: '/search', icon: Search, label: 'Search' },
+  { to: '/graph', icon: GitBranch, label: 'Graph' },
+  { to: '/review', icon: RotateCcw, label: 'Review' },
+  { to: '/settings', icon: Settings, label: 'Settings' },
+];
 
 export default function App() {
   return (
-    <Routes>
-      <Route path="/" element={<Layout />}>
-        <Route index element={<NotesPage />} />
-        <Route path="notes" element={<NotesPage />} />
-        <Route path="notes/new" element={<NoteEditorPage />} />
-        <Route path="notes/:id" element={<NoteEditorPage />} />
-        <Route path="graph" element={<GraphPage />} />
-        <Route path="search" element={<SearchPage />} />
-        <Route path="chat" element={<AIChatPage />} />
-        <Route path="ingest" element={<IngestPage />} />
-        <Route path="daily" element={<DailyNotePage />} />
-        <Route path="settings" element={<SettingsPage />} />
-        <Route path="review" element={<ReviewPage />} />
-      </Route>
-    </Routes>
+    <div className="flex h-screen bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100">
+      {/* Sidebar nav */}
+      <nav className="flex w-14 flex-col items-center gap-1 border-r border-gray-200 dark:border-gray-800 py-4">
+        {navItems.map(({ to, icon: Icon, label }) => (
+          <NavLink
+            key={to}
+            to={to}
+            title={label}
+            end={to === '/'}
+            className={({ isActive }) =>
+              `flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
+                isActive
+                  ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-400'
+                  : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'
+              }`
+            }
+          >
+            <Icon size={20} />
+          </NavLink>
+        ))}
+      </nav>
+
+      {/* Main content */}
+      <main className="flex flex-1 overflow-hidden">
+        <Routes>
+          <Route path="/" element={<NotesPage />} />
+          <Route path="/notes/:id" element={<NoteEditor />} />
+          <Route path="/notes/new" element={<NoteEditor />} />
+          <Route path="/search" element={<SearchPage />} />
+          <Route path="/graph" element={<GraphPage />} />
+          <Route path="/review" element={<ReviewPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+        </Routes>
+      </main>
+    </div>
   );
 }
