@@ -92,19 +92,105 @@
   border-bottom-color: #227f8b;
 }
 
-/* Broken wikilink — no matching note */
+/* Broken wikilink — note not found; click creates it */
 .wikilink.wikilink-broken {
   color: #9ca3af;
   border-bottom: 1px dashed #6b7280;
-  cursor: default;
-  /* subtle shake animation on hover to signal it’s not navigable */
+  cursor: pointer;   /* pointer because click → create note */
 }
 .wikilink.wikilink-broken:hover {
-  animation: wikilink-nudge 0.3s ease;
+  color: #d1d5db;
+  border-bottom-color: #9ca3af;
 }
+
 @keyframes wikilink-nudge {
   0%   { transform: translateX(0); }
   25%  { transform: translateX(2px); }
   75%  { transform: translateX(-2px); }
   100% { transform: translateX(0); }
+}
+
+/* ----------------------------------------------------------
+ * WikilinkPopup — hover preview card (portal-rendered)
+ * ---------------------------------------------------------- */
+.wikilink-popup-inner {
+  background: #1c1b19;
+  border: 1px solid #393836;
+  border-radius: 0.5rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  padding: 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.wikilink-popup-header {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin-bottom: 0.375rem;
+}
+
+.wikilink-popup-icon {
+  color: #4f98a3;
+  flex-shrink: 0;
+}
+
+.wikilink-popup-title {
+  font-weight: 600;
+  color: #cdccca;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wikilink-popup-open {
+  flex-shrink: 0;
+  color: #797876;
+  padding: 0.125rem;
+  border-radius: 0.25rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+.wikilink-popup-open:hover {
+  color: #4f98a3;
+  background: rgba(79, 152, 163, 0.12);
+}
+
+.wikilink-popup-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.375rem;
+}
+
+.wikilink-popup-folder {
+  font-size: 0.75rem;
+  color: #5a5957;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.wikilink-popup-words {
+  font-size: 0.75rem;
+  color: #5a5957;
+  margin-left: auto;
+}
+
+.wikilink-popup-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.25rem;
+}
+
+.wikilink-popup-tag {
+  font-size: 0.6875rem;
+  background: rgba(79, 152, 163, 0.1);
+  color: #4f98a3;
+  border-radius: 9999px;
+  padding: 0.1rem 0.5rem;
 }
