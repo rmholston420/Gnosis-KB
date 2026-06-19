@@ -1,0 +1,15 @@
+[Unit]
+Description=Certbot certificate renewal for Gnosis KB
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+# Renew all certificates that are within 30 days of expiry.
+# --webroot uses the certbot_webroot Docker volume already mounted at
+# /var/www/certbot inside the nginx container.
+ExecStart=/usr/bin/certbot renew --quiet --deploy-hook \
+    "docker compose -f /opt/gnosis-kb/docker-compose.yml exec nginx nginx -s reload"
+StandardOutput=journal
+StandardError=journal

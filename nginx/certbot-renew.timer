@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Certbot renewal twice daily
+
+[Timer]
+# Run at 03:15 and 15:15 — staggered from the hour to reduce CA load
+OnCalendar=*-*-* 03,15:15:00
+# Randomise start within a 1-hour window to avoid thundering-herd on CA servers
+RandomizedDelaySec=3600
+Persistent=true
+
+[Install]
+WantedBy=timers.target
