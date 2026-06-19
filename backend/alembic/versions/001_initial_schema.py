@@ -1,15 +1,14 @@
 """Initial database schema for Gnosis.
 
 Revision ID: 001_initial
-Revises: 
+Revises:
 Create Date: 2026-06-19
 """
-
+from __future__ import annotations
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import JSONB
+from alembic import op
 
 revision: str = "001_initial"
 down_revision: Union[str, None] = None
@@ -26,8 +25,8 @@ def upgrade() -> None:
         sa.Column("username", sa.String(100), unique=True, nullable=False),
         sa.Column("email", sa.String(255), unique=True, nullable=False),
         sa.Column("hashed_password", sa.String(255), nullable=False),
-        sa.Column("is_active", sa.Boolean, default=True, nullable=False),
-        sa.Column("is_superuser", sa.Boolean, default=False, nullable=False),
+        sa.Column("is_active", sa.Boolean, server_default="1", nullable=False),
+        sa.Column("is_superuser", sa.Boolean, server_default="0", nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(timezone=True), onupdate=sa.func.now()),
     )
@@ -35,26 +34,29 @@ def upgrade() -> None:
     op.create_index("ix_users_email", "users", ["email"])
 
     # notes
+    # sa.JSON is stored as TEXT on SQLite and as native JSON/JSONB on Postgres.
+    # If you later migrate to Postgres exclusively, change sa.JSON to
+    # postgresql.JSONB here — for now sa.JSON keeps the migration cross-dialect.
     op.create_table(
         "notes",
         sa.Column("id", sa.String(20), primary_key=True),
         sa.Column("title", sa.String(500), nullable=False),
         sa.Column("slug", sa.String(500), unique=True, nullable=False),
-        sa.Column("body", sa.Text, nullable=False, default=""),
-        sa.Column("body_html", sa.Text, nullable=False, default=""),
-        sa.Column("note_type", sa.String(50), default="permanent"),
-        sa.Column("status", sa.String(50), default="draft"),
+        sa.Column("body", sa.Text, nullable=False, server_default=""),
+        sa.Column("body_html", sa.Text, nullable=False, server_default=""),
+        sa.Column("note_type", sa.String(50), server_default="permanent"),
+        sa.Column("status", sa.String(50), server_default="draft"),
         sa.Column("vault_path", sa.String(1000), unique=True),
         sa.Column("folder", sa.String(100)),
         sa.Column("source_url", sa.Text),
-        sa.Column("word_count", sa.Integer, default=0),
+        sa.Column("word_count", sa.Integer, server_default="0"),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
         sa.Column("modified_at", sa.DateTime(timezone=True), onupdate=sa.func.now()),
         sa.Column("last_reviewed", sa.Date),
-        sa.Column("is_deleted", sa.Boolean, default=False, nullable=False),
-        sa.Column("vector_indexed", sa.Boolean, default=False, nullable=False),
-        sa.Column("graph_indexed", sa.Boolean, default=False, nullable=False),
-        sa.Column("frontmatter", JSONB, default=dict),
+        sa.Column("is_deleted", sa.Boolean, server_default="0", nullable=False),
+        sa.Column("vector_indexed", sa.Boolean, server_default="0", nullable=False),
+        sa.Column("graph_indexed", sa.Boolean, server_default="0", nullable=False),
+        sa.Column("frontmatter", sa.JSON, nullable=True),  # TEXT on SQLite, JSON on PG
     )
     op.create_index("ix_notes_title", "notes", ["title"])
     op.create_index("ix_notes_slug", "notes", ["slug"])
@@ -67,25 +69,45 @@ def upgrade() -> None:
     op.create_table(
         "tags",
         sa.Column("name", sa.String(100), primary_key=True),
-        sa.Column("description", sa.String(500), default=""),
+        sa.Column("description", sa.String(500), server_default=""),
     )
 
     # note_tags (association)
     op.create_table(
         "note_tags",
-        sa.Column("note_id", sa.String(20), sa.ForeignKey("notes.id", ondelete="CASCADE"), primary_key=True),
-        sa.Column("tag_id", sa.String(100), sa.ForeignKey("tags.name", ondelete="CASCADE"), primary_key=True),
+        sa.Column(
+            "note_id",
+            sa.String(20),
+            sa.ForeignKey("notes.id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
+        sa.Column(
+            "tag_id",
+            sa.String(100),
+            sa.ForeignKey("tags.name", ondelete="CASCADE"),
+            primary_key=True,
+        ),
     )
 
     # links
     op.create_table(
         "links",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-        sa.Column("source_id", sa.String(20), sa.ForeignKey("notes.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("target_id", sa.String(20), sa.ForeignKey("notes.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "source_id",
+            sa.String(20),
+            sa.ForeignKey("notes.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "target_id",
+            sa.String(20),
+            sa.ForeignKey("notes.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("link_text", sa.String(500), nullable=False),
         sa.Column("context", sa.Text),
-        sa.Column("link_type", sa.String(50), default="wikilink"),
+        sa.Column("link_type", sa.String(50), server_default="wikilink"),
     )
     op.create_index("ix_links_source_id", "links", ["source_id"])
     op.create_index("ix_links_target_id", "links", ["target_id"])
@@ -94,12 +116,17 @@ def upgrade() -> None:
     op.create_table(
         "attachments",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-        sa.Column("note_id", sa.String(20), sa.ForeignKey("notes.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "note_id",
+            sa.String(20),
+            sa.ForeignKey("notes.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("filename", sa.String(500), nullable=False),
         sa.Column("original_filename", sa.String(500), nullable=False),
         sa.Column("file_path", sa.String(1000), nullable=False),
-        sa.Column("mime_type", sa.String(100), default="application/octet-stream"),
-        sa.Column("file_size", sa.Integer, default=0),
+        sa.Column("mime_type", sa.String(100), server_default="application/octet-stream"),
+        sa.Column("file_size", sa.Integer, server_default="0"),
         sa.Column("extracted_text", sa.Text),
         sa.Column("uploaded_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
     )
@@ -107,7 +134,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Drop all tables."""
+    """Drop all tables in reverse dependency order."""
     op.drop_table("attachments")
     op.drop_table("links")
     op.drop_table("note_tags")
