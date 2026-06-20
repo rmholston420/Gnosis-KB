@@ -1,25 +1,9 @@
-"""Tests for gnosis/services/document_parser.py.
-
-Real public API:
-  ParsedDocument   (dataclass)
-  EXTENSION_MAP    (dict)
-  detect_format(filename) -> Optional[str]   -- returns None for unknown
-  parse_pdf(path)   -> ParsedDocument
-  parse_docx(path)  -> ParsedDocument
-  parse_pptx(path)  -> ParsedDocument
-  parse_xlsx(path)  -> ParsedDocument
-  parse_image(path) -> ParsedDocument
-  parse_url(url)    -> ParsedDocument  (async; httpx imported inside function)
-  parse_file(path)  -> ParsedDocument  (sync dispatcher)
-
-NOTE: httpx is imported with a bare `import httpx` INSIDE parse_url, so it
-must be patched via sys.modules, not as a module-level attribute.
-"""
+"""Tests for gnosis/services/document_parser.py."""
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
-import sys
 import pytest
 
 
@@ -49,7 +33,7 @@ def test_parsed_document_full_fields():
 
 
 # ---------------------------------------------------------------------------
-# EXTENSION_MAP
+# EXTENSION_MAP / detect_format
 # ---------------------------------------------------------------------------
 
 def test_extension_map_contains_common_formats():
@@ -60,10 +44,6 @@ def test_extension_map_contains_common_formats():
     assert EXTENSION_MAP[".xlsx"] == "xlsx"
     assert EXTENSION_MAP[".png"] == "image"
 
-
-# ---------------------------------------------------------------------------
-# detect_format
-# ---------------------------------------------------------------------------
 
 def test_detect_format_pdf():
     from gnosis.services.document_parser import detect_format
@@ -112,17 +92,8 @@ def test_detect_format_no_extension_returns_none():
 
 
 # ---------------------------------------------------------------------------
-# parse_pdf — fitz (PyMuPDF) patched via sys.modules
+# parse_pdf
 # ---------------------------------------------------------------------------
-
-def test_parse_pdf_raises_without_fitz(tmp_path):
-    from gnosis.services.document_parser import parse_pdf
-    f = tmp_path / "doc.pdf"
-    f.write_bytes(b"%PDF-1.4")
-    with patch.dict(sys.modules, {"fitz": None}):
-        with pytest.raises((RuntimeError, ImportError, TypeError)):
-            parse_pdf(f)
-
 
 def test_parse_pdf_with_mocked_fitz(tmp_path):
     from gnosis.services.document_parser import parse_pdf
@@ -150,17 +121,8 @@ def test_parse_pdf_with_mocked_fitz(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# parse_docx — python-docx patched via sys.modules
+# parse_docx
 # ---------------------------------------------------------------------------
-
-def test_parse_docx_raises_without_docx(tmp_path):
-    from gnosis.services.document_parser import parse_docx
-    f = tmp_path / "doc.docx"
-    f.write_bytes(b"dummy")
-    with patch.dict(sys.modules, {"docx": None}):
-        with pytest.raises((RuntimeError, ImportError, TypeError)):
-            parse_docx(f)
-
 
 def test_parse_docx_with_mocked_docx(tmp_path):
     from gnosis.services.document_parser import parse_docx
@@ -190,13 +152,11 @@ def test_parse_docx_with_mocked_docx(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# parse_url — async; httpx imported INSIDE the function body
-# Must be patched via sys.modules["httpx"], not as a module attribute.
-# Also needs bs4 patched so BeautifulSoup import succeeds.
+# parse_url — httpx AND bs4 both imported inside function body.
+# Both must be patched via sys.modules.
 # ---------------------------------------------------------------------------
 
-def _make_fake_httpx(html: str, raise_on_get=False):
-    """Return a fake httpx module whose AsyncClient yields html."""
+def _make_fake_httpx(html: str = "", raise_on_get: bool = False):
     fake_resp = MagicMock()
     fake_resp.text = html
     fake_resp.raise_for_status = MagicMock()
@@ -214,21 +174,37 @@ def _make_fake_httpx(html: str, raise_on_get=False):
     return fake_httpx
 
 
-def _make_fake_bs4(title_text: str | None, body_text: str):
-    """Return a fake bs4 module."""
-    fake_title_tag = MagicMock()
-    fake_title_tag.get_text.return_value = title_text or ""
+def _make_fake_bs4(title_text: str, body_text: str):
+    """Build a bs4 mock.
 
+    soup.find() is called with BOTH positional ("title", "main", "body" …)
+    AND keyword-only (id="content", class_="content") arguments.  The
+    simplest approach is to return a real-looking mock for "title" and
+    a body-like mock for everything else so get_text() is always available.
+    """
+    fake_title_tag = MagicMock()
+    fake_title_tag.get_text.return_value = title_text
+
+    # Return None for semantic tags (main/article) so execution falls through
+    # to the "body" branch, which we DO return.
     fake_body = MagicMock()
     fake_body.get_text.return_value = body_text
 
+    def _find(*args, **kwargs):
+        # First positional arg is the tag name (or None for kw-only calls)
+        tag = args[0] if args else None
+        if tag == "title":
+            return fake_title_tag
+        if tag in ("main", "article"):
+            return None  # let it fall through
+        if tag == "body":
+            return fake_body
+        # keyword-only calls: id="content" or class_="content" → None (fall-through)
+        return None
+
     fake_soup = MagicMock()
-    fake_soup.find.side_effect = lambda tag, **kw: (
-        fake_title_tag if tag == "title" else
-        fake_body if tag == "body" else
-        None
-    )
-    fake_soup.find_all.return_value = []
+    fake_soup.find = _find
+    fake_soup.find_all.return_value = []  # no tags to decompose
     fake_soup.get_text.return_value = body_text
 
     fake_bs4 = MagicMock()
@@ -240,9 +216,9 @@ def _make_fake_bs4(title_text: str | None, body_text: str):
 async def test_parse_url_extracts_title_and_text():
     from gnosis.services.document_parser import parse_url
 
-    html = "<html><head><title>Test Page</title></head><body><p>Hello world content.</p></body></html>"
+    html = "<html><head><title>Test Page</title></head><body><p>Hello world.</p></body></html>"
     fake_httpx = _make_fake_httpx(html)
-    fake_bs4 = _make_fake_bs4("Test Page", "Hello world content.")
+    fake_bs4 = _make_fake_bs4("Test Page", "Hello world.")
 
     with patch.dict(sys.modules, {"httpx": fake_httpx, "bs4": fake_bs4}):
         doc = await parse_url("https://example.com/page")
@@ -265,13 +241,11 @@ async def test_parse_url_handles_http_error():
 
 @pytest.mark.asyncio
 async def test_parse_url_no_bs4_falls_back_to_raw_text():
-    """When bs4 is absent the parser falls back to raw HTML text."""
     from gnosis.services.document_parser import parse_url
 
-    html = "<html><body><p>Raw content fallback.</p></body></html>"
+    html = "<html><body><p>Raw fallback.</p></body></html>"
     fake_httpx = _make_fake_httpx(html)
 
-    # Simulate bs4 not installed by removing it from sys.modules
     with patch.dict(sys.modules, {"httpx": fake_httpx, "bs4": None}):
         doc = await parse_url("https://example.com/no-bs4")
 

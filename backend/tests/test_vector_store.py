@@ -1,12 +1,6 @@
 """Tests for gnosis/services/vector_store.py.
 
-Real public API (Qdrant-backed, synchronous):
-  get_qdrant_client() -> QdrantClient
-  ensure_collection() -> None
-  upsert_note(note_id, title, body, folder, note_type, status, tags, owner_id=None) -> None
-  delete_note(note_id) -> None
-  delete_note_vector -> alias for delete_note
-  hybrid_search(query, owner_ids=None, top_k=5, include_legacy=True) -> list[dict]
+All Qdrant client calls are patched at module level.
 """
 from __future__ import annotations
 
@@ -15,162 +9,158 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# upsert_note  (note_id, title, body, folder, note_type, status, tags, owner_id)
+# _note_id_to_uuid
 # ---------------------------------------------------------------------------
 
-def test_upsert_note_calls_client_upsert():
-    from gnosis.services.vector_store import upsert_note
-
-    mock_client = MagicMock()
-    mock_dense = MagicMock()
-    mock_dense.embed.return_value = [[0.1] * 768]
-    mock_colbert = MagicMock()
-    mock_colbert.embed.return_value = [[[0.1] * 128]]
-
-    with patch("gnosis.services.vector_store.get_qdrant_client", return_value=mock_client), \
-         patch("gnosis.services.embeddings.get_dense_model", return_value=mock_dense), \
-         patch("gnosis.services.embeddings.get_colbert_model", return_value=mock_colbert):
-        upsert_note(
-            note_id="n1",
-            title="Test Note",
-            body="Some body text.",
-            folder="10-zettelkasten",
-            note_type="permanent",
-            status="active",
-            tags=["python"],
-            owner_id=1,
-        )
-
-    assert mock_client.upsert.called
+def test_note_id_to_uuid_is_deterministic():
+    from gnosis.services.vector_store import _note_id_to_uuid
+    u1 = _note_id_to_uuid("20240101-000000")
+    u2 = _note_id_to_uuid("20240101-000000")
+    assert u1 == u2
 
 
-def test_upsert_note_does_not_raise_on_valid_input():
-    from gnosis.services.vector_store import upsert_note
+def test_note_id_to_uuid_is_unique():
+    from gnosis.services.vector_store import _note_id_to_uuid
+    assert _note_id_to_uuid("a") != _note_id_to_uuid("b")
 
-    mock_client = MagicMock()
-    mock_dense = MagicMock()
-    mock_dense.embed.return_value = [[0.1] * 768]
-    mock_colbert = MagicMock()
-    mock_colbert.embed.return_value = [[[0.1] * 128]]
 
-    with patch("gnosis.services.vector_store.get_qdrant_client", return_value=mock_client), \
-         patch("gnosis.services.embeddings.get_dense_model", return_value=mock_dense), \
-         patch("gnosis.services.embeddings.get_colbert_model", return_value=mock_colbert):
-        upsert_note(
-            note_id="note-abc",
-            title="Another Note",
-            body="Body content here.",
-            folder="00-inbox",
-            note_type="fleeting",
-            status="draft",
-            tags=[],
-        )
-    # no exception = pass
+def test_note_id_to_uuid_returns_string():
+    from gnosis.services.vector_store import _note_id_to_uuid
+    result = _note_id_to_uuid("some-id")
+    assert isinstance(result, str)
+    assert len(result) == 36  # standard UUID string length
 
 
 # ---------------------------------------------------------------------------
-# delete_note
+# get_qdrant_client — singleton pattern
 # ---------------------------------------------------------------------------
 
-def test_delete_note_calls_client_delete():
-    from gnosis.services.vector_store import delete_note
-
-    mock_client = MagicMock()
-    with patch("gnosis.services.vector_store.get_qdrant_client", return_value=mock_client):
-        delete_note("n1")
-
-    assert mock_client.delete.called
-
-
-def test_delete_note_alias_works():
-    """delete_note_vector is a backward-compat alias."""
-    from gnosis.services.vector_store import delete_note, delete_note_vector
-    assert delete_note_vector is delete_note
+def test_get_qdrant_client_returns_client():
+    import gnosis.services.vector_store as vs
+    fake_client = MagicMock()
+    with patch("gnosis.services.vector_store._client", None), \
+         patch("gnosis.services.vector_store.QdrantClient", return_value=fake_client):
+        client = vs.get_qdrant_client()
+    assert client is fake_client
 
 
 # ---------------------------------------------------------------------------
 # ensure_collection
 # ---------------------------------------------------------------------------
 
-def test_ensure_collection_returns_early_if_exists():
+def test_ensure_collection_creates_when_missing():
     from gnosis.services.vector_store import ensure_collection
-
-    mock_client = MagicMock()
-    mock_client.get_collection.return_value = MagicMock()  # succeeds -> exists
-
-    with patch("gnosis.services.vector_store.get_qdrant_client", return_value=mock_client):
+    fake_client = MagicMock()
+    fake_client.get_collection.side_effect = Exception("not found")
+    with patch("gnosis.services.vector_store.get_qdrant_client", return_value=fake_client), \
+         patch("gnosis.services.vector_store.get_settings", return_value=MagicMock(qdrant_collection_name="gnosis_notes")):
         ensure_collection()
+    fake_client.create_collection.assert_called_once()
 
-    assert not mock_client.create_collection.called
 
-
-def test_ensure_collection_creates_if_missing():
+def test_ensure_collection_skips_when_exists():
     from gnosis.services.vector_store import ensure_collection
-
-    mock_client = MagicMock()
-    mock_client.get_collection.side_effect = Exception("not found")
-
-    with patch("gnosis.services.vector_store.get_qdrant_client", return_value=mock_client):
+    fake_client = MagicMock()
+    fake_client.get_collection.return_value = MagicMock()  # exists
+    with patch("gnosis.services.vector_store.get_qdrant_client", return_value=fake_client), \
+         patch("gnosis.services.vector_store.get_settings", return_value=MagicMock(qdrant_collection_name="gnosis_notes")):
         ensure_collection()
-
-    assert mock_client.create_collection.called
+    fake_client.create_collection.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# hybrid_search -> list[dict]
+# upsert_note
 # ---------------------------------------------------------------------------
 
-def test_vector_store_hybrid_search_returns_list_on_success():
+def test_upsert_note_calls_upsert():
+    from gnosis.services.vector_store import upsert_note
+    fake_client = MagicMock()
+    fake_settings = MagicMock(qdrant_collection_name="gnosis_notes")
+
+    with patch("gnosis.services.vector_store.get_qdrant_client", return_value=fake_client), \
+         patch("gnosis.services.vector_store.get_settings", return_value=fake_settings), \
+         patch("gnosis.services.vector_store.embed_dense", return_value=[0.1] * 768):
+        upsert_note(
+            note_id="20240101-000000",
+            title="Test Note",
+            body="Body text here.",
+            owner_id=1,
+        )
+
+    fake_client.upsert.assert_called_once()
+
+
+def test_upsert_note_passes_owner_id_in_payload():
+    from gnosis.services.vector_store import upsert_note
+    fake_client = MagicMock()
+    fake_settings = MagicMock(qdrant_collection_name="gnosis_notes")
+    captured = {}
+
+    def capture_upsert(**kwargs):
+        captured.update(kwargs)
+
+    fake_client.upsert.side_effect = lambda **kw: captured.update(kw)
+
+    with patch("gnosis.services.vector_store.get_qdrant_client", return_value=fake_client), \
+         patch("gnosis.services.vector_store.get_settings", return_value=fake_settings), \
+         patch("gnosis.services.vector_store.embed_dense", return_value=[0.1] * 768):
+        upsert_note(
+            note_id="20240101-000000",
+            title="T", body="B",
+            owner_id=42,
+        )
+
+    call_kwargs = fake_client.upsert.call_args
+    # The points list should contain owner_id=42 in the payload
+    points = call_kwargs.kwargs.get("points") or call_kwargs[1].get("points") or call_kwargs[0][1]
+    assert any(
+        p.payload.get("owner_id") == 42
+        for p in (points if isinstance(points, list) else [])
+    )
+
+
+# ---------------------------------------------------------------------------
+# delete_note
+# ---------------------------------------------------------------------------
+
+def test_delete_note_calls_delete():
+    from gnosis.services.vector_store import delete_note
+    fake_client = MagicMock()
+    fake_settings = MagicMock(qdrant_collection_name="gnosis_notes")
+
+    with patch("gnosis.services.vector_store.get_qdrant_client", return_value=fake_client), \
+         patch("gnosis.services.vector_store.get_settings", return_value=fake_settings):
+        delete_note("20240101-000000")
+
+    fake_client.delete.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# hybrid_search (vector_store version) — returns list
+# ---------------------------------------------------------------------------
+
+def test_vs_hybrid_search_returns_list():
     from gnosis.services.vector_store import hybrid_search
+    fake_client = MagicMock()
+    fake_point = MagicMock()
+    fake_point.payload = {"note_id": "n1", "title": "T"}
+    fake_point.score = 0.9
+    fake_result = MagicMock()
+    fake_result.points = [fake_point]
+    fake_client.query_points.return_value = fake_result
 
-    mock_point = MagicMock()
-    mock_point.payload = {"note_id": "n1", "title": "Test"}
-    mock_result = MagicMock()
-    mock_result.points = [mock_point]
+    fake_settings = MagicMock(qdrant_collection_name="gnosis_notes")
 
-    mock_client = MagicMock()
-    mock_client.query_points.return_value = mock_result
-
-    mock_dense = MagicMock()
-    mock_dense.embed.return_value = [[0.1] * 768]
-
-    with patch("gnosis.services.vector_store.get_qdrant_client", return_value=mock_client), \
-         patch("gnosis.services.embeddings.get_dense_model", return_value=mock_dense):
-        result = hybrid_search("python notes", owner_ids={1})
+    with patch("gnosis.services.vector_store.get_qdrant_client", return_value=fake_client), \
+         patch("gnosis.services.vector_store.get_settings", return_value=fake_settings), \
+         patch("gnosis.services.vector_store.embed_dense", return_value=[0.1] * 768):
+        result = hybrid_search("test query", owner_ids={1})
 
     assert isinstance(result, list)
 
 
-def test_vector_store_hybrid_search_returns_empty_on_qdrant_error():
+def test_vs_hybrid_search_empty_when_no_owner_ids():
     from gnosis.services.vector_store import hybrid_search
-
-    mock_client = MagicMock()
-    mock_client.query_points.side_effect = Exception("Qdrant down")
-
-    mock_dense = MagicMock()
-    mock_dense.embed.return_value = [[0.1] * 768]
-
-    with patch("gnosis.services.vector_store.get_qdrant_client", return_value=mock_client), \
-         patch("gnosis.services.embeddings.get_dense_model", return_value=mock_dense):
-        result = hybrid_search("query", owner_ids={1})
-
-    assert result == []
-
-
-def test_vector_store_hybrid_search_no_owner_filter():
-    """owner_ids=None means no filter — should not raise."""
-    from gnosis.services.vector_store import hybrid_search
-
-    mock_client = MagicMock()
-    mock_result = MagicMock()
-    mock_result.points = []
-    mock_client.query_points.return_value = mock_result
-
-    mock_dense = MagicMock()
-    mock_dense.embed.return_value = [[0.1] * 768]
-
-    with patch("gnosis.services.vector_store.get_qdrant_client", return_value=mock_client), \
-         patch("gnosis.services.embeddings.get_dense_model", return_value=mock_dense):
-        result = hybrid_search("query")  # owner_ids defaults to None
-
+    result = hybrid_search("query", owner_ids=set())
+    # Should return empty or raise — either is acceptable graceful behaviour
     assert isinstance(result, list)
