@@ -11,7 +11,7 @@ from gnosis.services.document_parser import ParsedDocument, detect_format
 
 
 # ---------------------------------------------------------------------------
-# parse_pdf — covered via sys.modules mock (same pattern as test_document_parser)
+# parse_pdf
 # ---------------------------------------------------------------------------
 
 def test_parse_pdf_returns_parsed_document():
@@ -47,7 +47,7 @@ def test_parse_pdf_no_meta_derives_title_from_stem():
 
 
 # ---------------------------------------------------------------------------
-# parse_url — async, module-level function
+# parse_url — httpx is imported *inside* parse_url, so patch the global name
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -62,8 +62,7 @@ async def test_parse_url_returns_parsed_document():
     mock_client.__aexit__ = AsyncMock(return_value=False)
     mock_client.get = AsyncMock(return_value=mock_resp)
 
-    with patch("gnosis.services.document_parser.httpx") as mock_httpx:
-        mock_httpx.AsyncClient.return_value = mock_client
+    with patch("httpx.AsyncClient", return_value=mock_client):
         from gnosis.services import document_parser as dp
         result = await dp.parse_url("http://example.com")
 
@@ -84,8 +83,7 @@ async def test_parse_url_sets_title():
     mock_client.__aexit__ = AsyncMock(return_value=False)
     mock_client.get = AsyncMock(return_value=mock_resp)
 
-    with patch("gnosis.services.document_parser.httpx") as mock_httpx:
-        mock_httpx.AsyncClient.return_value = mock_client
+    with patch("httpx.AsyncClient", return_value=mock_client):
         from gnosis.services import document_parser as dp
         result = await dp.parse_url("http://example.com/page")
 
@@ -93,7 +91,7 @@ async def test_parse_url_sets_title():
 
 
 # ---------------------------------------------------------------------------
-# parse_image — mocked pytesseract / PIL
+# parse_image
 # ---------------------------------------------------------------------------
 
 def test_parse_image_returns_parsed_document():

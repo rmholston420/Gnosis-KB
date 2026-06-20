@@ -7,6 +7,7 @@ are mocked so no binaries are required.
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -88,7 +89,6 @@ def test_parse_file_unsupported_raises():
 # ---------------------------------------------------------------------------
 
 def test_parse_pdf_uses_filename_as_title_when_no_meta():
-    import sys
     fake_fitz = MagicMock()
     mock_doc = MagicMock()
     mock_doc.metadata = {}
@@ -105,7 +105,6 @@ def test_parse_pdf_uses_filename_as_title_when_no_meta():
 
 
 def test_parse_pdf_uses_metadata_title():
-    import sys
     fake_fitz = MagicMock()
     mock_doc = MagicMock()
     mock_doc.metadata = {"title": "Executive Summary", "author": "Bob"}
@@ -122,7 +121,6 @@ def test_parse_pdf_uses_metadata_title():
 
 
 def test_parse_pdf_missing_fitz_raises_runtime():
-    import sys
     with patch.dict(sys.modules, {"fitz": None}):
         from gnosis.services import document_parser as dp
         with pytest.raises((RuntimeError, ImportError)):
@@ -134,8 +132,6 @@ def test_parse_pdf_missing_fitz_raises_runtime():
 # ---------------------------------------------------------------------------
 
 def test_parse_docx_extracts_paragraphs():
-    import sys
-
     p1, p2 = MagicMock(), MagicMock()
     p1.text = "Introduction"
     p2.text = "Body paragraph here."
@@ -158,8 +154,6 @@ def test_parse_docx_extracts_paragraphs():
 
 
 def test_parse_docx_empty_doc_uses_stem_as_title():
-    import sys
-
     mock_doc = MagicMock()
     mock_doc.paragraphs = []
     mock_doc.sections = []
@@ -179,8 +173,6 @@ def test_parse_docx_empty_doc_uses_stem_as_title():
 # ---------------------------------------------------------------------------
 
 def test_parse_pptx_extracts_slide_text():
-    import sys
-
     shape = MagicMock()
     shape.text = "  Hello Slide  "
     slide = MagicMock()
@@ -206,8 +198,6 @@ def test_parse_pptx_extracts_slide_text():
 # ---------------------------------------------------------------------------
 
 def test_parse_xlsx_builds_markdown_table():
-    import sys
-
     header_row = ("Name", "Age", "Score")
     data_row = ("Alice", 30, 95)
 
@@ -232,8 +222,6 @@ def test_parse_xlsx_builds_markdown_table():
 
 
 def test_parse_xlsx_skips_empty_sheet():
-    import sys
-
     ws = MagicMock()
     ws.iter_rows.return_value = []  # empty
 
@@ -257,8 +245,6 @@ def test_parse_xlsx_skips_empty_sheet():
 # ---------------------------------------------------------------------------
 
 def test_parse_image_extracts_ocr_text():
-    import sys
-
     fake_pil = MagicMock()
     fake_pil.Image.open.return_value = MagicMock()
 
@@ -275,13 +261,11 @@ def test_parse_image_extracts_ocr_text():
 
 
 # ---------------------------------------------------------------------------
-# parse_url (mocked httpx + bs4)
+# parse_url — httpx imported inside parse_url body, so patch the global name
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_parse_url_extracts_title_and_text():
-    import sys
-
     html = """<html><head><title>Test Page</title></head>
     <body><main><p>Main content here.</p></main></body></html>"""
 
@@ -305,8 +289,6 @@ async def test_parse_url_extracts_title_and_text():
 
 @pytest.mark.asyncio
 async def test_parse_url_fallback_without_bs4():
-    import sys
-
     html = "<html><body>raw html</body></html>"
     mock_resp = MagicMock()
     mock_resp.text = html
@@ -317,7 +299,6 @@ async def test_parse_url_fallback_without_bs4():
     mock_client.__aexit__ = AsyncMock(return_value=None)
     mock_client.get = AsyncMock(return_value=mock_resp)
 
-    # Force bs4 import to fail
     with patch("httpx.AsyncClient", return_value=mock_client), \
          patch.dict(sys.modules, {"bs4": None}):
         from gnosis.services import document_parser as dp
