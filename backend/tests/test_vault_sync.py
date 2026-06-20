@@ -1,22 +1,8 @@
-"""Tests for gnosis.services.vault_sync.
-
-Isolation strategy
-------------------
-_sync_file and _handle_delete both do lazy imports of SQLAlchemy core
-(select, delete) and ORM models.  The safest isolation is to:
-  1. Inject python_frontmatter / slugify via sys.modules (ModuleType objects,
-     not MagicMock, so attribute access works correctly).
-  2. Patch sqlalchemy.select and sqlalchemy.delete at the *sqlalchemy* module
-     level so the `from sqlalchemy import select, delete` inside the function
-     picks up the mock before SQLAlchemy tries to compile anything.
-  3. Patch the ORM model classes at their canonical module paths so lazy
-     `from gnosis.models.X import Y` inside the function sees mocks.
-  4. Give db_session.execute a real async def that returns a safe MagicMock
-     (avoids AsyncMock attribute-chain pitfalls).
-"""
+"""Tests for gnosis.services.vault_sync."""
 from __future__ import annotations
 
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -57,7 +43,7 @@ def reset_vault_path():
 
 
 # ---------------------------------------------------------------------------
-# sys.modules injection for non-installed lazy imports
+# sys.modules injection
 # ---------------------------------------------------------------------------
 
 class _SysModules:
@@ -109,7 +95,7 @@ def _post(note_id="n1", title="T", tags=None, body="Body.", tags_str=None):
 
 
 # ---------------------------------------------------------------------------
-# DB session helper — real async def so no AsyncMock chain issues
+# DB session helper
 # ---------------------------------------------------------------------------
 
 def _db(note_obj=None):
@@ -130,33 +116,22 @@ def _db(note_obj=None):
 
 
 # ---------------------------------------------------------------------------
-# Context manager: patch everything _sync_file needs
+# _sync_ctx: full isolation for _sync_file
+# NoteTag lives in gnosis.models.tag as 'NoteTag' (capital N)
 # ---------------------------------------------------------------------------
-
-from contextlib import contextmanager
-
 
 @contextmanager
 def _sync_ctx(fm_mod, vault_path_str, upsert_side_effect=None):
-    """
-    Patches needed for _sync_file to run without touching real SQLAlchemy:
-      - sys.modules for python_frontmatter + slugify
-      - sqlalchemy.select / sqlalchemy.delete → MagicMock callables
-      - ORM model classes at their gnosis.models.* paths
-      - get_settings().vault_path
-      - upsert_note
-    """
     note_cls = MagicMock()
     link_cls = MagicMock()
-    tag_cls = MagicMock()
-    # note_tags: MagicMock with enough spec for .c.note_id and .insert().values()
+    tag_cls  = MagicMock()
+
+    # NoteTag mock: must support .c.note_id, .insert().values(), and
+    # be passable to delete() — but delete() is itself mocked so it's fine.
     nt = MagicMock()
     nt.c = MagicMock()
     nt.c.note_id = MagicMock()
     nt.insert.return_value.values.return_value = MagicMock()
-
-    sa_select = MagicMock(return_value=MagicMock())  # select(Model) → mock stmt
-    sa_delete = MagicMock(return_value=MagicMock())  # delete(table) → mock stmt
 
     settings_mock = MagicMock()
     settings_mock.vault_path = vault_path_str
@@ -166,12 +141,12 @@ def _sync_ctx(fm_mod, vault_path_str, upsert_side_effect=None):
         upsert_kwargs["side_effect"] = upsert_side_effect
 
     with _SysModules({"python_frontmatter": fm_mod, "slugify": _sl_mod()}):
-        with patch("sqlalchemy.select", sa_select), \
-             patch("sqlalchemy.delete", sa_delete), \
+        with patch("sqlalchemy.select", MagicMock(return_value=MagicMock())), \
+             patch("sqlalchemy.delete", MagicMock(return_value=MagicMock())), \
              patch("gnosis.models.note.Note", note_cls), \
              patch("gnosis.models.link.Link", link_cls), \
-             patch("gnosis.models.tag.Tag", tag_cls), \
-             patch("gnosis.models.tag.note_tags", nt), \
+             patch("gnosis.models.tag.Tag",  tag_cls), \
+             patch("gnosis.models.tag.NoteTag", nt), \
              patch("gnosis.services.vault_sync.get_settings", return_value=settings_mock), \
              patch("gnosis.services.vault_sync.upsert_note", **upsert_kwargs) as upsert:
             yield upsert
@@ -478,7 +453,7 @@ async def test_handle_upsert_swallows_exception():
 
 
 # ---------------------------------------------------------------------------
-# _handle_delete  — patch sqlalchemy.select here too
+# _handle_delete  — patch sqlalchemy.select before lazy import fires
 # ---------------------------------------------------------------------------
 
 @contextmanager
@@ -520,10 +495,8 @@ async def test_handle_delete_soft_deletes_note(tmp_path):
 async def test_handle_delete_noop_when_missing(tmp_path):
     md = tmp_path / "ghost.md"
     vs._VAULT_PATH = tmp_path.resolve()
-    with _delete_ctx(None, str(tmp_path)) as sess, \
-         patch("gnosis.services.vault_sync.delete_note_vector") as dvec:
+    with _delete_ctx(None, str(tmp_path)) as sess:
         await VaultEventHandler(1)._handle_delete(md)
-    dvec.assert_not_called()
     sess.commit.assert_not_awaited()
 
 

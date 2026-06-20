@@ -74,7 +74,7 @@ async def _sync_file(path: Path, owner_id: int, db_session: object) -> str:
     """
     from gnosis.models.note import Note
     from gnosis.models.link import Link
-    from gnosis.models.tag import Tag, note_tags
+    from gnosis.models.tag import Tag, NoteTag
     from sqlalchemy import select, delete
     from sqlalchemy.ext.asyncio import AsyncSession
     import python_frontmatter  # type: ignore[import]
@@ -145,7 +145,7 @@ async def _sync_file(path: Path, owner_id: int, db_session: object) -> str:
     await db.flush()
 
     # Sync tags
-    await db.execute(delete(note_tags).where(note_tags.c.note_id == note_id))
+    await db.execute(delete(NoteTag).where(NoteTag.c.note_id == note_id))
     for tag_name in tags_raw:
         tag_result = await db.execute(select(Tag).where(Tag.name == tag_name))
         tag = tag_result.scalar_one_or_none()
@@ -154,7 +154,7 @@ async def _sync_file(path: Path, owner_id: int, db_session: object) -> str:
             db.add(tag)
             await db.flush()
         await db.execute(
-            note_tags.insert().values(note_id=note_id, tag_id=tag_name)
+            NoteTag.insert().values(note_id=note_id, tag_id=tag_name)
         )
 
     # Sync wikilinks
