@@ -39,10 +39,12 @@ from gnosis.database import Base, get_db
 from gnosis.main import create_app
 
 # ---------------------------------------------------------------------------
-# Test database — SQLite (no Postgres needed in CI or local runs)
+# Test database — in-memory SQLite (clean slate every session; no file bleed)
 # ---------------------------------------------------------------------------
 
-TEST_DB_URL = "sqlite+aiosqlite:///./test_gnosis.db"
+# Use :memory: so no test_gnosis.db file persists between runs and causes
+# UNIQUE-constraint collisions on timestamp-based note IDs.
+TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 
 
 @pytest.fixture(scope="session")
@@ -55,8 +57,14 @@ def event_loop():
 
 @pytest_asyncio.fixture(scope="session")
 async def test_engine():
-    """Session-scoped async engine backed by SQLite."""
-    engine = create_async_engine(TEST_DB_URL, echo=False)
+    """Session-scoped async engine backed by in-memory SQLite."""
+    engine = create_async_engine(
+        TEST_DB_URL,
+        echo=False,
+        # Required for :memory: with a session-scoped engine: share the same
+        # connection across the entire session so all fixtures see the same DB.
+        connect_args={"check_same_thread": False},
+    )
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield engine
@@ -68,7 +76,9 @@ async def test_engine():
 @pytest_asyncio.fixture
 async def test_db(test_engine) -> AsyncGenerator[AsyncSession, None]:
     """Provide a clean, rolled-back database session per test."""
-    session_factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+    session_factory = async_sessionmaker(
+        bind=test_engine, expire_on_commit=False
+    )
     async with session_factory() as session:
         yield session
         await session.rollback()
@@ -166,7 +176,9 @@ async def _make_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, No
 
         app = create_app()
 
-        session_factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+        session_factory = async_sessionmaker(
+            bind=test_engine, expire_on_commit=False
+        )
 
         async def override_get_db():
             async with session_factory() as session:

@@ -510,17 +510,26 @@ async def create_note(
     )
     db.add(note)
 
+    # Flush the Note INSERT before touching note.tags.  Without this flush,
+    # SQLAlchemy tries to lazy-load the tags collection (to emit the INSERT
+    # into note_tags) while still outside a greenlet, raising MissingGreenlet.
+    # expire_on_commit=False on the session factory means the note object
+    # remains usable after the flush without an extra SELECT.
+    await db.flush()
+
     for tag_name in (data.tags or []):
         tag_result = await db.execute(select(Tag).where(Tag.name == tag_name))
         tag = tag_result.scalar_one_or_none()
         if not tag:
             tag = Tag(name=tag_name)
             db.add(tag)
+            await db.flush()  # ensure Tag row exists before appending
         note.tags.append(tag)
 
     await db.commit()
-    await db.refresh(note)
 
+    # Re-fetch with all relationships eagerly loaded so _note_to_read never
+    # triggers lazy-loading outside a greenlet context.
     owner_ids_full = {current_user.id}
     note = await _get_note_or_404(note_id, db, owner_ids_full)
     return _note_to_read(note)
@@ -700,12 +709,14 @@ async def update_note(
 
     if data.tags is not None:
         note.tags.clear()
+        await db.flush()  # flush the tag-association deletes before re-adding
         for tag_name in data.tags:
             tag_result = await db.execute(select(Tag).where(Tag.name == tag_name))
             tag = tag_result.scalar_one_or_none()
             if not tag:
                 tag = Tag(name=tag_name)
                 db.add(tag)
+                await db.flush()  # ensure Tag row exists before appending
             note.tags.append(tag)
 
     if data.frontmatter is not None:
