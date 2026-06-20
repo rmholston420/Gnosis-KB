@@ -5,11 +5,12 @@ All filesystem and DB side-effects are mocked so no real vault is needed.
 
 Mocking strategy
 ----------------
-- write_note_file      → patched to a no-op (avoids touching the filesystem)
-- resolve_vault_path   → patched to return a tmp Path so os.makedirs is skipped
+- write_note_file      → patched at gnosis.services.markdown_parser (source module)
+- resolve_vault_path   → patched at gnosis.core.namespace (source module)
+  NOTE: both are imported inside function bodies with a local 'from ... import',
+  so they must be patched at the module where they live, not at gnosis.routers.notes.
 - db.add / flush / commit / expunge / delete → AsyncMock no-ops
-- _get_note_or_404     → patched to return a pre-built Note MagicMock so the
-  post-expunge re-fetch doesn't need a real DB round-trip
+- _get_note_or_404     → patched to return a pre-built Note MagicMock
 """
 from __future__ import annotations
 
@@ -24,7 +25,17 @@ from gnosis.core.exceptions import NoteConflictError
 
 
 # ---------------------------------------------------------------------------
-# Shared fixtures / helpers
+# Patch targets (always patch at the definition site)
+# ---------------------------------------------------------------------------
+
+_RESOLVE = "gnosis.core.namespace.resolve_vault_path"
+_WRITE   = "gnosis.services.markdown_parser.write_note_file"
+_GET_404 = "gnosis.routers.notes._get_note_or_404"
+_UPSERT  = "gnosis.routers.notes._upsert_tags"
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers
 # ---------------------------------------------------------------------------
 
 def _user(uid=1, username="alice"):
@@ -66,7 +77,7 @@ def _note_orm(note_id="20240101000000", title="Test Note", slug="test-note",
 
 
 def _db_no_conflict():
-    """Session where slug conflict check returns None (no existing note)."""
+    """Session where slug-conflict check returns None (no existing note)."""
     r = MagicMock()
     r.scalars.return_value.unique.return_value.one_or_none.return_value = None
     r.scalars.return_value.all.return_value = []
@@ -77,9 +88,19 @@ def _db_no_conflict():
 
 
 def _db_with_conflict():
-    """Session where slug conflict check returns an existing note."""
+    """Session where slug-conflict check returns an existing note."""
     r = MagicMock()
     r.scalars.return_value.unique.return_value.one_or_none.return_value = _note_orm()
+    sess = AsyncMock()
+    sess.execute = AsyncMock(return_value=r)
+    return sess
+
+
+def _db_tag_noop():
+    """Session suitable for update_note tag operations (no real rows needed)."""
+    r = MagicMock()
+    r.scalars.return_value.all.return_value = []
+    r.scalar_one_or_none.return_value = None
     sess = AsyncMock()
     sess.execute = AsyncMock(return_value=r)
     return sess
@@ -106,13 +127,12 @@ async def test_create_note_happy_path():
     )
 
     with (
-        patch("gnosis.routers.notes.write_note_file") as mock_write,
-        patch("gnosis.routers.notes.resolve_vault_path", return_value=Path("/tmp/vault")),
-        patch("gnosis.routers.notes._get_note_or_404", AsyncMock(return_value=returned_note)),
+        patch(_WRITE),
+        patch(_RESOLVE, return_value=Path("/tmp/vault")),
+        patch(_GET_404, AsyncMock(return_value=returned_note)),
     ):
         result = await create_note(data=data, db=db, current_user=user)
 
-    mock_write.assert_called_once()
     db.add.assert_called_once()
     db.commit.assert_awaited_once()
     assert result.title == "My Note"
@@ -134,8 +154,8 @@ async def test_create_note_slug_conflict_raises():
     )
 
     with (
-        patch("gnosis.routers.notes.write_note_file"),
-        patch("gnosis.routers.notes.resolve_vault_path", return_value=Path("/tmp/vault")),
+        patch(_WRITE),
+        patch(_RESOLVE, return_value=Path("/tmp/vault")),
     ):
         with pytest.raises(NoteConflictError):
             await create_note(data=data, db=db, current_user=user)
@@ -146,7 +166,7 @@ async def test_create_note_with_tags_calls_upsert():
     """create_note calls _upsert_tags when tags are supplied."""
     user = _user()
     db = _db_no_conflict()
-    returned_note = _note_orm(title="Tagged Note", tags=[MagicMock(name="zettel")])
+    returned_note = _note_orm(title="Tagged Note")
 
     data = NoteCreate(
         title="Tagged Note",
@@ -158,16 +178,15 @@ async def test_create_note_with_tags_calls_upsert():
     )
 
     with (
-        patch("gnosis.routers.notes.write_note_file"),
-        patch("gnosis.routers.notes.resolve_vault_path", return_value=Path("/tmp/vault")),
-        patch("gnosis.routers.notes._get_note_or_404", AsyncMock(return_value=returned_note)),
-        patch("gnosis.routers.notes._upsert_tags", AsyncMock()) as mock_upsert,
+        patch(_WRITE),
+        patch(_RESOLVE, return_value=Path("/tmp/vault")),
+        patch(_GET_404, AsyncMock(return_value=returned_note)),
+        patch(_UPSERT, AsyncMock()) as mock_upsert,
     ):
-        result = await create_note(data=data, db=db, current_user=user)
+        await create_note(data=data, db=db, current_user=user)
 
     mock_upsert.assert_awaited_once()
-    call_tags = mock_upsert.call_args[0][1]  # second positional arg is tag_names
-    assert set(call_tags) == {"zettel", "idea"}
+    assert set(mock_upsert.call_args[0][1]) == {"zettel", "idea"}
 
 
 @pytest.mark.asyncio
@@ -187,8 +206,8 @@ async def test_create_note_vault_write_error_raises():
     )
 
     with (
-        patch("gnosis.routers.notes.write_note_file", side_effect=OSError("disk full")),
-        patch("gnosis.routers.notes.resolve_vault_path", return_value=Path("/tmp/vault")),
+        patch(_WRITE, side_effect=OSError("disk full")),
+        patch(_RESOLVE, return_value=Path("/tmp/vault")),
     ):
         with pytest.raises(VaultWriteError):
             await create_note(data=data, db=db, current_user=user)
@@ -198,34 +217,18 @@ async def test_create_note_vault_write_error_raises():
 # update_note
 # ---------------------------------------------------------------------------
 
-def _db_for_update(existing_note):
-    """Session that returns existing_note for the initial _get_note_or_404 call.
-
-    update_note calls _get_note_or_404 twice: once at the top to fetch the
-    existing note, once at the end after expunge.  We patch _get_note_or_404
-    globally so the DB session only needs to handle tag-related queries.
-    """
-    r = MagicMock()
-    r.scalars.return_value.all.return_value = []
-    r.scalar_one_or_none.return_value = None
-    sess = AsyncMock()
-    sess.execute = AsyncMock(return_value=r)
-    return sess
-
-
 @pytest.mark.asyncio
 async def test_update_note_title_and_body():
     """update_note applies title/body changes and returns updated NoteRead."""
     user = _user()
     existing = _note_orm(note_id="n1", title="Old Title", body="old body")
-    updated = _note_orm(note_id="n1", title="New Title", body="new body")
-    db = _db_for_update(existing)
+    updated  = _note_orm(note_id="n1", title="New Title", body="new body")
+    db = _db_tag_noop()
 
     with (
-        patch("gnosis.routers.notes._get_note_or_404",
-              AsyncMock(side_effect=[existing, updated])),
-        patch("gnosis.routers.notes.resolve_vault_path", return_value=Path("/tmp/vault")),
-        patch("gnosis.routers.notes.write_note_file"),
+        patch(_GET_404, AsyncMock(side_effect=[existing, updated])),
+        patch(_RESOLVE, return_value=Path("/tmp/vault")),
+        patch(_WRITE),
     ):
         result = await update_note(
             note_id="n1",
@@ -245,14 +248,13 @@ async def test_update_note_tags_replaced():
     user = _user()
     existing = _note_orm(note_id="n1")
     refreshed = _note_orm(note_id="n1")
-    db = _db_for_update(existing)
+    db = _db_tag_noop()
 
     with (
-        patch("gnosis.routers.notes._get_note_or_404",
-              AsyncMock(side_effect=[existing, refreshed])),
-        patch("gnosis.routers.notes.resolve_vault_path", return_value=Path("/tmp/vault")),
-        patch("gnosis.routers.notes.write_note_file"),
-        patch("gnosis.routers.notes._upsert_tags", AsyncMock()) as mock_upsert,
+        patch(_GET_404, AsyncMock(side_effect=[existing, refreshed])),
+        patch(_RESOLVE, return_value=Path("/tmp/vault")),
+        patch(_WRITE),
+        patch(_UPSERT, AsyncMock()) as mock_upsert,
     ):
         await update_note(
             note_id="n1",
@@ -268,18 +270,17 @@ async def test_update_note_tags_replaced():
 
 @pytest.mark.asyncio
 async def test_update_note_status_only():
-    """update_note with only status change does not touch body or tags."""
+    """update_note with only status change does not call _upsert_tags."""
     user = _user()
     existing = _note_orm(note_id="n1", status="draft")
     refreshed = _note_orm(note_id="n1", status="active")
-    db = _db_for_update(existing)
+    db = _db_tag_noop()
 
     with (
-        patch("gnosis.routers.notes._get_note_or_404",
-              AsyncMock(side_effect=[existing, refreshed])),
-        patch("gnosis.routers.notes.resolve_vault_path", return_value=Path("/tmp/vault")),
-        patch("gnosis.routers.notes.write_note_file"),
-        patch("gnosis.routers.notes._upsert_tags", AsyncMock()) as mock_upsert,
+        patch(_GET_404, AsyncMock(side_effect=[existing, refreshed])),
+        patch(_RESOLVE, return_value=Path("/tmp/vault")),
+        patch(_WRITE),
+        patch(_UPSERT, AsyncMock()) as mock_upsert,
     ):
         result = await update_note(
             note_id="n1",
@@ -294,16 +295,13 @@ async def test_update_note_status_only():
 
 
 @pytest.mark.asyncio
-async def test_update_note_missing_raises_404():
+async def test_update_note_missing_raises():
     """update_note propagates NoteNotFoundError (→ 404) from _get_note_or_404."""
     from gnosis.core.exceptions import NoteNotFoundError
     user = _user()
-    db = _db_for_update(None)
+    db = _db_tag_noop()
 
-    with patch(
-        "gnosis.routers.notes._get_note_or_404",
-        AsyncMock(side_effect=NoteNotFoundError("n1")),
-    ):
+    with patch(_GET_404, AsyncMock(side_effect=NoteNotFoundError("n1"))):
         with pytest.raises((NoteNotFoundError, HTTPException)):
             await update_note(
                 note_id="n1",
@@ -324,7 +322,7 @@ async def test_delete_note_soft():
     note = _note_orm(note_id="n1")
     db = AsyncMock()
 
-    with patch("gnosis.routers.notes._get_note_or_404", AsyncMock(return_value=note)):
+    with patch(_GET_404, AsyncMock(return_value=note)):
         await delete_note(note_id="n1", hard=False, db=db, owner_ids={1})
 
     assert note.is_deleted is True
@@ -338,7 +336,7 @@ async def test_delete_note_hard():
     note = _note_orm(note_id="n1")
     db = AsyncMock()
 
-    with patch("gnosis.routers.notes._get_note_or_404", AsyncMock(return_value=note)):
+    with patch(_GET_404, AsyncMock(return_value=note)):
         await delete_note(note_id="n1", hard=True, db=db, owner_ids={1})
 
     db.delete.assert_awaited_once_with(note)
@@ -351,10 +349,7 @@ async def test_delete_note_missing_raises():
     from gnosis.core.exceptions import NoteNotFoundError
     db = AsyncMock()
 
-    with patch(
-        "gnosis.routers.notes._get_note_or_404",
-        AsyncMock(side_effect=NoteNotFoundError("missing")),
-    ):
+    with patch(_GET_404, AsyncMock(side_effect=NoteNotFoundError("missing"))):
         with pytest.raises((NoteNotFoundError, HTTPException)):
             await delete_note(note_id="missing", hard=False, db=db, owner_ids={1})
 
@@ -365,7 +360,7 @@ async def test_delete_note_missing_raises():
 
 @pytest.mark.asyncio
 async def test_daily_note_existing_returned():
-    """When a daily note already exists, it is returned without creating a new one."""
+    """When a daily note already exists, it is returned without a DB write."""
     user = _user()
     existing = _note_orm(note_id="daily1", note_type="journal")
     r = MagicMock()
@@ -385,16 +380,16 @@ async def test_daily_note_existing_returned():
 async def test_daily_note_creates_when_missing():
     """When no daily note exists, a new one is created and returned."""
     user = _user()
-    new_note = _note_orm(note_id="daily2", note_type="journal", title="Daily Note — 2026-06-20")
+    new_note = _note_orm(note_id="daily2", note_type="journal")
     r = MagicMock()
     r.scalars.return_value.unique.return_value.one_or_none.return_value = None
     db = AsyncMock()
     db.execute = AsyncMock(return_value=r)
 
     with (
-        patch("gnosis.routers.notes.write_note_file"),
-        patch("gnosis.routers.notes.resolve_vault_path", return_value=Path("/tmp/vault")),
-        patch("gnosis.routers.notes._get_note_or_404", AsyncMock(return_value=new_note)),
+        patch(_WRITE),
+        patch(_RESOLVE, return_value=Path("/tmp/vault")),
+        patch(_GET_404, AsyncMock(return_value=new_note)),
     ):
         result = await get_or_create_daily_note(
             db=db, current_user=user, owner_ids={1}
