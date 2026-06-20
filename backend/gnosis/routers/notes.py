@@ -19,13 +19,13 @@ Dependency pattern
 ------------------
 All read endpoints declare::
 
-    owner_ids: set[int] = Depends(get_vault_owner_ids)
+   owner_ids: set[int] = Depends(get_vault_owner_ids)
 
 Write endpoints (update, delete, daily-note creation) that also need the
 calling user's identity keep::
 
-    current_user: User = Depends(get_current_user)
-    owner_ids:    set[int] = Depends(get_vault_owner_ids)
+   current_user: User = Depends(get_current_user)
+   owner_ids:    set[int] = Depends(get_vault_owner_ids)
 
 get_vault_owner_ids honours the optional ``X-Vault-Owner-Id`` request header
 so the frontend VaultSwitcher can scope a request to a shared vault without
@@ -89,7 +89,7 @@ async def _get_note_or_404(
         )
         .where(Note.id == note_id, Note.is_deleted.is_(False))
     )
-    note = raw.scalar_one_or_none()
+    note = raw.scalars().unique().one_or_none()
     if note is None:
         raise NoteNotFoundError(note_id)
 
@@ -192,7 +192,7 @@ async def list_notes(
     query = query.order_by(Note.modified_at.desc().nullslast(), Note.created_at.desc())
     query = query.offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(query)
-    notes = result.scalars().all()
+    notes = result.scalars().unique().all()  # .unique() required when selectinload is used with collections
 
     return NoteListResponse(
         items=[
@@ -244,7 +244,7 @@ async def create_note(
         include_null_owner=False,
     )
     existing = await db.execute(existing_stmt)
-    if existing.scalar_one_or_none():
+    if existing.scalars().unique().one_or_none():
         raise NoteConflictError(title)
 
     fm = build_default_frontmatter(
@@ -336,7 +336,7 @@ async def get_orphan_notes(
         .order_by(Note.created_at.desc())
     )
     result = await db.execute(scoped_note_stmt(base_stmt, owner_ids))
-    notes = result.scalars().all()
+    notes = result.scalars().unique().all()
     return [
         NoteListItem(
             id=n.id, title=n.title, slug=n.slug, note_type=n.note_type,
@@ -377,7 +377,7 @@ async def get_or_create_daily_note(
         owner_ids,
     )
     result = await db.execute(daily_stmt)
-    note = result.scalar_one_or_none()
+    note = result.scalars().unique().one_or_none()
 
     if note is None:
         body = (
@@ -553,7 +553,7 @@ async def get_backlinks(
         .where(Link.target_id == note_id, Note.is_deleted.is_(False))
     )
     result = await db.execute(scoped_note_stmt(base_stmt, owner_ids))
-    notes = result.scalars().all()
+    notes = result.scalars().unique().all()
     return [
         NoteListItem(
             id=n.id, title=n.title, slug=n.slug, note_type=n.note_type,
@@ -579,7 +579,7 @@ async def get_outlinks(
         .where(Link.source_id == note_id, Note.is_deleted.is_(False))
     )
     result = await db.execute(scoped_note_stmt(base_stmt, owner_ids))
-    notes = result.scalars().all()
+    notes = result.scalars().unique().all()
     return [
         NoteListItem(
             id=n.id, title=n.title, slug=n.slug, note_type=n.note_type,
