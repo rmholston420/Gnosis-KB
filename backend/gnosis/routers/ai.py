@@ -10,18 +10,9 @@ Endpoints:
   GET  /orphan-audit         — AI-powered orphan remediation suggestions
   POST /daily-review         — Daily review from inbox notes
   GET  /stream/chat          — SSE streaming chat (query param: message, mode)
-  POST /generate-moc         — Map of Content generator (Feature 3)
-
-RAG pipeline
-------------
-Chat and stream/chat use Qdrant hybrid search (dense + sparse prefetch,
-RRF fusion) to retrieve relevant note snippets, then inject them as
-system context before calling the LLM. LightRAG is used when available
-and its instance is warm; otherwise Qdrant RAG is the primary path.
-
-Namespace contract
-------------------
-Every endpoint is scoped to the authenticated user’s accessible vault set.
+  POST /generate-moc         — Map of Content generator
+  GET  /providers            — Return active provider info + model list
+  POST /providers/model      — Hot-swap the active Ollama model (no restart needed)
 """
 from __future__ import annotations
 
@@ -31,8 +22,10 @@ import re
 from datetime import date
 from typing import AsyncGenerator
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -59,13 +52,14 @@ from gnosis.schemas.ai import (
 from gnosis.services.graph_rag import graph_rag
 from gnosis.services.llm_provider import llm_provider
 from gnosis.services.vector_store import hybrid_search
+from gnosis.config import get_settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ai", tags=["ai"])
 
 _VAULT_SYSTEM_PROMPT = (
     "You are Gnosis, a personal knowledge assistant. "
-    "You have access to the user’s private Zettelkasten vault. "
+    "You have access to the user's private Zettelkasten vault. "
     "Answer questions using the vault context provided. "
     "If the context does not contain enough information, say so honestly — "
     "do not invent notes or facts. "
@@ -78,7 +72,6 @@ _VAULT_SYSTEM_PROMPT = (
 # ---------------------------------------------------------------------------
 
 def _build_rag_context(hits: list[dict]) -> str:
-    """Format Qdrant search hits into a system-prompt context block."""
     if not hits:
         return ""
     parts = ["Relevant notes from the vault:\n"]
@@ -95,7 +88,6 @@ async def _qdrant_rag_complete(
     owner_ids: set[int],
     mode: str = "hybrid",
 ) -> str:
-    """Retrieve vault context via Qdrant then complete with LLM."""
     hits = hybrid_search(message, owner_ids=owner_ids, top_k=5)
     context = _build_rag_context(hits)
     system = _VAULT_SYSTEM_PROMPT
@@ -109,7 +101,6 @@ async def _qdrant_rag_stream(
     owner_ids: set[int],
     mode: str = "hybrid",
 ) -> AsyncGenerator[str, None]:
-    """Retrieve vault context via Qdrant then stream tokens from LLM."""
     hits = hybrid_search(message, owner_ids=owner_ids, top_k=5)
     context = _build_rag_context(hits)
     system = _VAULT_SYSTEM_PROMPT
@@ -124,7 +115,6 @@ async def _get_note_or_404(
     session: AsyncSession,
     owner_ids: set[int],
 ) -> Note:
-    """Fetch a note by ID, scoped to *owner_ids*, or raise HTTP 404."""
     base = (
         select(Note)
         .where(Note.id == note_id, Note.is_deleted.is_(False))
@@ -138,7 +128,6 @@ async def _get_note_or_404(
 
 
 def _parse_json_list(text: str) -> list[str]:
-    """Extract a JSON array from LLM output that may contain surrounding prose."""
     match = re.search(r"\[.*?\]", text, re.DOTALL)
     if match:
         try:
@@ -156,7 +145,6 @@ def _parse_json_list(text: str) -> list[str]:
 
 
 def _build_moc_markdown(topic: str, moc_title: str, sections: list[MocSection]) -> str:
-    """Render a list of MocSection objects into a full Markdown MOC body."""
     from datetime import datetime
     now = datetime.now()
     ts = now.strftime("%Y%m%d-%H%M%S")
@@ -187,6 +175,81 @@ def _build_moc_markdown(topic: str, moc_title: str, sections: list[MocSection]) 
 
 
 # ---------------------------------------------------------------------------
+# GET /ai/providers
+# ---------------------------------------------------------------------------
+
+class ProviderInfo(BaseModel):
+    provider: str
+    model: str
+    available: bool
+    models: list[str] = []
+
+
+class ModelSwapRequest(BaseModel):
+    model: str
+
+
+@router.get("/providers", response_model=ProviderInfo, summary="AI provider status")
+async def get_providers(
+    _: User = Depends(get_current_user),
+) -> ProviderInfo:
+    """Return the active provider, current model, and available Ollama model list."""
+    settings = get_settings()
+
+    if not llm_provider.is_available:
+        return ProviderInfo(provider="none", model="", available=False, models=[])
+
+    # Identify active provider tier
+    active = llm_provider.active_provider
+    model = llm_provider.active_model
+    models: list[str] = []
+
+    # Fetch Ollama model list for the picker
+    if "ollama" in llm_provider._available:  # noqa: SLF001
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                resp = await client.get(f"{settings.ollama_base_url}/api/tags")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    models = [m["name"] for m in data.get("models", [])]
+        except Exception:  # noqa: BLE001
+            models = [model] if model else []
+
+    return ProviderInfo(
+        provider=active,
+        model=model,
+        available=True,
+        models=models or ([model] if model else []),
+    )
+
+
+@router.post("/providers/model", summary="Hot-swap the active Ollama model")
+async def set_model(
+    req: ModelSwapRequest,
+    _: User = Depends(get_current_user),
+) -> ProviderInfo:
+    """Change the Ollama model used for completions without restarting the server."""
+    if "ollama" not in llm_provider._available:  # noqa: SLF001
+        raise HTTPException(status_code=400, detail="Ollama is not an available provider")
+    llm_provider.swap_model(req.model)
+    settings = get_settings()
+    models: list[str] = []
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(f"{settings.ollama_base_url}/api/tags")
+            if resp.status_code == 200:
+                models = [m["name"] for m in resp.json().get("models", [])]
+    except Exception:  # noqa: BLE001
+        models = [req.model]
+    return ProviderInfo(
+        provider="ollama",
+        model=req.model,
+        available=True,
+        models=models or [req.model],
+    )
+
+
+# ---------------------------------------------------------------------------
 # POST /ai/chat
 # ---------------------------------------------------------------------------
 
@@ -201,7 +264,6 @@ async def chat(
     current_user: User = Depends(get_current_user),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> ChatResponse:
-    # Prefer LightRAG when warm; fall back to Qdrant RAG; then bare LLM.
     if await graph_rag.is_available(current_user.id):
         answer = await graph_rag.query(
             req.message, user_id=current_user.id, owner_ids=owner_ids, mode=req.mode
@@ -448,9 +510,9 @@ async def daily_review(
         f"### {n.title}\n{n.body[:500]}" for n in notes
     )
     prompt = (
-        f"Today’s inbox notes ({today_str}):\n\n{notes_text}\n\n"
+        f"Today's inbox notes ({today_str}):\n\n{notes_text}\n\n"
         "Provide:\n"
-        "1. A brief synthesis of today’s captures (2-3 sentences).\n"
+        "1. A brief synthesis of today's captures (2-3 sentences).\n"
         "2. 3-5 actionable suggestions (process, link, promote to project, etc).\n"
         "Format: {\"summary\": \"...\", \"suggestions\": [\"...\", ...]}"
     )
@@ -485,14 +547,6 @@ async def stream_chat(
     current_user: User = Depends(get_current_user),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> StreamingResponse:
-    """SSE endpoint: streams the AI answer token-by-token, scoped to accessible vaults.
-
-    RAG pipeline priority:
-      1. LightRAG (when installed and warm for current user)
-      2. Qdrant hybrid search → context-injected LLM stream (default)
-      3. Error if no LLM available
-    """
-
     async def event_generator() -> AsyncGenerator[str, None]:
         try:
             if await graph_rag.is_available(current_user.id):
@@ -564,7 +618,7 @@ async def generate_moc(
         f"MOC title: {moc_title}\n\n"
         "Organise the notes into 3-6 thematic sections. For each section provide:\n"
         "— A heading (short phrase)\n"
-        "— A one-sentence summary of the section’s theme\n"
+        "— A one-sentence summary of the section's theme\n"
         "— A list of note titles that belong in this section (use exact titles)\n\n"
         "Return as JSON:\n"
         "[{\"heading\": \"...\", \"summary\": \"...\", \"wikilinks\": [\"Note Title\", ...]}]\n"

@@ -32,7 +32,6 @@ export default function NoteEditor({ note, onSave, isLoading }: NoteEditorProps)
   const [searchParams] = useSearchParams();
   const { editorMode, setEditorMode } = useAppStore();
 
-  // Pre-fill title from ?title= param (broken-link creation flow)
   const prefillTitle = searchParams.get('title') ?? '';
 
   const [body, setBody] = useState(note.body);
@@ -41,14 +40,12 @@ export default function NoteEditor({ note, onSave, isLoading }: NoteEditorProps)
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const saveTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  // Sync when a different note is loaded
   useEffect(() => {
     setBody(note.body);
     setTitle(note.title || prefillTitle);
     setIsDirty(false);
   }, [note.id, note.body, note.title, prefillTitle]);
 
-  // Fetch all note list for wikilink autocomplete + preview
   const { data: notesData } = useQuery<NoteListResponse>({
     queryKey: ['notes-titles'],
     queryFn: () => api.listNotes({ page_size: 200 }) as Promise<NoteListResponse>,
@@ -56,13 +53,11 @@ export default function NoteEditor({ note, onSave, isLoading }: NoteEditorProps)
   const noteList: NoteListItem[] = notesData?.items ?? [];
   const noteTitles = noteList.map((n) => n.title);
 
-  // Build id→title map for BacklinkPanel
   const noteTitlesById = useCallback(
     () => new Map(noteList.map((n) => [n.id, n.title])),
     [noteList],
   );
 
-  // ---- Wikilink autocomplete -------------------------------------------
   const wikilinkCompletion: CompletionSource = useCallback(
     (context) => {
       const before = context.matchBefore(/\[\[[^\]]*/);
@@ -79,7 +74,6 @@ export default function NoteEditor({ note, onSave, isLoading }: NoteEditorProps)
     [noteTitles],
   );
 
-  // ---- Auto-save (800 ms debounce) ------------------------------------
   const handleBodyChange = (value: string) => {
     setBody(value);
     setIsDirty(true);
@@ -107,7 +101,6 @@ export default function NoteEditor({ note, onSave, isLoading }: NoteEditorProps)
     }
   };
 
-  // Cleanup on unmount
   useEffect(() => () => {
     if (saveTimeout.current) clearTimeout(saveTimeout.current);
   }, []);
@@ -119,18 +112,16 @@ export default function NoteEditor({ note, onSave, isLoading }: NoteEditorProps)
     <div className="h-full flex flex-col overflow-hidden">
       {/* ---- Toolbar ---- */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-border flex-shrink-0 bg-bg-primary">
-        {/* Title */}
         <input
           type="text"
           value={title}
           onChange={(e) => { setTitle(e.target.value); setIsDirty(true); }}
           onBlur={handleTitleBlur}
           placeholder="Note title…"
-          className="flex-1 bg-transparent text-text-primary text-base font-medium outline-none placeholder-text-faint mr-4 min-w-0"
+          className="flex-1 bg-transparent text-text-primary text-base font-medium outline-none placeholder-text-muted mr-4 min-w-0"
         />
-        {/* Save indicator + mode toggle */}
         <div className="flex items-center gap-3 flex-shrink-0">
-          <span className="text-xs text-text-faint">
+          <span className="text-xs text-text-muted">
             {isLoading ? 'Saving…' : isDirty ? '● unsaved' : lastSaved ? `Saved ${lastSaved.toLocaleTimeString()}` : ''}
           </span>
           <div className="flex rounded border border-border overflow-hidden text-xs">
@@ -140,7 +131,7 @@ export default function NoteEditor({ note, onSave, isLoading }: NoteEditorProps)
                 onClick={() => setEditorMode(mode)}
                 className={`px-2.5 py-1 capitalize transition-colors ${
                   editorMode === mode
-                    ? 'bg-teal-700 text-white'
+                    ? 'bg-accent-cyan text-white'
                     : 'text-text-muted hover:text-text-primary hover:bg-bg-elevated'
                 }`}
               >

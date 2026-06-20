@@ -1,124 +1,45 @@
-/**
- * Zustand global store for Gnosis UI.
- *
- * Manages:
- * - Currently active note ID
- * - Sidebar collapsed state
- * - Search query and mode
- * - Editor mode (edit/preview/split)
- * - AI chat session
- */
-
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
-import type { ChatMessage, NoteListItem } from '../types';
 
-type EditorMode = 'edit' | 'preview' | 'split';
-type SearchMode = 'hybrid' | 'semantic' | 'fulltext';
-type RAGMode = 'hybrid' | 'local' | 'global';
+type EditorMode = 'edit' | 'split' | 'preview';
+type RagMode = 'hybrid' | 'local' | 'global';
 
 interface AppState {
-  // Navigation
+  // Active note
   activeNoteId: string | null;
   setActiveNoteId: (id: string | null) => void;
 
-  // Sidebar
-  sidebarCollapsed: boolean;
-  setSidebarCollapsed: (v: boolean) => void;
-  toggleSidebar: () => void;
-
-  // Editor
+  // Editor layout mode
   editorMode: EditorMode;
   setEditorMode: (mode: EditorMode) => void;
 
-  // Search
+  // Global search
   searchQuery: string;
-  searchMode: SearchMode;
   setSearchQuery: (q: string) => void;
-  setSearchMode: (mode: SearchMode) => void;
 
-  // Selected folder filter
-  activeFolder: string | null;
-  setActiveFolder: (folder: string | null) => void;
+  // Sidebar collapsed
+  sidebarCollapsed: boolean;
+  setSidebarCollapsed: (collapsed: boolean) => void;
+  toggleSidebar: () => void;
 
-  // AI Chat
-  chatMessages: ChatMessage[];
-  ragMode: RAGMode;
-  sessionId: string | null;
-  appendChatMessage: (msg: ChatMessage) => void;
-  /** Mutate the content of the last assistant bubble in-place (for streaming). */
-  updateLastAssistantMessage: (content: string) => void;
-  clearChat: () => void;
-  setRagMode: (mode: RAGMode) => void;
-
-  // Recently viewed
-  recentNotes: NoteListItem[];
-  addRecentNote: (note: NoteListItem) => void;
+  // AI RAG mode (persisted across Settings changes)
+  ragMode: RagMode;
+  setRagMode: (mode: RagMode) => void;
 }
 
-export const useAppStore = create<AppState>()(
-  persist(
-    (set) => ({
-      // Navigation
-      activeNoteId: null,
-      setActiveNoteId: (id) => set({ activeNoteId: id }),
+export const useAppStore = create<AppState>((set) => ({
+  activeNoteId: null,
+  setActiveNoteId: (id) => set({ activeNoteId: id }),
 
-      // Sidebar
-      sidebarCollapsed: false,
-      setSidebarCollapsed: (v) => set({ sidebarCollapsed: v }),
-      toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+  editorMode: 'edit',
+  setEditorMode: (mode) => set({ editorMode: mode }),
 
-      // Editor
-      editorMode: 'split',
-      setEditorMode: (mode) => set({ editorMode: mode }),
+  searchQuery: '',
+  setSearchQuery: (q) => set({ searchQuery: q }),
 
-      // Search
-      searchQuery: '',
-      searchMode: 'hybrid',
-      setSearchQuery: (q) => set({ searchQuery: q }),
-      setSearchMode: (mode) => set({ searchMode: mode }),
+  sidebarCollapsed: false,
+  setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
+  toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
 
-      // Folder filter
-      activeFolder: null,
-      setActiveFolder: (folder) => set({ activeFolder: folder }),
-
-      // AI Chat
-      chatMessages: [],
-      ragMode: 'hybrid',
-      sessionId: null,
-      appendChatMessage: (msg) =>
-        set((s) => ({ chatMessages: [...s.chatMessages, msg] })),
-      updateLastAssistantMessage: (content) =>
-        set((s) => {
-          const msgs = [...s.chatMessages];
-          const last = msgs[msgs.length - 1];
-          if (last?.role === 'assistant') {
-            msgs[msgs.length - 1] = { ...last, content };
-          }
-          return { chatMessages: msgs };
-        }),
-      clearChat: () => set({ chatMessages: [], sessionId: null }),
-      setRagMode: (mode) => set({ ragMode: mode }),
-
-      // Recently viewed
-      recentNotes: [],
-      addRecentNote: (note) =>
-        set((s) => ({
-          recentNotes: [
-            note,
-            ...s.recentNotes.filter((n) => n.id !== note.id),
-          ].slice(0, 10),
-        })),
-    }),
-    {
-      name: 'gnosis-app-store',
-      partialize: (s) => ({
-        sidebarCollapsed: s.sidebarCollapsed,
-        editorMode: s.editorMode,
-        searchMode: s.searchMode,
-        recentNotes: s.recentNotes,
-        ragMode: s.ragMode,
-      }),
-    }
-  )
-);
+  ragMode: 'hybrid',
+  setRagMode: (mode) => set({ ragMode: mode }),
+}));

@@ -9,7 +9,7 @@ All providers share the OpenAI-compatible API surface.
 from __future__ import annotations
 
 import logging
-from typing import AsyncGenerator, Any
+from typing import AsyncGenerator
 
 import httpx
 from openai import AsyncOpenAI
@@ -28,9 +28,12 @@ class LLMProvider:
         self._groq_client: AsyncOpenAI | None = None
         self._openai_client: AsyncOpenAI | None = None
         self._available: list[str] = []
+        self._ollama_model: str = settings.ollama_llm_model
 
     async def initialize(self) -> None:
         """Probe each provider tier and record which are available."""
+        self._ollama_model = settings.ollama_llm_model
+
         # Tier 1: Ollama
         try:
             async with httpx.AsyncClient(timeout=3.0) as client:
@@ -66,20 +69,62 @@ class LLMProvider:
                 "Start Ollama or set GROQ_API_KEY / OPENAI_API_KEY."
             )
 
+    # ---- Runtime introspection ----------------------------------------
+
     @property
     def is_available(self) -> bool:
-        """Return True if at least one provider is reachable."""
         return bool(self._available)
+
+    @property
+    def active_provider(self) -> str:
+        """Name of the highest-priority available provider."""
+        for p in ("ollama", "groq", "openai"):
+            if p in self._available:
+                return p
+        return "none"
+
+    @property
+    def active_model(self) -> str:
+        """Model name in use for the active provider."""
+        p = self.active_provider
+        if p == "ollama":
+            return self._ollama_model
+        if p == "groq":
+            return "llama-3.3-70b-versatile"
+        if p == "openai":
+            return "gpt-4o-mini"
+        return ""
+
+    def swap_model(self, model: str) -> None:
+        """Hot-swap the Ollama model without restarting. No-op for other providers."""
+        if "ollama" not in self._available:
+            raise RuntimeError("Ollama is not an available provider")
+        self._ollama_model = model
+        logger.info("LLM provider: Ollama model swapped to %s", model)
+
+    # ---- Client resolution --------------------------------------------
 
     def _get_client_and_model(self) -> tuple[AsyncOpenAI, str]:
         """Return the highest-priority available client and its model name."""
         if "ollama" in self._available and self._ollama_client:
-            return self._ollama_client, settings.ollama_llm_model
+            return self._ollama_client, self._ollama_model
         if "groq" in self._available and self._groq_client:
             return self._groq_client, "llama-3.3-70b-versatile"
         if "openai" in self._available and self._openai_client:
             return self._openai_client, "gpt-4o-mini"
         raise RuntimeError("No LLM provider available")
+
+    def _get_client_for(self, provider: str) -> tuple[AsyncOpenAI, str]:
+        """Return (client, model) for the named provider."""
+        if provider == "ollama" and self._ollama_client:
+            return self._ollama_client, self._ollama_model
+        if provider == "groq" and self._groq_client:
+            return self._groq_client, "llama-3.3-70b-versatile"
+        if provider == "openai" and self._openai_client:
+            return self._openai_client, "gpt-4o-mini"
+        raise ValueError(f"Unknown or unconfigured provider: {provider}")
+
+    # ---- Completion API -----------------------------------------------
 
     async def complete(
         self,
@@ -88,20 +133,8 @@ class LLMProvider:
         temperature: float = 0.3,
         max_tokens: int = 2048,
     ) -> str:
-        """Generate a completion. Cascades through providers on failure.
-
-        Args:
-            prompt: User message content.
-            system: System instruction prepended to the conversation.
-            temperature: Sampling temperature (0.0–1.0).
-            max_tokens: Maximum tokens in the response.
-
-        Returns:
-            The assistant's response text.
-        """
         providers = list(self._available)
         last_exc: Exception | None = None
-
         for provider in providers:
             client, model = self._get_client_for(provider)
             try:
@@ -119,7 +152,6 @@ class LLMProvider:
                 logger.warning("LLM provider %s failed: %s — trying next", provider, exc)
                 last_exc = exc
                 continue
-
         raise RuntimeError(f"All LLM providers failed. Last error: {last_exc}")
 
     async def stream(
@@ -129,20 +161,8 @@ class LLMProvider:
         temperature: float = 0.3,
         max_tokens: int = 2048,
     ) -> AsyncGenerator[str, None]:
-        """Stream completion tokens. Cascades through providers on failure.
-
-        Args:
-            prompt: User message content.
-            system: System instruction.
-            temperature: Sampling temperature.
-            max_tokens: Maximum tokens in the response.
-
-        Yields:
-            Incremental text chunks from the streaming response.
-        """
         providers = list(self._available)
         last_exc: Exception | None = None
-
         for provider in providers:
             client, model = self._get_client_for(provider)
             try:
@@ -165,18 +185,7 @@ class LLMProvider:
                 logger.warning("LLM stream provider %s failed: %s — trying next", provider, exc)
                 last_exc = exc
                 continue
-
         raise RuntimeError(f"All LLM stream providers failed. Last error: {last_exc}")
-
-    def _get_client_for(self, provider: str) -> tuple[AsyncOpenAI, str]:
-        """Return (client, model) for the named provider."""
-        if provider == "ollama" and self._ollama_client:
-            return self._ollama_client, settings.ollama_llm_model
-        if provider == "groq" and self._groq_client:
-            return self._groq_client, "llama-3.3-70b-versatile"
-        if provider == "openai" and self._openai_client:
-            return self._openai_client, "gpt-4o-mini"
-        raise ValueError(f"Unknown or unconfigured provider: {provider}")
 
 
 # Module-level singleton — initialized at application startup via lifespan
