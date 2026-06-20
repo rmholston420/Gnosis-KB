@@ -209,7 +209,16 @@ class TestExecuteQuery:
         db = AsyncMock()
         db.execute.return_value = mock_result
 
-        with patch("gnosis.services.query_parser.scoped_note_stmt", return_value=MagicMock()):
+        # scoped_note_stmt is a LOCAL import inside execute_query, so patch
+        # at the source module, not at query_parser.
+        # Its return value must be a chainable MagicMock because execute_query
+        # calls .where(), .order_by(), and .limit() on it.
+        chainable = MagicMock()
+        chainable.where.return_value = chainable
+        chainable.order_by.return_value = chainable
+        chainable.limit.return_value = chainable
+
+        with patch("gnosis.core.namespace.scoped_note_stmt", return_value=chainable):
             rows, ms = await execute_query(pq, db, owner_ids={1})
         assert rows == []
 
@@ -428,6 +437,11 @@ class TestEmbedDense:
 # LLMProvider has: initialize() (async), complete(), stream(), is_available,
 # active_provider, active_model, swap_model().
 # Clients are configured inside initialize(); _available is populated there.
+#
+# When _available is empty, complete() iterates an empty list and raises:
+#   RuntimeError("All LLM providers failed. Last error: None")
+# stream() raises:
+#   RuntimeError("All LLM stream providers failed. Last error: None")
 # ---------------------------------------------------------------------------
 
 from gnosis.services.llm_provider import LLMProvider
@@ -455,8 +469,8 @@ class TestLLMProvider:
     @pytest.mark.asyncio
     async def test_complete_raises_when_no_providers(self):
         provider = LLMProvider()
-        # _available is empty, so should raise RuntimeError
-        with pytest.raises(RuntimeError, match="No LLM provider"):
+        # _available is empty — iterates nothing, raises with last_exc=None
+        with pytest.raises(RuntimeError, match="All LLM providers failed"):
             await provider.complete("hello")
 
     @pytest.mark.asyncio
@@ -479,7 +493,8 @@ class TestLLMProvider:
     @pytest.mark.asyncio
     async def test_stream_raises_when_no_providers(self):
         provider = LLMProvider()
-        with pytest.raises(RuntimeError, match="No LLM"):
+        # _available is empty — raises "All LLM stream providers failed..."
+        with pytest.raises(RuntimeError, match="All LLM stream providers failed"):
             async for _ in provider.stream("hello"):
                 pass
 
@@ -960,11 +975,18 @@ class TestVaultSync:
 
 # ---------------------------------------------------------------------------
 # Router smoke tests (via FastAPI TestClient)
+#
+# All routers are mounted under /api/v1 prefix (see gnosis/main.py):
+#   application.include_router(search.router, prefix=API_V1)  # /api/v1/search/
+#   application.include_router(query.router,  prefix=API_V1)  # /api/v1/query
+#   application.include_router(notes.router,  prefix=API_V1)  # /api/v1/notes
+#   application.include_router(tags.router,   prefix=API_V1)  # /api/v1/tags
+#   application.include_router(vault_router.router, prefix=API_V1)  # /api/v1/vault
 # ---------------------------------------------------------------------------
 
 from fastapi.testclient import TestClient
 from gnosis.main import app
-from gnosis.core.auth import get_current_user
+from gnosis.core.auth import get_current_user, get_vault_owner_ids
 from gnosis.database import get_db
 
 
@@ -981,6 +1003,10 @@ async def _override_user():
     return _fake_user()
 
 
+async def _override_owner_ids():
+    return {1}
+
+
 async def _override_db():
     db = AsyncMock()
     db.execute.return_value = MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[]))))
@@ -988,6 +1014,7 @@ async def _override_db():
 
 
 app.dependency_overrides[get_current_user] = _override_user
+app.dependency_overrides[get_vault_owner_ids] = _override_owner_ids
 app.dependency_overrides[get_db] = _override_db
 
 client = TestClient(app, raise_server_exceptions=False)
@@ -995,45 +1022,46 @@ client = TestClient(app, raise_server_exceptions=False)
 
 class TestSearchRouter:
     def test_search_endpoint_returns_200_or_422(self):
-        resp = client.get("/search?q=test")
+        # Route is /api/v1/search/?q=test (trailing slash from router prefix)
+        resp = client.get("/api/v1/search/?q=test")
         assert resp.status_code in (200, 422, 500)
 
     def test_search_endpoint_no_query_returns_422(self):
-        resp = client.get("/search")
+        resp = client.get("/api/v1/search/")
         assert resp.status_code in (200, 422)
 
 
 class TestQueryRouter:
     def test_query_endpoint_post(self):
-        resp = client.post("/query", json={"query": "FROM notes LIMIT 5"})
+        resp = client.post("/api/v1/query", json={"query": "FROM notes LIMIT 5"})
         assert resp.status_code in (200, 422, 500)
 
     def test_query_endpoint_empty_query(self):
-        resp = client.post("/query", json={"query": ""})
+        resp = client.post("/api/v1/query", json={"query": ""})
         assert resp.status_code in (200, 422, 500)
 
     def test_query_endpoint_invalid_gql(self):
-        resp = client.post("/query", json={"query": "FOOBAR"})
+        resp = client.post("/api/v1/query", json={"query": "FOOBAR"})
         assert resp.status_code in (200, 400, 422, 500)
 
 
 class TestNotesRouter:
     def test_list_notes_returns_200(self):
-        resp = client.get("/notes")
+        resp = client.get("/api/v1/notes")
         assert resp.status_code in (200, 500)
 
     def test_get_note_not_found(self):
-        resp = client.get("/notes/99999")
+        resp = client.get("/api/v1/notes/99999")
         assert resp.status_code in (404, 500)
 
 
 class TestTagsRouter:
     def test_list_tags(self):
-        resp = client.get("/tags")
+        resp = client.get("/api/v1/tags")
         assert resp.status_code in (200, 500)
 
 
 class TestVaultRouter:
     def test_vault_status(self):
-        resp = client.get("/vault/status")
+        resp = client.get("/api/v1/vault/status")
         assert resp.status_code in (200, 500)
