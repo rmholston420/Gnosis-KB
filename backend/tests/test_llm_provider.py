@@ -1,8 +1,4 @@
-"""Unit tests for gnosis/services/llm_provider.py.
-
-LLMProvider uses AsyncOpenAI clients (openai SDK) — not httpx directly.
-All tests mock the openai client's chat.completions.create coroutine.
-"""
+"""Tests for gnosis/services/llm_provider.py."""
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -10,179 +6,116 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
-def _make_provider(provider_name="ollama"):
-    """Return a pre-initialised LLMProvider with one fake client."""
-    from gnosis.services.llm_provider import LLMProvider
-    p = LLMProvider()
-    fake_client = MagicMock()
-    fake_client.chat = MagicMock()
-    fake_client.chat.completions = MagicMock()
-    p._available = [provider_name]
-    if provider_name == "ollama":
-        p._ollama_client = fake_client
-        p._ollama_model = "mistral"
-    elif provider_name == "groq":
-        p._groq_client = fake_client
-    elif provider_name == "openai":
-        p._openai_client = fake_client
-    return p, fake_client
-
-
 # ---------------------------------------------------------------------------
-# Properties
-# ---------------------------------------------------------------------------
-
-def test_is_available_false_when_no_providers():
-    from gnosis.services.llm_provider import LLMProvider
-    p = LLMProvider()
-    assert not p.is_available
-
-
-def test_is_available_true_when_provider_set():
-    p, _ = _make_provider("ollama")
-    assert p.is_available
-
-
-def test_active_provider_returns_highest_priority():
-    p, _ = _make_provider("ollama")
-    assert p.active_provider == "ollama"
-
-
-def test_active_model_ollama():
-    p, _ = _make_provider("ollama")
-    assert p.active_model == "mistral"
-
-
-def test_active_model_groq():
-    p, _ = _make_provider("groq")
-    assert p.active_model == "llama-3.3-70b-versatile"
-
-
-def test_active_model_openai():
-    p, _ = _make_provider("openai")
-    assert p.active_model == "gpt-4o-mini"
-
-
-def test_active_provider_none_when_empty():
-    from gnosis.services.llm_provider import LLMProvider
-    p = LLMProvider()
-    assert p.active_provider == "none"
-    assert p.active_model == ""
-
-
-def test_swap_model_updates_ollama_model():
-    p, _ = _make_provider("ollama")
-    p.swap_model("llama3")
-    assert p._ollama_model == "llama3"
-
-
-def test_swap_model_raises_when_ollama_unavailable():
-    from gnosis.services.llm_provider import LLMProvider
-    p = LLMProvider()
-    p._available = ["groq"]
-    with pytest.raises(RuntimeError, match="Ollama"):
-        p.swap_model("llama3")
-
-
-# ---------------------------------------------------------------------------
-# complete()
+# get_completion
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_complete_returns_content():
-    p, fake_client = _make_provider("ollama")
+async def test_get_completion_openai_returns_string():
+    from gnosis.services.llm_provider import get_completion
+
+    fake_choice = MagicMock()
+    fake_choice.message.content = "Hello from GPT"
     fake_response = MagicMock()
-    fake_response.choices = [MagicMock()]
-    fake_response.choices[0].message.content = "Answer text"
+    fake_response.choices = [fake_choice]
+
+    fake_client = MagicMock()
     fake_client.chat.completions.create = AsyncMock(return_value=fake_response)
 
-    result = await p.complete("What is 2+2?")
-    assert result == "Answer text"
+    fake_openai = MagicMock()
+    fake_openai.AsyncOpenAI.return_value = fake_client
+
+    with patch.dict("sys.modules", {"openai": fake_openai}), \
+         patch("gnosis.services.llm_provider.settings") as s:
+        s.llm_provider = "openai"
+        s.openai_api_key = "sk-test"
+        s.llm_model = "gpt-4o-mini"
+        result = await get_completion("Say hello")
+
+    assert result == "Hello from GPT"
 
 
 @pytest.mark.asyncio
-async def test_complete_falls_back_to_next_provider():
-    """First provider raises, second succeeds."""
-    from gnosis.services.llm_provider import LLMProvider
-    p = LLMProvider()
+async def test_get_completion_anthropic_returns_string():
+    from gnosis.services.llm_provider import get_completion
+
+    fake_content = MagicMock()
+    fake_content.text = "Hello from Claude"
+    fake_response = MagicMock()
+    fake_response.content = [fake_content]
+
+    fake_client = MagicMock()
+    fake_client.messages.create = AsyncMock(return_value=fake_response)
+
+    fake_anthropic = MagicMock()
+    fake_anthropic.AsyncAnthropic.return_value = fake_client
+
+    with patch.dict("sys.modules", {"anthropic": fake_anthropic}), \
+         patch("gnosis.services.llm_provider.settings") as s:
+        s.llm_provider = "anthropic"
+        s.anthropic_api_key = "sk-test"
+        s.llm_model = "claude-3-haiku-20240307"
+        result = await get_completion("Say hello")
+
+    assert result == "Hello from Claude"
+
+
+@pytest.mark.asyncio
+async def test_get_completion_ollama_returns_string():
+    from gnosis.services.llm_provider import get_completion
+
+    fake_response = MagicMock()
+    fake_response.message.content = "Hello from Ollama"
 
     fake_ollama = MagicMock()
-    fake_ollama.chat.completions.create = AsyncMock(side_effect=RuntimeError("timeout"))
+    fake_ollama.chat = AsyncMock(return_value=fake_response)
 
-    fake_groq = MagicMock()
-    good_response = MagicMock()
-    good_response.choices = [MagicMock()]
-    good_response.choices[0].message.content = "Fallback answer"
-    fake_groq.chat.completions.create = AsyncMock(return_value=good_response)
+    with patch.dict("sys.modules", {"ollama": fake_ollama}), \
+         patch("gnosis.services.llm_provider.settings") as s:
+        s.llm_provider = "ollama"
+        s.ollama_base_url = "http://localhost:11434"
+        s.llm_model = "llama3"
+        result = await get_completion("Say hello")
 
-    p._available = ["ollama", "groq"]
-    p._ollama_client = fake_ollama
-    p._ollama_model = "mistral"
-    p._groq_client = fake_groq
-
-    result = await p.complete("hi")
-    assert result == "Fallback answer"
+    assert isinstance(result, str)
 
 
 @pytest.mark.asyncio
-async def test_complete_raises_when_all_providers_fail():
-    from gnosis.services.llm_provider import LLMProvider
-    p = LLMProvider()
+async def test_get_completion_unsupported_raises():
+    from gnosis.services.llm_provider import get_completion
+
+    with patch("gnosis.services.llm_provider.settings") as s:
+        s.llm_provider = "nonexistent_provider_xyz"
+        with pytest.raises(Exception):
+            await get_completion("hello")
+
+
+# ---------------------------------------------------------------------------
+# stream_completion
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_stream_completion_openai_yields_chunks():
+    from gnosis.services.llm_provider import stream_completion
+
+    chunk1 = MagicMock(); chunk1.choices = [MagicMock()]; chunk1.choices[0].delta.content = "Hello"
+    chunk2 = MagicMock(); chunk2.choices = [MagicMock()]; chunk2.choices[0].delta.content = " world"
+
+    async def fake_stream():
+        for c in [chunk1, chunk2]:
+            yield c
+
     fake_client = MagicMock()
-    fake_client.chat.completions.create = AsyncMock(side_effect=RuntimeError("fail"))
-    p._available = ["ollama"]
-    p._ollama_client = fake_client
-    p._ollama_model = "mistral"
+    fake_client.chat.completions.create = AsyncMock(return_value=fake_stream())
 
-    with pytest.raises(RuntimeError, match="All LLM providers failed"):
-        await p.complete("hi")
+    fake_openai = MagicMock()
+    fake_openai.AsyncOpenAI.return_value = fake_client
 
+    with patch.dict("sys.modules", {"openai": fake_openai}), \
+         patch("gnosis.services.llm_provider.settings") as s:
+        s.llm_provider = "openai"
+        s.openai_api_key = "sk-test"
+        s.llm_model = "gpt-4o-mini"
+        chunks = [c async for c in stream_completion("Say hello")]
 
-@pytest.mark.asyncio
-async def test_complete_no_providers_raises():
-    from gnosis.services.llm_provider import LLMProvider
-    p = LLMProvider()
-    with pytest.raises(RuntimeError):
-        await p.complete("hi")
-
-
-# ---------------------------------------------------------------------------
-# initialize() — provider availability probing
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_initialize_adds_ollama_when_reachable():
-    from gnosis.services.llm_provider import LLMProvider
-    import httpx
-    p = LLMProvider()
-
-    fake_resp = MagicMock()
-    fake_resp.status_code = 200
-
-    with patch("httpx.AsyncClient") as mock_ctx:
-        instance = AsyncMock()
-        instance.__aenter__ = AsyncMock(return_value=instance)
-        instance.__aexit__ = AsyncMock(return_value=False)
-        instance.get = AsyncMock(return_value=fake_resp)
-        mock_ctx.return_value = instance
-        with patch("gnosis.services.llm_provider.AsyncOpenAI"):
-            await p.initialize()
-
-    assert "ollama" in p._available
-
-
-@pytest.mark.asyncio
-async def test_initialize_skips_ollama_when_unreachable():
-    from gnosis.services.llm_provider import LLMProvider
-    import httpx
-    p = LLMProvider()
-
-    with patch("httpx.AsyncClient") as mock_ctx:
-        instance = AsyncMock()
-        instance.__aenter__ = AsyncMock(return_value=instance)
-        instance.__aexit__ = AsyncMock(return_value=False)
-        instance.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
-        mock_ctx.return_value = instance
-        await p.initialize()
-
-    assert "ollama" not in p._available
+    assert len(chunks) > 0

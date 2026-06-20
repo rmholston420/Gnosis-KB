@@ -1,10 +1,7 @@
-"""Unit tests for gnosis/services/document_parser.py.
-
-All heavy optional dependencies (fitz, docx, pptx, openpyxl, pytesseract,
-httpx) are mocked so no binary libraries are needed in the test environment.
-"""
+"""Unit tests for gnosis/services/document_parser.py."""
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -195,30 +192,39 @@ def test_parse_image_returns_ocr_text():
 
 # ---------------------------------------------------------------------------
 # parse_url
-# parse_url imports httpx at call-time and uses it as an async context
-# manager. We patch gnosis.services.document_parser's httpx reference
-# directly so the mock is in scope when the function runs.
+#
+# httpx is imported LOCALLY inside parse_url with `import httpx`, so there
+# is no module-level attribute to patch. We inject a fake module into
+# sys.modules so the local import resolves to our mock.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.asyncio
-async def test_parse_url_extracts_title_and_text():
-    from gnosis.services.document_parser import parse_url
-
-    html = "<html><head><title>Test Page</title></head><body><main>Main content</main></body></html>"
-
+def _make_httpx_mock(html: str):
+    """Return a fake httpx module whose AsyncClient works as an async CM."""
     fake_resp = MagicMock()
     fake_resp.text = html
     fake_resp.raise_for_status = MagicMock()
 
-    # Build a mock that works as `async with httpx.AsyncClient(...) as client:`
     fake_client = MagicMock()
     fake_client.get = AsyncMock(return_value=fake_resp)
     fake_client.__aenter__ = AsyncMock(return_value=fake_client)
     fake_client.__aexit__ = AsyncMock(return_value=False)
 
-    mock_async_client_cls = MagicMock(return_value=fake_client)
+    fake_httpx = MagicMock()
+    fake_httpx.AsyncClient.return_value = fake_client
+    return fake_httpx
 
-    with patch("gnosis.services.document_parser.httpx.AsyncClient", mock_async_client_cls):
+
+@pytest.mark.asyncio
+async def test_parse_url_extracts_title_and_text():
+    from gnosis.services.document_parser import parse_url
+
+    html = (
+        "<html><head><title>Test Page</title></head>"
+        "<body><main>Main content</main></body></html>"
+    )
+    fake_httpx = _make_httpx_mock(html)
+
+    with patch.dict(sys.modules, {"httpx": fake_httpx}):
         result = await parse_url("https://example.com")
 
     assert result.title == "Test Page"
@@ -232,22 +238,14 @@ async def test_parse_url_falls_back_without_bs4():
     from gnosis.services.document_parser import parse_url
 
     html = "<html><body>raw</body></html>"
-    fake_resp = MagicMock()
-    fake_resp.text = html
-    fake_resp.raise_for_status = MagicMock()
+    fake_httpx = _make_httpx_mock(html)
 
-    fake_client = MagicMock()
-    fake_client.get = AsyncMock(return_value=fake_resp)
-    fake_client.__aenter__ = AsyncMock(return_value=fake_client)
-    fake_client.__aexit__ = AsyncMock(return_value=False)
-
-    mock_async_client_cls = MagicMock(return_value=fake_client)
-
-    with patch("gnosis.services.document_parser.httpx.AsyncClient", mock_async_client_cls), \
-         patch.dict("sys.modules", {"bs4": None}):
+    # Remove bs4 from sys.modules and block re-import by setting to None
+    with patch.dict(sys.modules, {"httpx": fake_httpx, "bs4": None}):
         result = await parse_url("https://example.com")
 
     assert result.raw_format == "url"
+    assert result.source == "https://example.com"
 
 
 # ---------------------------------------------------------------------------

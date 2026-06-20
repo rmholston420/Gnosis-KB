@@ -1,94 +1,89 @@
-"""Unit tests for gnosis/services/embeddings.py.
-
-Patches fastembed so no models are downloaded during testing.
-"""
+"""Tests for gnosis/services/embeddings.py."""
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 
-def _mock_dense_model(vec):
-    m = MagicMock()
-    m.embed.return_value = iter([vec])
-    return m
-
-
-def _mock_colbert_model(vecs):
-    m = MagicMock()
-    m.embed.return_value = iter([vecs])
-    return m
-
-
 # ---------------------------------------------------------------------------
-# get_dense_model / get_colbert_model lazy init
+# get_embedding
 # ---------------------------------------------------------------------------
 
-def test_get_dense_model_caches_instance():
-    import gnosis.services.embeddings as emb
-    emb._dense_model = None
-    fake = MagicMock()
-    with patch("gnosis.services.embeddings.get_dense_model", return_value=fake):
-        m1 = emb.get_dense_model.__wrapped__() if hasattr(emb.get_dense_model, "__wrapped__") else fake
-    assert fake is not None
+@pytest.mark.asyncio
+async def test_get_embedding_openai_returns_list():
+    """Happy path: OpenAI provider returns a float list."""
+    from gnosis.services.embeddings import get_embedding
+
+    fake_embed_data = MagicMock()
+    fake_embed_data.embedding = [0.1, 0.2, 0.3]
+    fake_response = MagicMock()
+    fake_response.data = [fake_embed_data]
+
+    fake_client = MagicMock()
+    fake_client.embeddings.create = AsyncMock(return_value=fake_response)
+
+    fake_openai = MagicMock()
+    fake_openai.AsyncOpenAI.return_value = fake_client
+
+    with patch.dict("sys.modules", {"openai": fake_openai}), \
+         patch("gnosis.services.embeddings.settings") as mock_settings:
+        mock_settings.embedding_provider = "openai"
+        mock_settings.openai_api_key = "sk-test"
+        mock_settings.embedding_model = "text-embedding-3-small"
+        result = await get_embedding("hello world")
+
+    assert result == [0.1, 0.2, 0.3]
 
 
-def test_get_dense_model_raises_on_import_error():
-    import gnosis.services.embeddings as emb
-    emb._dense_model = None
-    with patch.dict("sys.modules", {"fastembed": None}):
+@pytest.mark.asyncio
+async def test_get_embedding_local_returns_list():
+    """Local/sentence-transformers provider path."""
+    from gnosis.services.embeddings import get_embedding
+
+    fake_model = MagicMock()
+    fake_model.encode.return_value = [0.4, 0.5, 0.6]
+
+    fake_st = MagicMock()
+    fake_st.SentenceTransformer.return_value = fake_model
+
+    with patch.dict("sys.modules", {"sentence_transformers": fake_st}), \
+         patch("gnosis.services.embeddings.settings") as mock_settings:
+        mock_settings.embedding_provider = "local"
+        mock_settings.local_embedding_model = "all-MiniLM-L6-v2"
+        result = await get_embedding("hello")
+
+    assert isinstance(result, list)
+
+
+@pytest.mark.asyncio
+async def test_get_embedding_unsupported_provider_raises():
+    from gnosis.services.embeddings import get_embedding
+
+    with patch("gnosis.services.embeddings.settings") as mock_settings:
+        mock_settings.embedding_provider = "unknown_provider"
         with pytest.raises(Exception):
-            emb.get_dense_model()
-
-
-def test_get_colbert_model_raises_on_import_error():
-    import gnosis.services.embeddings as emb
-    emb._colbert_model = None
-    with patch.dict("sys.modules", {"fastembed": None}):
-        with pytest.raises(Exception):
-            emb.get_colbert_model()
+            await get_embedding("hello")
 
 
 # ---------------------------------------------------------------------------
-# embed_dense
+# embed_texts batch helper
 # ---------------------------------------------------------------------------
 
-def test_embed_dense_returns_float_list():
-    import gnosis.services.embeddings as emb
-    emb._dense_model = None
-    fake_vec = [0.1, 0.2, 0.3]
-    with patch.object(emb, "get_dense_model", return_value=_mock_dense_model(fake_vec)):
-        result = emb.embed_dense("hello world")
-    assert result == pytest.approx([0.1, 0.2, 0.3])
-    assert all(isinstance(x, float) for x in result)
+@pytest.mark.asyncio
+async def test_embed_texts_returns_list_of_lists():
+    from gnosis.services.embeddings import embed_texts
+
+    with patch("gnosis.services.embeddings.get_embedding", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = [0.1, 0.2]
+        result = await embed_texts(["a", "b", "c"])
+
+    assert len(result) == 3
+    assert all(isinstance(r, list) for r in result)
 
 
-def test_embed_dense_single_string():
-    import gnosis.services.embeddings as emb
-    emb._dense_model = None
-    with patch.object(emb, "get_dense_model", return_value=_mock_dense_model([1.0])):
-        result = emb.embed_dense("test")
-    assert len(result) == 1
-
-
-# ---------------------------------------------------------------------------
-# embed_colbert
-# ---------------------------------------------------------------------------
-
-def test_embed_colbert_returns_list_of_lists():
-    import gnosis.services.embeddings as emb
-    emb._colbert_model = None
-    fake_vecs = [[0.1, 0.2], [0.3, 0.4]]
-    with patch.object(emb, "get_colbert_model", return_value=_mock_colbert_model(fake_vecs)):
-        result = emb.embed_colbert("hello")
-    assert len(result) == 2
-    assert result[0] == pytest.approx([0.1, 0.2])
-
-
-def test_embed_colbert_all_floats():
-    import gnosis.services.embeddings as emb
-    emb._colbert_model = None
-    with patch.object(emb, "get_colbert_model", return_value=_mock_colbert_model([[1, 2]])):
-        result = emb.embed_colbert("test")
-    assert all(isinstance(x, float) for x in result[0])
+@pytest.mark.asyncio
+async def test_embed_texts_empty_input():
+    from gnosis.services.embeddings import embed_texts
+    result = await embed_texts([])
+    assert result == []
