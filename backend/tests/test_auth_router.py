@@ -1,40 +1,17 @@
-"""Unit tests for gnosis/routers/auth.py.
+"""Integration tests for gnosis/routers/auth.py.
 
-Covers: login (happy + wrong password + unknown user),
-register (happy + duplicate email), me endpoint.
+Auth endpoints are decorated with @auth_limit (slowapi) which requires a
+real starlette.requests.Request object, so we use the async_client fixture
+(HTTPX against the full ASGI app) rather than calling handlers directly.
+
+Covers: POST /auth/token (valid + wrong password + unknown user),
+POST /auth/register (new user + duplicate email), GET /auth/me.
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-
-
-def _user(uid=1, email="user@example.com", hashed="hashed"):
-    u = MagicMock()
-    u.id = uid
-    u.email = email
-    u.hashed_password = hashed
-    u.full_name = "Test User"
-    return u
-
-
-def _db_scalar(obj):
-    result = MagicMock()
-    result.scalar_one_or_none.return_value = obj
-    db = AsyncMock()
-    db.execute = AsyncMock(return_value=result)
-    db.add = MagicMock()
-    db.commit = AsyncMock()
-    db.refresh = AsyncMock()
-    return db
-
-
-def _form(username="user@example.com", password="secret"):
-    f = MagicMock()
-    f.username = username
-    f.password = password
-    return f
 
 
 # ---------------------------------------------------------------------------
@@ -42,55 +19,51 @@ def _form(username="user@example.com", password="secret"):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_login_returns_token_on_valid_credentials():
-    from gnosis.routers.auth import login
-
-    user = _user()
-    db = _db_scalar(user)
+async def test_login_returns_token_on_valid_credentials(async_client):
+    """Valid credentials → 200 with access_token."""
+    with patch("gnosis.routers.auth.get_password_hash", return_value="hashed"):
+        await async_client.post(
+            "/api/v1/auth/register",
+            json={"email": "user@example.com", "password": "secret", "full_name": "Test"},
+        )
 
     with (
         patch("gnosis.routers.auth.verify_password", return_value=True),
         patch("gnosis.routers.auth.create_access_token", return_value="jwt-token"),
     ):
-        result = await login(
-            request=MagicMock(), response=MagicMock(),
-            form=_form(), db=db,
+        resp = await async_client.post(
+            "/api/v1/auth/token",
+            data={"username": "user@example.com", "password": "secret"},
         )
-    assert result.access_token == "jwt-token"
+    assert resp.status_code == 200
+    assert resp.json()["access_token"] == "jwt-token"
 
 
 @pytest.mark.asyncio
-async def test_login_returns_401_on_wrong_password():
-    from fastapi import HTTPException
-    from gnosis.routers.auth import login
-
-    user = _user()
-    db = _db_scalar(user)
-
-    with (
-        patch("gnosis.routers.auth.verify_password", return_value=False),
-        pytest.raises(HTTPException) as exc_info,
-    ):
-        await login(
-            request=MagicMock(), response=MagicMock(),
-            form=_form(password="wrong"), db=db,
+async def test_login_returns_401_on_wrong_password(async_client):
+    """Known user but wrong password → 401."""
+    with patch("gnosis.routers.auth.get_password_hash", return_value="hashed"):
+        await async_client.post(
+            "/api/v1/auth/register",
+            json={"email": "pw@example.com", "password": "correct", "full_name": "PW"},
         )
-    assert exc_info.value.status_code == 401
+
+    with patch("gnosis.routers.auth.verify_password", return_value=False):
+        resp = await async_client.post(
+            "/api/v1/auth/token",
+            data={"username": "pw@example.com", "password": "wrong"},
+        )
+    assert resp.status_code == 401
 
 
 @pytest.mark.asyncio
-async def test_login_returns_401_on_unknown_user():
-    from fastapi import HTTPException
-    from gnosis.routers.auth import login
-
-    db = _db_scalar(None)  # no user found
-
-    with pytest.raises(HTTPException) as exc_info:
-        await login(
-            request=MagicMock(), response=MagicMock(),
-            form=_form(), db=db,
-        )
-    assert exc_info.value.status_code == 401
+async def test_login_returns_401_on_unknown_user(async_client):
+    """Non-existent email → 401."""
+    resp = await async_client.post(
+        "/api/v1/auth/token",
+        data={"username": "nobody@example.com", "password": "anything"},
+    )
+    assert resp.status_code == 401
 
 
 # ---------------------------------------------------------------------------
@@ -98,39 +71,23 @@ async def test_login_returns_401_on_unknown_user():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_register_creates_new_user():
-    from gnosis.routers.auth import register
-    from gnosis.schemas.auth import UserCreate
-
-    db = _db_scalar(None)  # no existing user
-    new_user = _user()
-    db.refresh = AsyncMock(side_effect=lambda u: None)
-
-    with patch("gnosis.routers.auth.get_password_hash", return_value="hashed_pw"):
-        result = await register(
-            request=MagicMock(), response=MagicMock(),
-            payload=UserCreate(email="new@example.com", password="pass123", full_name="New User"),
-            db=db,
-        )
-    db.add.assert_called_once()
-    db.commit.assert_awaited_once()
+async def test_register_creates_new_user(async_client):
+    """Valid payload → 201 with user data."""
+    resp = await async_client.post(
+        "/api/v1/auth/register",
+        json={"email": "new@example.com", "password": "pass123", "full_name": "New User"},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["email"] == "new@example.com"
 
 
 @pytest.mark.asyncio
-async def test_register_returns_400_on_duplicate_email():
-    from fastapi import HTTPException
-    from gnosis.routers.auth import register
-    from gnosis.schemas.auth import UserCreate
-
-    db = _db_scalar(_user())  # existing user found
-
-    with pytest.raises(HTTPException) as exc_info:
-        await register(
-            request=MagicMock(), response=MagicMock(),
-            payload=UserCreate(email="user@example.com", password="pass", full_name="Dup"),
-            db=db,
-        )
-    assert exc_info.value.status_code == 400
+async def test_register_returns_400_on_duplicate_email(async_client):
+    """Registering the same email twice → 400."""
+    payload = {"email": "dup@example.com", "password": "pass", "full_name": "Dup"}
+    await async_client.post("/api/v1/auth/register", json=payload)
+    resp = await async_client.post("/api/v1/auth/register", json=payload)
+    assert resp.status_code == 400
 
 
 # ---------------------------------------------------------------------------
@@ -138,9 +95,9 @@ async def test_register_returns_400_on_duplicate_email():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_me_returns_current_user():
-    from gnosis.routers.auth import me
-
-    user = _user()
-    result = await me(current=user)
-    assert result.id == 1
+async def test_me_returns_current_user(async_client):
+    """Authenticated GET /me → 200 with user fields."""
+    resp = await async_client.get("/api/v1/auth/me")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "email" in data
