@@ -65,7 +65,8 @@ from gnosis.services.markdown_parser import (
 )
 from gnosis.core.auth import get_current_user, get_vault_owner_ids
 
-router = APIRouter(prefix="/api/v1/notes", tags=["notes"])
+# prefix is /notes only — main.py prepends /api/v1 when including this router
+router = APIRouter(prefix="/notes", tags=["notes"])
 
 
 # ---------------------------------------------------------------------------
@@ -78,13 +79,7 @@ async def _get_note_or_404(
     db: AsyncSession,
     owner_ids: set[int],
 ) -> Note:
-    """Fetch a note by ID within the caller's accessible vaults.
-
-    Raises:
-        NoteNotFoundError: Note does not exist or is soft-deleted.
-        HTTPException 403: Note exists but belongs to an inaccessible vault.
-    """
-    # First: un-scoped lookup so we can return a proper 403 vs 404.
+    """Fetch a note by ID within the caller's accessible vaults."""
     raw = await db.execute(
         select(Note)
         .options(
@@ -98,7 +93,6 @@ async def _get_note_or_404(
     if note is None:
         raise NoteNotFoundError(note_id)
 
-    # Ownership check: null owner_id is legacy data visible to everyone.
     if note.owner_id is not None and note.owner_id not in owner_ids:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
