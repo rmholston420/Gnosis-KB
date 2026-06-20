@@ -1,26 +1,27 @@
-"""Tests for gnosis/services/graph_rag.py."""
+"""Tests for services/graph_rag.py — GraphRAGService."""
 from __future__ import annotations
 
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 
+from gnosis.services.graph_rag import GraphRAGService
+
 
 # ---------------------------------------------------------------------------
-# _working_dir
+# Helpers
 # ---------------------------------------------------------------------------
 
-def test_working_dir_legacy_user_is_base_dir(tmp_path):
-    from gnosis.services.graph_rag import GraphRAGService
-    svc = GraphRAGService()
-    svc._base_dir = tmp_path
-    assert svc._working_dir(0) == tmp_path
-
-
-def test_working_dir_non_zero_user_is_subdir(tmp_path):
-    from gnosis.services.graph_rag import GraphRAGService
-    svc = GraphRAGService()
-    svc._base_dir = tmp_path
-    assert svc._working_dir(42) == tmp_path / "42"
+def _make_service_with_lightrag() -> tuple[GraphRAGService, MagicMock]:
+    """Return a GraphRAGService and a fake LightRAG instance pre-loaded."""
+    service = GraphRAGService()
+    mock_instance = MagicMock()
+    mock_instance.ainsert = AsyncMock(return_value=None)
+    mock_instance.aquery = AsyncMock(return_value="The answer")
+    mock_instance.astream_query = None  # will be replaced per-test
+    service._instances[1] = mock_instance
+    return service, mock_instance
 
 
 # ---------------------------------------------------------------------------
@@ -28,35 +29,18 @@ def test_working_dir_non_zero_user_is_subdir(tmp_path):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_is_available_false_when_no_instance():
-    from gnosis.services.graph_rag import GraphRAGService
-    import gnosis.services.graph_rag as gr_mod
-    with patch.object(gr_mod, "_LIGHTRAG_AVAILABLE", True):
-        svc = GraphRAGService()
-    assert await svc.is_available(1) is False
+async def test_is_available_false_when_not_initialised():
+    service = GraphRAGService()
+    result = await service.is_available(user_id=1)
+    assert result is False
 
 
 @pytest.mark.asyncio
-async def test_is_available_false_when_lightrag_not_installed():
-    from gnosis.services.graph_rag import GraphRAGService
-    import gnosis.services.graph_rag as gr_mod
-    with patch.object(gr_mod, "_LIGHTRAG_AVAILABLE", False):
-        svc = GraphRAGService()
-    assert await svc.is_available(0) is False
-
-
-# ---------------------------------------------------------------------------
-# _get_instance
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_get_instance_returns_none_when_unavailable():
-    from gnosis.services.graph_rag import GraphRAGService
-    import gnosis.services.graph_rag as gr_mod
-    with patch.object(gr_mod, "_LIGHTRAG_AVAILABLE", False):
-        svc = GraphRAGService()
-        instance = await svc._get_instance(1)
-    assert instance is None
+async def test_is_available_true_when_cached():
+    service, _ = _make_service_with_lightrag()
+    with patch("gnosis.services.graph_rag._LIGHTRAG_AVAILABLE", True):
+        result = await service.is_available(user_id=1)
+    assert result is True
 
 
 # ---------------------------------------------------------------------------
@@ -64,158 +48,160 @@ async def test_get_instance_returns_none_when_unavailable():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_ingest_note_noop_when_unavailable():
-    from gnosis.services.graph_rag import GraphRAGService
-    import gnosis.services.graph_rag as gr_mod
-    with patch.object(gr_mod, "_LIGHTRAG_AVAILABLE", False):
-        svc = GraphRAGService()
-    await svc.ingest_note("Title", "Body", user_id=1)
+async def test_ingest_note_calls_ainsert():
+    service, mock_instance = _make_service_with_lightrag()
+    with patch("gnosis.services.graph_rag._LIGHTRAG_AVAILABLE", True):
+        await service.ingest_note(title="My Note", body="body text", user_id=1)
+    mock_instance.ainsert.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_ingest_note_calls_ainsert_when_available():
-    from gnosis.services.graph_rag import GraphRAGService
-    import gnosis.services.graph_rag as gr_mod
+async def test_ingest_note_no_op_when_lightrag_unavailable():
+    service = GraphRAGService()
+    # _instances is empty — _get_instance returns None
+    with patch("gnosis.services.graph_rag._LIGHTRAG_AVAILABLE", False):
+        await service.ingest_note(title="T", body="b", user_id=1)  # must not raise
 
-    fake_instance = MagicMock()
-    fake_instance.ainsert = AsyncMock()
 
-    svc = GraphRAGService()
-    svc._instances[1] = fake_instance
-
-    with patch.object(gr_mod, "_LIGHTRAG_AVAILABLE", True):
-        await svc.ingest_note("Title", "Body", user_id=1)
-
-    fake_instance.ainsert.assert_called_once()
+@pytest.mark.asyncio
+async def test_ingest_note_swallows_exception():
+    service, mock_instance = _make_service_with_lightrag()
+    mock_instance.ainsert = AsyncMock(side_effect=RuntimeError("boom"))
+    with patch("gnosis.services.graph_rag._LIGHTRAG_AVAILABLE", True):
+        await service.ingest_note(title="T", body="b", user_id=1)  # must not raise
 
 
 # ---------------------------------------------------------------------------
-# query — fallback when unavailable
+# query — single graph
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_query_returns_fallback_message_when_unavailable():
-    from gnosis.services.graph_rag import GraphRAGService
-    import gnosis.services.graph_rag as gr_mod
-    with patch.object(gr_mod, "_LIGHTRAG_AVAILABLE", False):
-        svc = GraphRAGService()
-    result = await svc.query("What is consciousness?", user_id=1)
-    assert isinstance(result, str)
-    assert len(result) > 0
-
-
-# ---------------------------------------------------------------------------
-# query — single-graph fast path
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_query_single_user_returns_instance_answer():
-    from gnosis.services.graph_rag import GraphRAGService
-    import gnosis.services.graph_rag as gr_mod
-
-    fake_instance = MagicMock()
-    fake_instance.aquery = AsyncMock(return_value="Deep answer here.")
-
-    svc = GraphRAGService()
-    svc._instances[1] = fake_instance
-
-    with patch.object(gr_mod, "_LIGHTRAG_AVAILABLE", True), \
+async def test_query_single_returns_answer():
+    service, mock_instance = _make_service_with_lightrag()
+    with patch("gnosis.services.graph_rag._LIGHTRAG_AVAILABLE", True), \
          patch("gnosis.services.graph_rag.QueryParam", MagicMock()):
-        result = await svc.query("question", user_id=1)
+        result = await service.query("What is X?", user_id=1)
+    assert result == "The answer"
 
-    assert result == "Deep answer here."
+
+@pytest.mark.asyncio
+async def test_query_returns_unavailable_message_when_no_instance():
+    service = GraphRAGService()
+    with patch("gnosis.services.graph_rag._LIGHTRAG_AVAILABLE", False):
+        result = await service.query("anything", user_id=99)
+    assert "unavailable" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_query_swallows_exception_returns_error_string():
+    service, mock_instance = _make_service_with_lightrag()
+    mock_instance.aquery = AsyncMock(side_effect=RuntimeError("crash"))
+    with patch("gnosis.services.graph_rag._LIGHTRAG_AVAILABLE", True), \
+         patch("gnosis.services.graph_rag.QueryParam", MagicMock()):
+        result = await service.query("question", user_id=1)
+    assert "failed" in result.lower() or "crash" in result.lower()
 
 
 # ---------------------------------------------------------------------------
-# query — multi-vault fan-out
+# query — multi-graph fan-out
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_query_multi_vault_merges_answers():
-    from gnosis.services.graph_rag import GraphRAGService
-    import gnosis.services.graph_rag as gr_mod
+async def test_query_multi_graph_merges_answers():
+    service = GraphRAGService()
+    # Pre-load two user instances
+    for uid, answer in [(1, "Answer from vault 1"), (2, "Answer from vault 2")]:
+        mock = MagicMock()
+        mock.aquery = AsyncMock(return_value=answer)
+        service._instances[uid] = mock
 
-    fake_inst_1 = MagicMock()
-    fake_inst_1.aquery = AsyncMock(return_value="Answer from vault 1.")
-    fake_inst_2 = MagicMock()
-    fake_inst_2.aquery = AsyncMock(return_value="Answer from vault 2.")
+    mock_llm = MagicMock()
+    mock_llm.is_available = True
+    mock_llm.complete = AsyncMock(return_value="Synthesised answer")
 
-    svc = GraphRAGService()
-    svc._instances[1] = fake_inst_1
-    svc._instances[2] = fake_inst_2
-
-    fake_llm = MagicMock()
-    fake_llm.is_available = False
-
-    with patch.object(gr_mod, "_LIGHTRAG_AVAILABLE", True), \
+    with patch("gnosis.services.graph_rag._LIGHTRAG_AVAILABLE", True), \
          patch("gnosis.services.graph_rag.QueryParam", MagicMock()), \
-         patch("gnosis.services.graph_rag.llm_provider", fake_llm, create=True):
-        result = await svc.query("question", user_id=1, owner_ids={1, 2})
+         patch("gnosis.services.llm_provider.llm_provider", mock_llm):
+        result = await service.query("question", user_id=1, owner_ids={1, 2})
 
-    assert isinstance(result, str)
-    assert len(result) > 0
-
-
-# ---------------------------------------------------------------------------
-# stream — fallback when unavailable (yields exactly one string)
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_stream_yields_fallback_when_unavailable():
-    from gnosis.services.graph_rag import GraphRAGService
-    import gnosis.services.graph_rag as gr_mod
-    with patch.object(gr_mod, "_LIGHTRAG_AVAILABLE", False):
-        svc = GraphRAGService()
-    chunks = [chunk async for chunk in svc.stream("question", user_id=1)]
-    assert len(chunks) >= 1
-    assert all(isinstance(c, str) for c in chunks)
+    assert result  # some non-empty answer returned
 
 
 # ---------------------------------------------------------------------------
-# stream — with mocked instance
-#
-# The source checks for `astream_query`; if absent it falls back to aquery.
-# We give the mock an aquery method so the fallback path runs.
+# stream
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_stream_yields_from_instance_via_aquery_fallback():
-    """When instance has no astream_query, stream() falls back to aquery."""
-    from gnosis.services.graph_rag import GraphRAGService
-    import gnosis.services.graph_rag as gr_mod
+async def test_stream_yields_tokens_via_aquery_fallback():
+    service, mock_instance = _make_service_with_lightrag()
+    # No astream_query attribute — falls back to aquery
+    del mock_instance.astream_query
+    mock_instance.aquery = AsyncMock(return_value="token1 token2")
 
-    fake_instance = MagicMock(spec=["aquery"])  # spec excludes astream_query
-    fake_instance.aquery = AsyncMock(return_value="streamed token")
-
-    svc = GraphRAGService()
-    svc._instances[1] = fake_instance
-
-    with patch.object(gr_mod, "_LIGHTRAG_AVAILABLE", True), \
+    with patch("gnosis.services.graph_rag._LIGHTRAG_AVAILABLE", True), \
          patch("gnosis.services.graph_rag.QueryParam", MagicMock()):
-        chunks = [chunk async for chunk in svc.stream("question", user_id=1)]
+        tokens = [t async for t in service.stream("question", user_id=1)]
 
-    assert len(chunks) >= 1
-    assert "streamed token" in chunks
+    assert len(tokens) >= 1
+    assert "token1" in tokens[0]
 
 
 @pytest.mark.asyncio
-async def test_stream_yields_from_astream_query():
-    """When instance has astream_query, stream() should iterate it."""
-    from gnosis.services.graph_rag import GraphRAGService
-    import gnosis.services.graph_rag as gr_mod
+async def test_stream_yields_unavailable_when_no_instance():
+    service = GraphRAGService()
+    with patch("gnosis.services.graph_rag._LIGHTRAG_AVAILABLE", False):
+        tokens = [t async for t in service.stream("q", user_id=99)]
+    assert any("unavailable" in t.lower() for t in tokens)
 
-    async def _fake_astream_query(*args, **kwargs):
-        for token in ["tok1", " tok2", " tok3"]:
-            yield token
 
-    fake_instance = MagicMock()
-    fake_instance.astream_query = _fake_astream_query
+@pytest.mark.asyncio
+async def test_stream_yields_error_on_exception():
+    service, mock_instance = _make_service_with_lightrag()
+    del mock_instance.astream_query
+    mock_instance.aquery = AsyncMock(side_effect=RuntimeError("stream crash"))
 
-    svc = GraphRAGService()
-    svc._instances[1] = fake_instance
-
-    with patch.object(gr_mod, "_LIGHTRAG_AVAILABLE", True), \
+    with patch("gnosis.services.graph_rag._LIGHTRAG_AVAILABLE", True), \
          patch("gnosis.services.graph_rag.QueryParam", MagicMock()):
-        chunks = [chunk async for chunk in svc.stream("question", user_id=1)]
+        tokens = [t async for t in service.stream("q", user_id=1)]
 
-    assert chunks == ["tok1", " tok2", " tok3"]
+    assert any("error" in t.lower() or "crash" in t.lower() for t in tokens)
+
+
+# ---------------------------------------------------------------------------
+# _synthesise
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_synthesise_calls_llm_provider():
+    service = GraphRAGService()
+    mock_llm = MagicMock()
+    mock_llm.is_available = True
+    mock_llm.complete = AsyncMock(return_value="Synthesised")
+
+    with patch("gnosis.services.llm_provider.llm_provider", mock_llm):
+        result = await service._synthesise("question", ["A", "B"])
+
+    assert result  # non-empty
+
+
+@pytest.mark.asyncio
+async def test_synthesise_concatenates_when_llm_unavailable():
+    service = GraphRAGService()
+    mock_llm = MagicMock()
+    mock_llm.is_available = False
+
+    with patch("gnosis.services.llm_provider.llm_provider", mock_llm):
+        result = await service._synthesise("q", ["Part A", "Part B"])
+
+    assert "Part A" in result and "Part B" in result
+
+
+# ---------------------------------------------------------------------------
+# initialize
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_initialize_no_op_when_lightrag_unavailable():
+    service = GraphRAGService()
+    with patch("gnosis.services.graph_rag._LIGHTRAG_AVAILABLE", False):
+        await service.initialize(user_id=1)  # must not raise

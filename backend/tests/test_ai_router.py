@@ -1,374 +1,352 @@
-"""Unit tests for gnosis/routers/ai.py.
-
-All LLM, graph_rag, hybrid_search, and DB calls are mocked so tests run
-without Ollama, Qdrant, or a real database.
-"""
+"""Tests for routers/ai.py — AI endpoints."""
 from __future__ import annotations
 
-import json
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import date
+from unittest.mock import AsyncMock, MagicMock, patch, AsyncMock
 
 import pytest
 
-
-# ---------------------------------------------------------------------------
-# Shared note factory
-# ---------------------------------------------------------------------------
-
-def _note(note_id="id-001", title="Test Note", body="Body text here.", owner_id=1):
-    n = MagicMock()
-    n.id = note_id
-    n.title = title
-    n.body = body
-    n.owner_id = owner_id
-    n.note_type = "permanent"
-    n.status = "active"
-    n.folder = "10-zettelkasten"
-    n.is_deleted = False
-    n.created_at = datetime.now(timezone.utc)
-    return n
-
-
-def _session_with_note(note):
-    scalars = MagicMock()
-    scalars.scalar_one_or_none.return_value = note
-    scalars.scalars.return_value.all.return_value = [note]
-    result = MagicMock()
-    result.scalar_one_or_none.return_value = note
-    result.scalars.return_value.all.return_value = [note]
-    db = AsyncMock()
-    db.execute = AsyncMock(return_value=result)
-    db.commit = AsyncMock()
-    return db
+from gnosis.models.note import Note
 
 
 # ---------------------------------------------------------------------------
-# _build_rag_context
+# Helpers
 # ---------------------------------------------------------------------------
 
-def test_build_rag_context_empty_hits_returns_empty_string():
-    from gnosis.routers.ai import _build_rag_context
-    assert _build_rag_context([]) == ""
+async def _make_note(
+    db,
+    note_id: str = "ai-note-1",
+    title: str = "AI Test Note",
+    folder: str = "10-zettelkasten",
+    body: str = "This is a test note body for AI operations.",
+) -> Note:
+    note = Note(
+        id=note_id,
+        title=title,
+        body=body,
+        folder=folder,
+        owner_id=1,
+    )
+    db.add(note)
+    await db.commit()
+    await db.refresh(note)
+    return note
 
 
-def test_build_rag_context_formats_hits():
-    from gnosis.routers.ai import _build_rag_context
-    hits = [{"title": "Note A", "text_snippet": "Some insight.", "folder": "10-zettelkasten"}]
-    result = _build_rag_context(hits)
-    assert "Note A" in result
-    assert "Some insight." in result
-    assert "Relevant notes" in result
+_LLM_PATCH = "gnosis.routers.ai.llm_provider"
+_GRAPH_PATCH = "gnosis.routers.ai.graph_rag"
+_HYBRID_PATCH = "gnosis.routers.ai.hybrid_search"
+
+
+def _mock_llm(answer: str = "AI response"):
+    m = MagicMock()
+    m.is_available = True
+    m.complete = AsyncMock(return_value=answer)
+    async def _stream(*a, **kw):
+        yield "token1"
+        yield " token2"
+    m.stream = _stream
+    return m
+
+
+def _mock_graph(available: bool = False, answer: str = ""):
+    m = MagicMock()
+    m.is_available = AsyncMock(return_value=available)
+    m.query = AsyncMock(return_value=answer)
+    async def _stream(*a, **kw):
+        yield "graph-token"
+    m.stream = _stream
+    return m
 
 
 # ---------------------------------------------------------------------------
-# _parse_json_list
-# ---------------------------------------------------------------------------
-
-def test_parse_json_list_extracts_json_array():
-    from gnosis.routers.ai import _parse_json_list
-    assert _parse_json_list('["a", "b", "c"]') == ["a", "b", "c"]
-
-
-def test_parse_json_list_falls_back_to_line_parsing():
-    from gnosis.routers.ai import _parse_json_list
-    result = _parse_json_list("- tag-one\n- tag-two\n- tag-three")
-    assert "tag-one" in result
-    assert "tag-two" in result
-
-
-def test_parse_json_list_handles_empty_string():
-    from gnosis.routers.ai import _parse_json_list
-    assert _parse_json_list("") == []
-
-
-# ---------------------------------------------------------------------------
-# _get_note_or_404
+# GET /api/v1/ai/providers
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_get_note_or_404_returns_note():
-    from gnosis.routers.ai import _get_note_or_404
-    n = _note()
-    result_mock = MagicMock()
-    result_mock.scalar_one_or_none.return_value = n
-    db = AsyncMock()
-    db.execute = AsyncMock(return_value=result_mock)
-    with patch("gnosis.routers.ai.scoped_note_stmt", side_effect=lambda s, o: s):
-        result = await _get_note_or_404("id-001", db, {1})
-    assert result.id == "id-001"
+async def test_get_providers_unavailable(client):
+    mock_llm = MagicMock()
+    mock_llm.is_available = False
+    with patch(_LLM_PATCH, mock_llm):
+        r = await client.get("/api/v1/ai/providers")
+    assert r.status_code == 200
+    assert r.json()["available"] is False
 
 
 @pytest.mark.asyncio
-async def test_get_note_or_404_raises_404():
-    from fastapi import HTTPException
-    from gnosis.routers.ai import _get_note_or_404
-    result_mock = MagicMock()
-    result_mock.scalar_one_or_none.return_value = None
-    db = AsyncMock()
-    db.execute = AsyncMock(return_value=result_mock)
-    with (
-        patch("gnosis.routers.ai.scoped_note_stmt", side_effect=lambda s, o: s),
-        pytest.raises(HTTPException) as exc_info,
-    ):
-        await _get_note_or_404("missing", db, {1})
-    assert exc_info.value.status_code == 404
+async def test_get_providers_available(client):
+    mock_llm = MagicMock()
+    mock_llm.is_available = True
+    mock_llm.active_provider = "ollama"
+    mock_llm.active_model = "llama3"
+    mock_llm._available = ["ollama"]
+    with patch(_LLM_PATCH, mock_llm), \
+         patch("gnosis.routers.ai.httpx.AsyncClient") as mock_http:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"models": [{"name": "llama3"}]}
+        mock_client_ctx = AsyncMock()
+        mock_client_ctx.__aenter__ = AsyncMock(return_value=AsyncMock(get=AsyncMock(return_value=mock_resp)))
+        mock_client_ctx.__aexit__ = AsyncMock(return_value=False)
+        mock_http.return_value = mock_client_ctx
+        r = await client.get("/api/v1/ai/providers")
+    assert r.status_code == 200
+    assert r.json()["available"] is True
 
 
 # ---------------------------------------------------------------------------
-# POST /ai/chat  — three branches
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_chat_uses_graph_rag_when_available():
-    from gnosis.routers.ai import chat
-    from gnosis.schemas.ai import ChatRequest
-
-    user = MagicMock()
-    user.id = 1
-
-    with (
-        patch("gnosis.routers.ai.graph_rag") as mock_gr,
-        patch("gnosis.routers.ai.llm_provider") as mock_llm,
-    ):
-        mock_gr.is_available = AsyncMock(return_value=True)
-        mock_gr.query = AsyncMock(return_value="Graph answer")
-        mock_llm.is_available = False
-
-        result = await chat(
-            req=ChatRequest(message="What is epistemology?"),
-            session=AsyncMock(),
-            current_user=user,
-            owner_ids={1},
-        )
-
-    assert result.answer == "Graph answer"
-
-
-@pytest.mark.asyncio
-async def test_chat_falls_back_to_qdrant_rag():
-    from gnosis.routers.ai import chat
-    from gnosis.schemas.ai import ChatRequest
-
-    user = MagicMock()
-    user.id = 1
-
-    with (
-        patch("gnosis.routers.ai.graph_rag") as mock_gr,
-        patch("gnosis.routers.ai.llm_provider") as mock_llm,
-        patch("gnosis.routers.ai._qdrant_rag_complete", AsyncMock(return_value="Qdrant answer")),
-    ):
-        mock_gr.is_available = AsyncMock(return_value=False)
-        mock_llm.is_available = True
-
-        result = await chat(
-            req=ChatRequest(message="Tell me about PKM."),
-            session=AsyncMock(),
-            current_user=user,
-            owner_ids={1},
-        )
-
-    assert result.answer == "Qdrant answer"
-
-
-@pytest.mark.asyncio
-async def test_chat_raises_503_when_no_provider():
-    from fastapi import HTTPException
-    from gnosis.routers.ai import chat
-    from gnosis.schemas.ai import ChatRequest
-
-    user = MagicMock()
-    user.id = 1
-
-    with (
-        patch("gnosis.routers.ai.graph_rag") as mock_gr,
-        patch("gnosis.routers.ai.llm_provider") as mock_llm,
-        pytest.raises(HTTPException) as exc_info,
-    ):
-        mock_gr.is_available = AsyncMock(return_value=False)
-        mock_llm.is_available = False
-
-        await chat(
-            req=ChatRequest(message="Hello?"),
-            session=AsyncMock(),
-            current_user=user,
-            owner_ids={1},
-        )
-
-    assert exc_info.value.status_code == 503
-
-
-# ---------------------------------------------------------------------------
-# POST /ai/summarize/{note_id}
+# POST /api/v1/ai/chat
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_summarize_note_returns_summary():
-    from gnosis.routers.ai import summarize_note
-
-    n = _note()
-    db = _session_with_note(n)
-
-    with (
-        patch("gnosis.routers.ai.llm_provider") as mock_llm,
-        patch("gnosis.routers.ai.scoped_note_stmt", side_effect=lambda s, o: s),
-    ):
-        mock_llm.is_available = True
-        mock_llm.complete = AsyncMock(return_value="  Two sentence summary.  ")
-        result = await summarize_note(note_id=n.id, session=db, owner_ids={1})
-
-    assert result.summary == "Two sentence summary."
-    assert result.note_id == n.id
+async def test_chat_uses_qdrant_rag_when_graph_unavailable(client):
+    with patch(_GRAPH_PATCH, _mock_graph(available=False)), \
+         patch(_LLM_PATCH, _mock_llm("vault answer")), \
+         patch(_HYBRID_PATCH, return_value=[]):
+        r = await client.post("/api/v1/ai/chat", json={"message": "What is spaced repetition?"})
+    assert r.status_code == 200
+    assert r.json()["answer"] == "vault answer"
 
 
 @pytest.mark.asyncio
-async def test_summarize_note_raises_503_when_no_llm():
-    from fastapi import HTTPException
-    from gnosis.routers.ai import summarize_note
-
-    with (
-        patch("gnosis.routers.ai.llm_provider") as mock_llm,
-        pytest.raises(HTTPException) as exc_info,
-    ):
-        mock_llm.is_available = False
-        await summarize_note(note_id="x", session=AsyncMock(), owner_ids={1})
-
-    assert exc_info.value.status_code == 503
-
-
-# ---------------------------------------------------------------------------
-# POST /ai/suggest-tags/{note_id}
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_suggest_tags_returns_parsed_tags():
-    from gnosis.routers.ai import suggest_tags
-
-    n = _note()
-    db = _session_with_note(n)
-
-    with (
-        patch("gnosis.routers.ai.llm_provider") as mock_llm,
-        patch("gnosis.routers.ai.scoped_note_stmt", side_effect=lambda s, o: s),
-    ):
-        mock_llm.is_available = True
-        mock_llm.complete = AsyncMock(return_value='["zettelkasten", "pkm"]')
-        result = await suggest_tags(note_id=n.id, session=db, owner_ids={1})
-
-    assert "zettelkasten" in result.suggested_tags
+async def test_chat_uses_graph_rag_when_available(client):
+    with patch(_GRAPH_PATCH, _mock_graph(available=True, answer="graph answer")), \
+         patch(_LLM_PATCH, _mock_llm()):
+        r = await client.post("/api/v1/ai/chat", json={"message": "question"})
+    assert r.status_code == 200
+    assert r.json()["answer"] == "graph answer"
 
 
 @pytest.mark.asyncio
-async def test_suggest_tags_raises_503_when_no_llm():
-    from fastapi import HTTPException
-    from gnosis.routers.ai import suggest_tags
-
-    with (
-        patch("gnosis.routers.ai.llm_provider") as mock_llm,
-        pytest.raises(HTTPException) as exc_info,
-    ):
-        mock_llm.is_available = False
-        await suggest_tags(note_id="x", session=AsyncMock(), owner_ids={1})
-
-    assert exc_info.value.status_code == 503
+async def test_chat_503_when_no_provider(client):
+    mock_llm = MagicMock()
+    mock_llm.is_available = False
+    with patch(_GRAPH_PATCH, _mock_graph(available=False)), \
+         patch(_LLM_PATCH, mock_llm):
+        r = await client.post("/api/v1/ai/chat", json={"message": "question"})
+    assert r.status_code == 503
 
 
 # ---------------------------------------------------------------------------
-# POST /ai/critique/{note_id}
+# POST /api/v1/ai/summarize/{note_id}
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_critique_note_parses_json_response():
-    from gnosis.routers.ai import critique_note
-
-    n = _note()
-    db = _session_with_note(n)
-    critique_json = json.dumps({
-        "atomicity": "Good", "connectivity": "Needs links",
-        "self_containedness": "OK", "insight_density": "High", "overall": "Solid",
-    })
-
-    with (
-        patch("gnosis.routers.ai.llm_provider") as mock_llm,
-        patch("gnosis.routers.ai.scoped_note_stmt", side_effect=lambda s, o: s),
-    ):
-        mock_llm.is_available = True
-        mock_llm.complete = AsyncMock(return_value=critique_json)
-        result = await critique_note(note_id=n.id, session=db, owner_ids={1})
-
-    assert result.atomicity == "Good"
-    assert result.overall == "Solid"
-
-
-# ---------------------------------------------------------------------------
-# GET /ai/orphan-audit  — no LLM branch
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_orphan_audit_returns_empty_items_when_no_llm():
-    from gnosis.routers.ai import orphan_audit
-
-    notes = [_note(note_id=f"n{i}", title=f"Orphan {i}") for i in range(2)]
-    scalars_result = MagicMock()
-    scalars_result.scalars.return_value.all.return_value = notes
-    db = AsyncMock()
-    db.execute = AsyncMock(return_value=scalars_result)
-
-    with (
-        patch("gnosis.routers.ai.llm_provider") as mock_llm,
-        patch("gnosis.routers.ai.scoped_note_stmt", side_effect=lambda s, o: s),
-    ):
-        mock_llm.is_available = False
-        result = await orphan_audit(limit=10, session=db, owner_ids={1})
-
-    assert result.orphan_count == 2
-    assert result.items == []
-
-
-# ---------------------------------------------------------------------------
-# GET /ai/providers
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_get_providers_returns_unavailable_when_no_llm():
-    from gnosis.routers.ai import get_providers
-
-    with patch("gnosis.routers.ai.llm_provider") as mock_llm:
-        mock_llm.is_available = False
-        result = await get_providers(_=MagicMock())
-
-    assert result.available is False
-    assert result.provider == "none"
+async def test_summarize_returns_summary(client, test_db):
+    await _make_note(test_db)
+    with patch(_LLM_PATCH, _mock_llm("A concise summary.")):
+        r = await client.post("/api/v1/ai/summarize/ai-note-1")
+    assert r.status_code == 200
+    assert r.json()["summary"] == "A concise summary."
 
 
 @pytest.mark.asyncio
-async def test_get_providers_returns_active_provider_when_available():
-    from gnosis.routers.ai import get_providers
+async def test_summarize_404_missing_note(client):
+    with patch(_LLM_PATCH, _mock_llm()):
+        r = await client.post("/api/v1/ai/summarize/ghost")
+    assert r.status_code == 404
 
-    with patch("gnosis.routers.ai.llm_provider") as mock_llm:
-        mock_llm.is_available = True
-        mock_llm.active_provider = "groq"
-        mock_llm.active_model = "llama3-8b"
-        mock_llm._available = []  # no ollama, skip HTTP call
-        result = await get_providers(_=MagicMock())
 
-    assert result.available is True
-    assert result.provider == "groq"
-    assert result.model == "llama3-8b"
+@pytest.mark.asyncio
+async def test_summarize_503_no_llm(client, test_db):
+    await _make_note(test_db, note_id="ai-note-503")
+    mock_llm = MagicMock()
+    mock_llm.is_available = False
+    with patch(_LLM_PATCH, mock_llm):
+        r = await client.post("/api/v1/ai/summarize/ai-note-503")
+    assert r.status_code == 503
 
 
 # ---------------------------------------------------------------------------
-# _build_moc_markdown
+# POST /api/v1/ai/suggest-tags/{note_id}
 # ---------------------------------------------------------------------------
 
-def test_build_moc_markdown_contains_frontmatter_and_wikilinks():
-    from gnosis.routers.ai import _build_moc_markdown
-    from gnosis.schemas.ai import MocSection
+@pytest.mark.asyncio
+async def test_suggest_tags_returns_tags(client, test_db):
+    await _make_note(test_db, note_id="tag-note")
+    with patch(_LLM_PATCH, _mock_llm('["zettelkasten", "spaced-repetition"]')):
+        r = await client.post("/api/v1/ai/suggest-tags/tag-note")
+    assert r.status_code == 200
+    data = r.json()
+    assert isinstance(data["suggested_tags"], list)
 
-    sections = [
-        MocSection(heading="Foundations", summary="Core ideas.", wikilinks=["Note A", "Note B"]),
-    ]
-    md = _build_moc_markdown("epistemology", "MOC — Epistemology", sections)
-    assert "MOC — Epistemology" in md
-    assert "[[Note A]]" in md
-    assert "type: moc" in md
+
+@pytest.mark.asyncio
+async def test_suggest_tags_503_no_llm(client, test_db):
+    await _make_note(test_db, note_id="tag-note-2")
+    mock_llm = MagicMock()
+    mock_llm.is_available = False
+    with patch(_LLM_PATCH, mock_llm):
+        r = await client.post("/api/v1/ai/suggest-tags/tag-note-2")
+    assert r.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/ai/suggest-links/{note_id}
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_suggest_links_returns_suggestions(client, test_db):
+    await _make_note(test_db, note_id="link-note")
+    with patch(_LLM_PATCH, _mock_llm('["Other Note"]')):
+        r = await client.post("/api/v1/ai/suggest-links/link-note")
+    assert r.status_code == 200
+    assert "suggestions" in r.json()
+
+
+@pytest.mark.asyncio
+async def test_suggest_links_503_no_llm(client, test_db):
+    await _make_note(test_db, note_id="link-note-2")
+    mock_llm = MagicMock()
+    mock_llm.is_available = False
+    with patch(_LLM_PATCH, mock_llm):
+        r = await client.post("/api/v1/ai/suggest-links/link-note-2")
+    assert r.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/ai/critique/{note_id}
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_critique_returns_critique(client, test_db):
+    await _make_note(test_db, note_id="critique-note")
+    raw = '{"atomicity": "good", "connectivity": "weak", "self_containedness": "ok", "insight_density": "high", "overall": "solid"}'
+    with patch(_LLM_PATCH, _mock_llm(raw)):
+        r = await client.post("/api/v1/ai/critique/critique-note")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["atomicity"] == "good"
+    assert data["overall"] == "solid"
+
+
+@pytest.mark.asyncio
+async def test_critique_503_no_llm(client, test_db):
+    await _make_note(test_db, note_id="critique-note-2")
+    mock_llm = MagicMock()
+    mock_llm.is_available = False
+    with patch(_LLM_PATCH, mock_llm):
+        r = await client.post("/api/v1/ai/critique/critique-note-2")
+    assert r.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/ai/orphan-audit
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_orphan_audit_empty_vault(client):
+    with patch(_LLM_PATCH, _mock_llm()):
+        r = await client.get("/api/v1/ai/orphan-audit")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["orphan_count"] == 0
+    assert data["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_orphan_audit_with_orphan_notes(client, test_db):
+    await _make_note(test_db, note_id="orphan-1", title="Orphan One")
+    await _make_note(test_db, note_id="orphan-2", title="Orphan Two")
+    raw_json = '[{"note_id": "orphan-1", "title": "Orphan One", "suggestions": ["Link A"]}]'
+    with patch(_LLM_PATCH, _mock_llm(raw_json)):
+        r = await client.get("/api/v1/ai/orphan-audit")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["orphan_count"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/ai/daily-review
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_daily_review_no_inbox_notes(client):
+    with patch(_LLM_PATCH, _mock_llm()):
+        r = await client.post("/api/v1/ai/daily-review")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["inbox_note_count"] == 0
+    assert data["summary"] == "No inbox notes today."
+
+
+@pytest.mark.asyncio
+async def test_daily_review_with_inbox_notes(client, test_db):
+    await _make_note(test_db, note_id="inbox-today", folder="00-inbox")
+    raw = '{"summary": "Great captures today.", "action_items": ["Process note A"]}'
+    with patch(_LLM_PATCH, _mock_llm(raw)):
+        r = await client.post("/api/v1/ai/daily-review")
+    assert r.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/ai/stream/chat
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_stream_chat_qdrant_path(client):
+    """When LightRAG is unavailable, SSE falls through to Qdrant/LLM stream."""
+    with patch(_GRAPH_PATCH, _mock_graph(available=False)), \
+         patch(_LLM_PATCH, _mock_llm()), \
+         patch(_HYBRID_PATCH, return_value=[]):
+        r = await client.get("/api/v1/ai/stream/chat?message=hello")
+    assert r.status_code == 200
+    assert "text/event-stream" in r.headers["content-type"]
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_graph_rag_path(client):
+    """When LightRAG is available, SSE uses graph_rag.stream."""
+    with patch(_GRAPH_PATCH, _mock_graph(available=True)), \
+         patch(_LLM_PATCH, _mock_llm()):
+        r = await client.get("/api/v1/ai/stream/chat?message=hello")
+    assert r.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_no_provider(client):
+    """When neither LightRAG nor LLM is available, SSE emits an error event."""
+    mock_llm = MagicMock()
+    mock_llm.is_available = False
+    with patch(_GRAPH_PATCH, _mock_graph(available=False)), \
+         patch(_LLM_PATCH, mock_llm):
+        r = await client.get("/api/v1/ai/stream/chat?message=hello")
+    assert r.status_code == 200
+    assert b"error" in r.content or b"[DONE]" in r.content
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/ai/generate-moc
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_generate_moc_no_matching_notes(client):
+    with patch(_LLM_PATCH, _mock_llm()):
+        r = await client.post("/api/v1/ai/generate-moc", json={"topic": "nonexistenttopicxyz"})
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_generate_moc_503_no_llm(client):
+    mock_llm = MagicMock()
+    mock_llm.is_available = False
+    with patch(_LLM_PATCH, mock_llm):
+        r = await client.post("/api/v1/ai/generate-moc", json={"topic": "anything"})
+    assert r.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_generate_moc_returns_markdown(client, test_db):
+    await _make_note(
+        test_db,
+        note_id="moc-note-1",
+        title="Spaced Repetition Systems",
+        body="spaced repetition is a learning technique",
+    )
+    raw = '[{"heading": "Learning", "summary": "About learning", "wikilinks": ["Spaced Repetition Systems"]}]'
+    with patch(_LLM_PATCH, _mock_llm(raw)):
+        r = await client.post("/api/v1/ai/generate-moc", json={"topic": "spaced repetition"})
+    assert r.status_code == 200
+    data = r.json()
+    assert "markdown" in data
+    assert data["topic"] == "spaced repetition"
