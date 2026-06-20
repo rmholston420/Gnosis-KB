@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from gnosis.config import settings
 from gnosis.database import get_db
@@ -45,8 +46,13 @@ def _iso(val: object) -> str:
 
 
 def _note_to_markdown(note: Note) -> str:
-    """Serialise a Note ORM row to a .md string with YAML frontmatter."""
-    tags_str = ", ".join(note.tags) if note.tags else ""
+    """Serialise a Note ORM row to a .md string with YAML frontmatter.
+
+    note.tags is a list of Tag ORM objects (after selectinload); extract
+    .name from each rather than passing the object to str.join.
+    """
+    _tags = note.tags if note.tags else []
+    tags_str = ", ".join(t.name if hasattr(t, "name") else str(t) for t in _tags)
     fm_lines = [
         "---",
         f'id: "{note.id}"',
@@ -72,7 +78,7 @@ def _note_to_dict(note: Note) -> dict:
         "folder": note.folder or "",
         "note_type": note.note_type,
         "status": getattr(note, "status", "draft"),
-        "tags": list(note.tags) if note.tags else [],
+        "tags": [t.name if hasattr(t, "name") else str(t) for t in (note.tags or [])],
         "vault_path": note.vault_path or "",
         "word_count": note.word_count or 0,
         "created_at": _iso(getattr(note, "created_at", None)),
@@ -81,9 +87,11 @@ def _note_to_dict(note: Note) -> dict:
 
 
 async def _fetch_user_notes(db: AsyncSession, owner_id: int) -> list[Note]:
-    """Return all non-deleted notes owned by *owner_id*."""
+    """Return all non-deleted notes owned by *owner_id*, tags eagerly loaded."""
     result = await db.execute(
-        select(Note).where(
+        select(Note)
+        .options(selectinload(Note.tags))
+        .where(
             Note.owner_id == owner_id,
             Note.is_deleted == False,  # noqa: E712
         )
@@ -172,7 +180,9 @@ async def export_note_md(
 ) -> Response:
     """Return a single note as a downloadable .md file."""
     result = await db.execute(
-        select(Note).where(Note.id == note_id, Note.owner_id == current_user.id)
+        select(Note)
+        .options(selectinload(Note.tags))
+        .where(Note.id == note_id, Note.owner_id == current_user.id)
     )
     note = result.scalar_one_or_none()
     if note is None:
@@ -206,7 +216,9 @@ async def export_note_pdf(
         raise HTTPException(status_code=501, detail="weasyprint not installed")
 
     result = await db.execute(
-        select(Note).where(Note.id == note_id, Note.owner_id == current_user.id)
+        select(Note)
+        .options(selectinload(Note.tags))
+        .where(Note.id == note_id, Note.owner_id == current_user.id)
     )
     note = result.scalar_one_or_none()
     if note is None:
