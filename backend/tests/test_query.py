@@ -9,7 +9,7 @@ from gnosis.services.query_parser import GQLParseError, ParsedQuery, execute_que
 
 
 # ---------------------------------------------------------------------------
-# Parser — happy-path tests (existing)
+# Parser — happy-path tests
 # ---------------------------------------------------------------------------
 
 def test_parse_from_only():
@@ -86,7 +86,7 @@ def test_parse_empty_query_runs_defaults():
 
 
 # ---------------------------------------------------------------------------
-# Parser — edge-case / error paths (new — cover lines 125-210)
+# Parser — edge-case / error paths
 # ---------------------------------------------------------------------------
 
 def test_parse_query_too_long_raises():
@@ -151,10 +151,8 @@ def test_parse_lte_operator():
 
 
 def test_parse_sort_no_direction_defaults_desc():
-    """SORT without ASC/DESC should default to DESC from the ParsedQuery default."""
     q = parse_query("SORT title")
     assert q.sort_field == "title"
-    # direction stays at default DESC since no token follows
     assert q.sort_dir == "DESC"
 
 
@@ -179,13 +177,17 @@ def test_parse_limit_zero_raises():
 
 
 # ---------------------------------------------------------------------------
-# Executor — execute_query() DB paths (new — cover lines 260-336)
+# Executor — execute_query() DB paths
+#
+# Note.id is String(20) with no server default — must be supplied explicitly.
+# Use fixed timestamp-style IDs to satisfy the NOT NULL constraint.
 # ---------------------------------------------------------------------------
 
 
 async def _seed_notes(db):
-    """Create two notes, one with a tag, for executor tests."""
+    """Create two live notes and one deleted note, plus one tag on the first."""
     n1 = Note(
+        id="20260101-000001",
         title="Alpha Note",
         slug="alpha-note",
         folder="10-zettelkasten",
@@ -196,6 +198,7 @@ async def _seed_notes(db):
         owner_id=1,
     )
     n2 = Note(
+        id="20260101-000002",
         title="Beta Note",
         slug="beta-note",
         folder="20-projects",
@@ -206,6 +209,7 @@ async def _seed_notes(db):
         owner_id=1,
     )
     deleted = Note(
+        id="20260101-000003",
         title="Gone Note",
         slug="gone-note",
         folder="10-zettelkasten",
@@ -324,7 +328,6 @@ async def test_execute_query_owner_ids_scoped(test_db):
     q = ParsedQuery()
     rows_scoped, _ = await execute_query(q, test_db, owner_ids={1})
     rows_all, _ = await execute_query(q, test_db, owner_ids=None)
-    # Both should return non-deleted notes; scoped may be same or subset
     assert len(rows_scoped) <= len(rows_all)
 
 
