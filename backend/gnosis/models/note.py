@@ -76,7 +76,8 @@ class Note(Base):
         secondary="note_tags",
         back_populates="notes",
         lazy="selectin",
-        default_factory=list,
+        # default_factory=list removed — not a valid relationship() kwarg;
+        # SQLAlchemy initialises collection attributes to [] automatically.
     )
     outgoing_links: Mapped[list] = relationship(
         "Link",
