@@ -206,7 +206,7 @@ async def list_notes(
                 word_count=n.word_count,
                 created_at=n.created_at,
                 modified_at=n.modified_at,
-                tags=[t.name for t in (n.tags or [])],
+                tags=[t.name for t in (n.tags if isinstance(n.tags, list) else ([n.tags] if n.tags else []))],
             )
             for n in notes
         ],
@@ -342,7 +342,7 @@ async def get_orphan_notes(
             id=n.id, title=n.title, slug=n.slug, note_type=n.note_type,
             status=n.status, folder=n.folder, word_count=n.word_count,
             created_at=n.created_at, modified_at=n.modified_at,
-            tags=[t.name for t in (n.tags or [])],
+            tags=[t.name for t in (n.tags if isinstance(n.tags, list) else ([n.tags] if n.tags else []))],
         )
         for n in notes
     ]
@@ -559,7 +559,7 @@ async def get_backlinks(
             id=n.id, title=n.title, slug=n.slug, note_type=n.note_type,
             status=n.status, folder=n.folder, word_count=n.word_count,
             created_at=n.created_at, modified_at=n.modified_at,
-            tags=[t.name for t in (n.tags or [])],
+            tags=[t.name for t in (n.tags if isinstance(n.tags, list) else ([n.tags] if n.tags else []))],
         )
         for n in notes
     ]
@@ -585,7 +585,7 @@ async def get_outlinks(
             id=n.id, title=n.title, slug=n.slug, note_type=n.note_type,
             status=n.status, folder=n.folder, word_count=n.word_count,
             created_at=n.created_at, modified_at=n.modified_at,
-            tags=[t.name for t in (n.tags or [])],
+            tags=[t.name for t in (n.tags if isinstance(n.tags, list) else ([n.tags] if n.tags else []))],
         )
         for n in notes
     ]
