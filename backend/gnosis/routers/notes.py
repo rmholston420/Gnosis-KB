@@ -45,7 +45,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from slugify import slugify  # python-slugify v8+ uses 'slugify' as the module name
+from slugify import slugify
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -72,7 +72,6 @@ from gnosis.services.markdown_parser import (
 )
 from gnosis.core.auth import get_current_user, get_vault_owner_ids
 
-# prefix is /notes only — main.py prepends /api/v1 when including this router
 router = APIRouter(prefix="/notes", tags=["notes"])
 
 
@@ -86,13 +85,6 @@ async def _get_note_or_404(
     db: AsyncSession,
     owner_ids: set[int],
 ) -> Note:
-    """Fetch a note by ID within the caller's accessible vaults.
-
-    Raises HTTP 403 for:
-    - Cross-vault access (note.owner_id not in owner_ids)
-    - Legacy owner_id=0 sentinel (unowned notes) unless caller explicitly
-      has 0 in their owner_ids set (admin use only).
-    """
     raw = await db.execute(
         select(Note)
         .options(
@@ -106,7 +98,6 @@ async def _get_note_or_404(
     if note is None:
         raise NoteNotFoundError(note_id)
 
-    # Guard legacy owner_id=0 sentinel — treat as unowned/admin-only
     if note.owner_id == 0 and 0 not in owner_ids:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -122,7 +113,6 @@ async def _get_note_or_404(
 
 
 def _note_to_read(note: Note) -> NoteRead:
-    """Convert a Note ORM instance to NoteRead schema."""
     from gnosis.schemas.note import LinkSchema
     return NoteRead(
         id=note.id,
@@ -184,7 +174,6 @@ async def list_notes(
     db: AsyncSession = Depends(get_db),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> NoteListResponse:
-    """List notes with optional filters and pagination."""
     query = scoped_note_stmt(
         select(Note)
         .options(selectinload(Note.tags))
@@ -212,7 +201,7 @@ async def list_notes(
     query = query.order_by(Note.modified_at.desc().nullslast(), Note.created_at.desc())
     query = query.offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(query)
-    notes = result.scalars().unique().all()  # .unique() required when selectinload is used with collections
+    notes = result.scalars().unique().all()
 
     return NoteListResponse(
         items=[
@@ -239,8 +228,7 @@ async def list_notes(
 
 # ---------------------------------------------------------------------------
 # Wikilink title search  (GET /notes/by-title)
-# IMPORTANT: Must be declared BEFORE /{note_id} routes to avoid FastAPI
-# treating "by-title" as a note_id path parameter.
+# IMPORTANT: declared BEFORE /{note_id}
 # ---------------------------------------------------------------------------
 
 
@@ -251,12 +239,6 @@ async def notes_by_title(
     db: AsyncSession = Depends(get_db),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> NoteListResponse:
-    """Wikilink resolution endpoint.
-
-    Returns notes whose title contains ``q`` (case-insensitive), scoped to the
-    caller's accessible vaults.  Used by the NoteDetailPanel wikilink chips
-    and the NoteEditor [[autocomplete]] dropdown.
-    """
     query = scoped_note_stmt(
         select(Note)
         .options(selectinload(Note.tags))
@@ -299,16 +281,6 @@ async def notes_by_title(
 
 @router.get("/templates", summary="List available note templates")
 async def list_templates() -> list[dict]:
-    """Return the built-in note template gallery.
-
-    Each entry contains:
-    - id: machine key used by the frontend
-    - name: display name
-    - description: one-line purpose description
-    - note_type: default note_type for notes created from this template
-    - folder: suggested vault folder
-    - body: Markdown body with placeholder tokens ({{ TITLE }}, {{ DATE }}, ...)
-    """
     return [
         {
             "id": "blank",
@@ -448,8 +420,6 @@ async def create_note(
     """Create a new note and write it to the authenticated user's vault."""
     from gnosis.core.namespace import resolve_vault_path
 
-    settings = get_settings()
-
     note_id = data.id or generate_note_id()
     title = data.title
     slug = slugify(title)
@@ -508,20 +478,18 @@ async def create_note(
         graph_indexed=False,
         owner_id=current_user.id,
     )
-    # Explicitly initialise the tags collection to an empty list.
-    # SQLAlchemy's lazy="selectin" relationship does NOT pre-populate the
-    # in-memory list on a brand-new (pre-flush) instance — it stays None
-    # until either the object is loaded from the DB or we set it here.
-    # Without this, note.tags.append(tag) raises:
-    #   AttributeError: 'NoneType' object has no attribute 'append'
-    note.tags = []
-
     db.add(note)
 
-    # Flush the Note INSERT so the row exists in the DB before we touch the
-    # tags relationship.  The explicit note.tags = [] above ensures append()
-    # works on the in-memory collection before the DB round-trip.
+    # Flush the Note INSERT so the row exists before we touch the tags
+    # relationship.  After flush(), SQLAlchemy initialises note.tags as
+    # an empty InstrumentedList.  db.refresh(note, ["tags"]) then fires
+    # a SELECT to confirm the collection is empty — this is what ensures
+    # note.tags is a live InstrumentedList (not None) before append().
+    # DO NOT replace note.tags with a plain list [] — that destroys the
+    # ORM instrumentation and causes:
+    #   AttributeError: 'list' object has no attribute '_sa_instance_state'
     await db.flush()
+    await db.refresh(note, ["tags"])
 
     for tag_name in (data.tags or []):
         tag_result = await db.execute(select(Tag).where(Tag.name == tag_name))
@@ -529,13 +497,11 @@ async def create_note(
         if not tag:
             tag = Tag(name=tag_name)
             db.add(tag)
-            await db.flush()  # ensure Tag row exists before appending
+            await db.flush()
         note.tags.append(tag)
 
     await db.commit()
 
-    # Re-fetch with all relationships eagerly loaded so _note_to_read never
-    # triggers lazy-loading outside a greenlet context.
     owner_ids_full = {current_user.id}
     note = await _get_note_or_404(note_id, db, owner_ids_full)
     return _note_to_read(note)
@@ -551,7 +517,6 @@ async def get_orphan_notes(
     db: AsyncSession = Depends(get_db),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> list[NoteListItem]:
-    """Return notes with zero incoming AND zero outgoing links."""
     notes_with_links = (
         select(Note.id)
         .where(
@@ -591,7 +556,6 @@ async def get_or_create_daily_note(
     current_user: User = Depends(get_current_user),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> NoteRead:
-    """Get today's daily note or create it if it does not exist."""
     from gnosis.core.namespace import resolve_vault_path
 
     today = date.today()
@@ -645,10 +609,12 @@ async def get_or_create_daily_note(
             graph_indexed=False,
             owner_id=current_user.id,
         )
-        note.tags = []  # initialise collection — same fix as create_note
         db.add(note)
+        # Same flush+refresh pattern as create_note: flush to insert the row,
+        # then refresh(["tags"]) to initialise the InstrumentedList.
+        await db.flush()
+        await db.refresh(note, ["tags"])
         await db.commit()
-        await db.refresh(note)
         note = await _get_note_or_404(note_id, db, owner_ids)
 
     return _note_to_read(note)
@@ -665,7 +631,6 @@ async def get_note(
     db: AsyncSession = Depends(get_db),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> NoteRead:
-    """Retrieve a note by its timestamp ID."""
     note = await _get_note_or_404(note_id, db, owner_ids)
     return _note_to_read(note)
 
@@ -683,7 +648,6 @@ async def update_note(
     current_user: User = Depends(get_current_user),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> NoteRead:
-    """Update an existing note and write changes to the vault file."""
     from gnosis.core.namespace import resolve_vault_path
 
     note = await _get_note_or_404(note_id, db, owner_ids)
@@ -716,14 +680,14 @@ async def update_note(
 
     if data.tags is not None:
         note.tags.clear()
-        await db.flush()  # flush the tag-association deletes before re-adding
+        await db.flush()
         for tag_name in data.tags:
             tag_result = await db.execute(select(Tag).where(Tag.name == tag_name))
             tag = tag_result.scalar_one_or_none()
             if not tag:
                 tag = Tag(name=tag_name)
                 db.add(tag)
-                await db.flush()  # ensure Tag row exists before appending
+                await db.flush()
             note.tags.append(tag)
 
     if data.frontmatter is not None:
@@ -756,7 +720,6 @@ async def delete_note(
     current_user: User = Depends(get_current_user),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> None:
-    """Soft-delete a note (sets is_deleted=True; vault file is preserved)."""
     note = await _get_note_or_404(note_id, db, owner_ids)
 
     if note.owner_id is not None and note.owner_id != current_user.id:
@@ -780,7 +743,6 @@ async def get_backlinks(
     db: AsyncSession = Depends(get_db),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> list[NoteListItem]:
-    """Return all notes that link TO this note."""
     base_stmt = (
         select(Note)
         .options(selectinload(Note.tags))
@@ -806,7 +768,6 @@ async def get_outlinks(
     db: AsyncSession = Depends(get_db),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> list[NoteListItem]:
-    """Return all notes that this note links TO."""
     base_stmt = (
         select(Note)
         .options(selectinload(Note.tags))
