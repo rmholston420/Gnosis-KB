@@ -43,6 +43,7 @@ from gnosis.routers import (
     tags,
     users,
 )
+from gnosis.services.graph_rag import graph_rag
 from gnosis.services.llm_provider import llm_provider
 from gnosis.services.vault_sync import start_vault_watcher
 from gnosis.services.vector_store import ensure_collection
@@ -56,7 +57,8 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Startup: create tables, init LLM provider, ensure Qdrant collection, start vault watcher."""
+    """Startup: create tables, init LLM provider, ensure Qdrant collection,
+    start vault watcher, then warm-up LightRAG for the primary user."""
     # 1. Ensure all SQLAlchemy tables exist (dev convenience; prod uses Alembic)
     async with get_engine().begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -71,9 +73,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 4. Start vault filesystem watcher + initial full sync
     observer = await start_vault_watcher()
 
+    # 5. Warm-up LightRAG for user_id=1 (primary/admin user) so the graph-based
+    #    path is immediately available for thematic queries without the first-request
+    #    init penalty.  Additional users are lazily warmed on their first query.
+    try:
+        await graph_rag.initialize(user_id=1)
+        logger.info("LightRAG warm-up complete for user_id=1")
+    except Exception as exc:  # noqa: BLE001
+        # Non-fatal — Qdrant RAG is the fallback
+        logger.warning("LightRAG warm-up skipped: %s", exc)
+
     yield
 
-    # 5. Graceful shutdown
+    # 6. Graceful shutdown
     observer.stop()
     observer.join()
     logger.info("Gnosis API shutting down")
@@ -83,7 +95,7 @@ _settings = get_settings()
 
 app = FastAPI(
     title="Gnosis Knowledge Base API",
-    version="0.4.0",
+    version="0.4.1",
     description=(
         "REST + SSE backend for the Gnosis personal knowledge management system. "
         "Features: vault sync, Zettelkasten notes, LightRAG graph-RAG, "
