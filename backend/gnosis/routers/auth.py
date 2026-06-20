@@ -6,7 +6,7 @@ Rate limits applied:
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +30,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 @auth_limit
 async def login(
     request: Request,
+    response: Response,
     form: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db),
 ) -> Token:
@@ -46,6 +47,7 @@ async def login(
 @auth_limit
 async def register(
     request: Request,
+    response: Response,
     payload: UserCreate,
     db: AsyncSession = Depends(get_db),
 ) -> User:
