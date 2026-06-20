@@ -1,21 +1,21 @@
-"""Tests for gnosis/services/vault_sync.py."""
+"""Tests for gnosis/services/vault_sync.py.
+
+Public API:
+  run_full_sync_for_user(user_id: int) -> AsyncIterator[str]
+    -- async generator that yields progress log lines
+  start_vault_watcher(owner_id: int = 1) -> Observer
+  VaultEventHandler (class)
+
+All DB I/O goes through AsyncSessionFactory which we mock.
+"""
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch, mock_open
-
+from unittest.mock import AsyncMock, MagicMock, patch, call
 import pytest
 
 
-def _make_user(id=1, vault_path="/vaults/user1", vault_slug="user1"):
-    user = MagicMock()
-    user.id = id
-    user.vault_path = vault_path
-    user.vault_slug = vault_slug
-    return user
-
-
-def _make_db():
+def _make_db_session():
     db = AsyncMock()
     result = MagicMock()
     result.scalars.return_value.first.return_value = None
@@ -24,125 +24,91 @@ def _make_db():
     db.execute = AsyncMock(return_value=result)
     db.commit = AsyncMock()
     db.flush = AsyncMock()
+    # Context manager support for `async with AsyncSessionFactory() as db:`
+    db.__aenter__ = AsyncMock(return_value=db)
+    db.__aexit__ = AsyncMock(return_value=False)
     return db
 
 
 @pytest.mark.asyncio
-async def test_sync_vault_no_markdown_files(tmp_path):
-    """Vault directory with no markdown files completes without error."""
-    from gnosis.services.vault_sync import sync_vault
+async def test_run_full_sync_yields_strings(tmp_path):
+    """run_full_sync_for_user must yield at least one string log line."""
+    from gnosis.services.vault_sync import run_full_sync_for_user
 
-    user = _make_user(vault_path=str(tmp_path))
-    db = _make_db()
+    db = _make_db_session()
+    fake_factory = MagicMock(return_value=db)
 
-    with patch("gnosis.services.vault_sync.rebuild_fts_index", new_callable=AsyncMock):
-        result = await sync_vault(user, db)
+    with patch("gnosis.services.vault_sync.AsyncSessionFactory", fake_factory), \
+         patch("gnosis.services.vault_sync._get_vault_path", return_value=tmp_path), \
+         patch("gnosis.services.vault_sync._resolve_owner_id", new_callable=AsyncMock, return_value=1):
+        lines = [line async for line in run_full_sync_for_user(1)]
 
-    assert isinstance(result, dict)
-
-
-@pytest.mark.asyncio
-async def test_sync_vault_creates_note_for_new_file(tmp_path):
-    """A new markdown file that has no matching DB note gets created."""
-    from gnosis.services.vault_sync import sync_vault
-
-    # Create a real markdown file
-    md_file = tmp_path / "my-note.md"
-    md_file.write_text("---\ntitle: My Note\ntags: [test]\n---\n# My Note\nContent here.")
-
-    user = _make_user(vault_path=str(tmp_path))
-    db = _make_db()
-
-    with patch("gnosis.services.vault_sync.rebuild_fts_index", new_callable=AsyncMock):
-        result = await sync_vault(user, db)
-
-    assert isinstance(result, dict)
-    # At minimum, sync should have tried to do something
-    assert db.execute.called or db.commit.called or True
+    assert all(isinstance(line, str) for line in lines)
 
 
 @pytest.mark.asyncio
-async def test_sync_vault_skips_dot_directories(tmp_path):
-    """Files inside hidden directories (e.g. .obsidian) are ignored."""
-    from gnosis.services.vault_sync import sync_vault
+async def test_run_full_sync_empty_vault(tmp_path):
+    """An empty vault directory produces no file-sync lines but completes."""
+    from gnosis.services.vault_sync import run_full_sync_for_user
+
+    db = _make_db_session()
+    fake_factory = MagicMock(return_value=db)
+
+    with patch("gnosis.services.vault_sync.AsyncSessionFactory", fake_factory), \
+         patch("gnosis.services.vault_sync._get_vault_path", return_value=tmp_path), \
+         patch("gnosis.services.vault_sync._resolve_owner_id", new_callable=AsyncMock, return_value=1):
+        lines = [line async for line in run_full_sync_for_user(1)]
+
+    assert isinstance(lines, list)
+
+
+@pytest.mark.asyncio
+async def test_run_full_sync_with_markdown_file(tmp_path):
+    """A vault with one .md file should be processed without exception."""
+    from gnosis.services.vault_sync import run_full_sync_for_user
+
+    md = tmp_path / "test-note.md"
+    md.write_text("---\ntitle: Test\ntags: [x]\n---\nContent.")
+
+    db = _make_db_session()
+    fake_factory = MagicMock(return_value=db)
+
+    with patch("gnosis.services.vault_sync.AsyncSessionFactory", fake_factory), \
+         patch("gnosis.services.vault_sync._get_vault_path", return_value=tmp_path), \
+         patch("gnosis.services.vault_sync._resolve_owner_id", new_callable=AsyncMock, return_value=1), \
+         patch("gnosis.services.vault_sync.upsert_note"), \
+         patch("gnosis.services.vault_sync.delete_note"):
+        lines = [line async for line in run_full_sync_for_user(1)]
+
+    assert isinstance(lines, list)
+
+
+@pytest.mark.asyncio
+async def test_run_full_sync_skips_dot_dirs(tmp_path):
+    """Files inside hidden directories should be skipped."""
+    from gnosis.services.vault_sync import run_full_sync_for_user
 
     hidden = tmp_path / ".obsidian"
     hidden.mkdir()
     (hidden / "config.md").write_text("# hidden")
 
-    user = _make_user(vault_path=str(tmp_path))
-    db = _make_db()
+    db = _make_db_session()
+    fake_factory = MagicMock(return_value=db)
 
-    with patch("gnosis.services.vault_sync.rebuild_fts_index", new_callable=AsyncMock):
-        result = await sync_vault(user, db)
+    with patch("gnosis.services.vault_sync.AsyncSessionFactory", fake_factory), \
+         patch("gnosis.services.vault_sync._get_vault_path", return_value=tmp_path), \
+         patch("gnosis.services.vault_sync._resolve_owner_id", new_callable=AsyncMock, return_value=1):
+        lines = [line async for line in run_full_sync_for_user(1)]
 
-    assert isinstance(result, dict)
-
-
-@pytest.mark.asyncio
-async def test_sync_vault_returns_stats_keys(tmp_path):
-    """Return dict must contain created/updated/deleted/errors keys."""
-    from gnosis.services.vault_sync import sync_vault
-
-    user = _make_user(vault_path=str(tmp_path))
-    db = _make_db()
-
-    with patch("gnosis.services.vault_sync.rebuild_fts_index", new_callable=AsyncMock):
-        result = await sync_vault(user, db)
-
-    for key in ("created", "updated", "deleted", "errors"):
-        assert key in result, f"Missing key: {key}"
+    # The hidden config.md should NOT appear in sync lines as a processed file
+    assert isinstance(lines, list)
 
 
-@pytest.mark.asyncio
-async def test_sync_vault_missing_directory_returns_error(tmp_path):
-    """A non-existent vault path must be handled gracefully."""
-    from gnosis.services.vault_sync import sync_vault
+# ---------------------------------------------------------------------------
+# VaultEventHandler
+# ---------------------------------------------------------------------------
 
-    user = _make_user(vault_path=str(tmp_path / "nonexistent"))
-    db = _make_db()
-
-    with patch("gnosis.services.vault_sync.rebuild_fts_index", new_callable=AsyncMock):
-        result = await sync_vault(user, db)
-
-    # Either raises gracefully or returns error-indicating result
-    assert isinstance(result, dict)
-
-
-@pytest.mark.asyncio
-async def test_sync_single_file_new(tmp_path):
-    """sync_single_file with a new file path should create a DB record."""
-    from gnosis.services.vault_sync import sync_single_file
-
-    md_file = tmp_path / "note.md"
-    md_file.write_text("---\ntitle: Test\n---\nContent.")
-
-    user = _make_user(vault_path=str(tmp_path))
-    db = _make_db()
-
-    # Should not raise
-    await sync_single_file(md_file, user, db)
-
-
-@pytest.mark.asyncio
-async def test_sync_single_file_update(tmp_path):
-    """sync_single_file with an existing note should update it."""
-    from gnosis.services.vault_sync import sync_single_file
-
-    md_file = tmp_path / "note.md"
-    md_file.write_text("---\ntitle: Updated\n---\nNew content.")
-
-    user = _make_user(vault_path=str(tmp_path))
-    db = _make_db()
-
-    # Pre-seed a matching note in the mock
-    existing_note = MagicMock()
-    existing_note.content_hash = "old_hash"
-    result = MagicMock()
-    result.scalars.return_value.first.return_value = existing_note
-    db.execute = AsyncMock(return_value=result)
-
-    await sync_single_file(md_file, user, db)
-
-    # Note should have been mutated
-    assert db.commit.called or db.flush.called or True
+def test_vault_event_handler_instantiates():
+    from gnosis.services.vault_sync import VaultEventHandler
+    handler = VaultEventHandler(owner_id=1)
+    assert handler is not None

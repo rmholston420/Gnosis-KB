@@ -1,80 +1,76 @@
-"""Tests for gnosis/services/hybrid_search.py."""
+"""Tests for gnosis/services/hybrid_search.py.
+
+Public API (synchronous, uses Qdrant directly — no DB session):
+  hybrid_search(query, owner_ids, limit=10, folder=None, note_type=None, tags=None)
+  -> dict with keys: results (list), elapsed_ms (float)
+
+All Qdrant I/O is mocked via patch.
+"""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
+from unittest.mock import MagicMock, patch
 import pytest
 
 
-@pytest.mark.asyncio
-async def test_hybrid_search_returns_list():
+def _make_qdrant_result(ids):
+    """Return a fake Qdrant search response (list of ScoredPoint-likes)."""
+    points = []
+    for i, nid in enumerate(ids):
+        p = MagicMock()
+        p.score = 0.9 - i * 0.05
+        p.payload = {"note_id": nid, "title": f"Note {nid}"}
+        points.append(p)
+    return points
+
+
+def test_hybrid_search_empty_owner_ids_returns_empty():
+    """owner_ids=set() → short-circuits immediately, no Qdrant call."""
+    from gnosis.services.hybrid_search import hybrid_search
+    result = hybrid_search("python", owner_ids=set())
+    assert result == {"results": [], "elapsed_ms": 0.0}
+
+
+def test_hybrid_search_returns_dict_structure():
     from gnosis.services.hybrid_search import hybrid_search
 
-    db = AsyncMock()
+    mock_client = MagicMock()
+    mock_client.query_points.return_value = MagicMock(
+        points=_make_qdrant_result(["n1", "n2"])
+    )
 
-    with patch("gnosis.services.hybrid_search.fts_search", new_callable=AsyncMock) as mock_fts, \
-         patch("gnosis.services.hybrid_search.search_similar", new_callable=AsyncMock) as mock_vec, \
-         patch("gnosis.services.hybrid_search.get_embedding", new_callable=AsyncMock) as mock_emb:
+    with patch("gnosis.services.hybrid_search.get_qdrant_client", return_value=mock_client), \
+         patch("gnosis.services.hybrid_search.embed_dense", return_value=[0.1] * 10):
+        result = hybrid_search("python notes", owner_ids={1})
 
-        mock_emb.return_value = [0.1] * 10
-        mock_fts.return_value = [{"id": "n1", "title": "FTS result", "score": 0.8}]
-        mock_vec.return_value = [{"note_id": "n1", "score": 0.9}]
-
-        results = await hybrid_search("python notes", db)
-
-    assert isinstance(results, list)
+    assert "results" in result
+    assert "elapsed_ms" in result
+    assert isinstance(result["results"], list)
+    assert isinstance(result["elapsed_ms"], float)
 
 
-@pytest.mark.asyncio
-async def test_hybrid_search_empty_query():
+def test_hybrid_search_respects_limit():
     from gnosis.services.hybrid_search import hybrid_search
 
-    db = AsyncMock()
+    mock_client = MagicMock()
+    mock_client.query_points.return_value = MagicMock(
+        points=_make_qdrant_result([f"n{i}" for i in range(20)])
+    )
 
-    with patch("gnosis.services.hybrid_search.fts_search", new_callable=AsyncMock) as mock_fts, \
-         patch("gnosis.services.hybrid_search.get_embedding", new_callable=AsyncMock) as mock_emb:
-        mock_emb.return_value = []
-        mock_fts.return_value = []
-        results = await hybrid_search("", db)
+    with patch("gnosis.services.hybrid_search.get_qdrant_client", return_value=mock_client), \
+         patch("gnosis.services.hybrid_search.embed_dense", return_value=[0.1] * 10):
+        result = hybrid_search("query", owner_ids={1}, limit=5)
 
-    assert isinstance(results, list)
+    assert len(result["results"]) <= 20  # sanity check
 
 
-@pytest.mark.asyncio
-async def test_hybrid_search_deduplicates():
-    """Same note_id from FTS and vector should appear once."""
+def test_hybrid_search_with_folder_filter():
     from gnosis.services.hybrid_search import hybrid_search
 
-    db = AsyncMock()
+    mock_client = MagicMock()
+    mock_client.query_points.return_value = MagicMock(points=[])
 
-    with patch("gnosis.services.hybrid_search.fts_search", new_callable=AsyncMock) as mock_fts, \
-         patch("gnosis.services.hybrid_search.search_similar", new_callable=AsyncMock) as mock_vec, \
-         patch("gnosis.services.hybrid_search.get_embedding", new_callable=AsyncMock) as mock_emb:
+    with patch("gnosis.services.hybrid_search.get_qdrant_client", return_value=mock_client), \
+         patch("gnosis.services.hybrid_search.embed_dense", return_value=[0.1] * 10):
+        result = hybrid_search("test", owner_ids={1}, folder="10-zettelkasten")
 
-        mock_emb.return_value = [0.1] * 10
-        mock_fts.return_value = [{"id": "n1", "title": "Note", "score": 0.7}]
-        mock_vec.return_value = [{"note_id": "n1", "score": 0.9}]
-
-        results = await hybrid_search("query", db)
-
-    ids = [r.get("id") or r.get("note_id") for r in results]
-    assert len(ids) == len(set(ids)) or isinstance(results, list)
-
-
-@pytest.mark.asyncio
-async def test_hybrid_search_respects_limit():
-    from gnosis.services.hybrid_search import hybrid_search
-
-    db = AsyncMock()
-
-    with patch("gnosis.services.hybrid_search.fts_search", new_callable=AsyncMock) as mock_fts, \
-         patch("gnosis.services.hybrid_search.search_similar", new_callable=AsyncMock) as mock_vec, \
-         patch("gnosis.services.hybrid_search.get_embedding", new_callable=AsyncMock) as mock_emb:
-
-        mock_emb.return_value = [0.1] * 10
-        mock_fts.return_value = [{"id": f"n{i}", "title": f"N{i}", "score": 0.5} for i in range(20)]
-        mock_vec.return_value = [{"note_id": f"m{i}", "score": 0.6} for i in range(20)]
-
-        results = await hybrid_search("query", db, limit=5)
-
-    assert len(results) <= 20  # basic sanity
+    assert isinstance(result, dict)

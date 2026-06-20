@@ -1,13 +1,16 @@
-"""Tests for gnosis/services/fts.py (Full-Text Search helpers)."""
+"""Tests for gnosis/services/fts.py.
+
+Public API:
+  fulltext_search(db, query, *, limit=10, folder=None, note_type=None, tags=None)
+  suggest_completions(db, partial_query, *, limit=5)
+"""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
+from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 
-def _make_session(rows=None):
-    """Return a mock AsyncSession returning *rows* from execute()."""
+def _make_db(rows=None):
     db = AsyncMock()
     result = MagicMock()
     result.all.return_value = rows or []
@@ -16,59 +19,48 @@ def _make_session(rows=None):
 
 
 @pytest.mark.asyncio
-async def test_fts_search_returns_list():
-    from gnosis.services.fts import fts_search
-
-    row = MagicMock()
-    row.id = "abc"
-    row.title = "Result Note"
-    row.rank = -0.5
-
-    db = _make_session([row])
-    results = await fts_search("python notes", db)
-    assert isinstance(results, list)
+async def test_fulltext_search_returns_dict():
+    from gnosis.services.fts import fulltext_search
+    db = _make_db([])
+    result = await fulltext_search(db, "python")
+    assert isinstance(result, dict)
 
 
 @pytest.mark.asyncio
-async def test_fts_search_empty_query_returns_empty():
-    from gnosis.services.fts import fts_search
-
-    db = _make_session([])
-    results = await fts_search("", db)
-    assert results == []
-
-
-@pytest.mark.asyncio
-async def test_fts_search_limit_is_respected():
-    from gnosis.services.fts import fts_search
-
-    rows = [MagicMock() for _ in range(5)]
-    for i, r in enumerate(rows):
-        r.id = str(i)
-        r.title = f"Note {i}"
-        r.rank = float(-i)
-
-    db = _make_session(rows)
-    results = await fts_search("test", db, limit=3)
-    assert isinstance(results, list)
+async def test_fulltext_search_empty_query_returns_early():
+    from gnosis.services.fts import fulltext_search
+    db = _make_db([])
+    result = await fulltext_search(db, "")
+    # empty query should return quickly — may return empty results dict
+    assert isinstance(result, dict)
 
 
 @pytest.mark.asyncio
-async def test_fts_rebuild_index_executes():
-    from gnosis.services.fts import rebuild_fts_index
-
-    db = AsyncMock()
-    db.execute = AsyncMock()
-    db.commit = AsyncMock()
-
-    await rebuild_fts_index(db)
-    assert db.execute.called or db.commit.called or True  # just ensure no crash
+async def test_fulltext_search_with_filters():
+    from gnosis.services.fts import fulltext_search
+    db = _make_db([])
+    result = await fulltext_search(
+        db, "neural networks",
+        limit=5,
+        folder="10-zettelkasten",
+        note_type="permanent",
+        tags=["ml"],
+    )
+    assert isinstance(result, dict)
 
 
 @pytest.mark.asyncio
-async def test_fts_search_with_owner_ids():
-    from gnosis.services.fts import fts_search
+async def test_fulltext_search_calls_execute():
+    from gnosis.services.fts import fulltext_search
+    db = _make_db([])
+    await fulltext_search(db, "test query")
+    assert db.execute.called
 
-    db = _make_session([])
-    results = await fts_search("test", db, owner_ids={1, 2})
-    assert isinstance(results, list)
+
+@pytest.mark.asyncio
+async def test_suggest_completions_returns_list():
+    from gnosis.services.fts import suggest_completions
+    db = _make_db([])
+    result = await suggest_completions(db, "py")
+    # Should return a list (possibly empty if DB is mocked)
+    assert isinstance(result, list)
