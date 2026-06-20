@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import sys
 import types
+from importlib import reload
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -27,7 +28,7 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# sys.modules stubs — injected before any import of document_parser
+# sys.modules stubs
 # ---------------------------------------------------------------------------
 
 def _make_fitz_stub(pages=("Page one text.", "Page two text."), meta=None):
@@ -45,7 +46,7 @@ def _make_docx_stub(paragraphs=("My Title", "Body paragraph.")):
     para_objs = [MagicMock(text=t) for t in paragraphs]
     doc = MagicMock()
     doc.paragraphs = para_objs
-    doc.sections = [MagicMock()]  # one section
+    doc.sections = [MagicMock()]
     Document = MagicMock(return_value=doc)
     docx_mod = types.ModuleType("docx")
     docx_mod.Document = Document  # type: ignore[attr-defined]
@@ -68,7 +69,6 @@ def _make_pptx_stub(slide_texts=("Hello World", "Slide Two")):
 
 
 def _make_openpyxl_stub(sheets=None):
-    """sheets: dict[name, list[tuple]] — rows per sheet."""
     if sheets is None:
         sheets = {"Sheet1": [("A", "B"), ("1", "2"), ("3", "4")]}
     wb = MagicMock()
@@ -91,10 +91,15 @@ def _make_tesseract_stub(ocr_text="Extracted OCR text"):
     Image_mod.open = MagicMock(return_value=pil_img)
     pil_mod = types.ModuleType("PIL")
     pil_mod.Image = Image_mod  # type: ignore[attr-defined]
-
     pytesseract_mod = types.ModuleType("pytesseract")
     pytesseract_mod.image_to_string = MagicMock(return_value=ocr_text)  # type: ignore[attr-defined]
     return pytesseract_mod, pil_mod
+
+
+def _real_bs4():
+    """Return the actual bs4 module, ensuring it is importable."""
+    import bs4 as _bs4
+    return _bs4
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +196,6 @@ def test_parse_pdf_raises_without_pymupdf(tmp_path):
     path = tmp_path / "test.pdf"
     path.write_bytes(b"")
     with patch.dict(sys.modules, {"fitz": None}):
-        from importlib import reload
         import gnosis.services.document_parser as dp
         reload(dp)
         with pytest.raises(RuntimeError, match="PyMuPDF"):
@@ -298,6 +302,7 @@ def test_parse_image_returns_ocr_text(tmp_path):
 
 @pytest.mark.asyncio
 async def test_parse_url_extracts_title_and_body():
+    """Happy path: bs4 IS available; title and main content extracted."""
     html = "<html><head><title>My Page</title></head><body><main><p>Main content here.</p></main></body></html>"
 
     mock_resp = MagicMock()
@@ -309,9 +314,13 @@ async def test_parse_url_extracts_title_and_body():
     mock_client.__aexit__ = AsyncMock(return_value=False)
     mock_client.get = AsyncMock(return_value=mock_resp)
 
-    with patch("httpx.AsyncClient", return_value=mock_client):
-        from gnosis.services.document_parser import parse_url
-        result = await parse_url("https://example.com/article")
+    # Ensure the real bs4 is present, then reload so parse_url sees it
+    real_bs4 = _real_bs4()
+    with patch.dict(sys.modules, {"bs4": real_bs4}):
+        import gnosis.services.document_parser as dp
+        reload(dp)
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            result = await dp.parse_url("https://example.com/article")
 
     assert result.title == "My Page"
     assert "Main content here" in result.text
@@ -321,6 +330,7 @@ async def test_parse_url_extracts_title_and_body():
 
 @pytest.mark.asyncio
 async def test_parse_url_fallback_without_bs4():
+    """Fallback path: bs4 absent; raw HTML returned, title defaults to URL."""
     html = "<html><body>Raw content</body></html>"
 
     mock_resp = MagicMock()
@@ -332,14 +342,11 @@ async def test_parse_url_fallback_without_bs4():
     mock_client.__aexit__ = AsyncMock(return_value=False)
     mock_client.get = AsyncMock(return_value=mock_resp)
 
-    with (
-        patch("httpx.AsyncClient", return_value=mock_client),
-        patch.dict(sys.modules, {"bs4": None}),
-    ):
-        from importlib import reload
+    with patch.dict(sys.modules, {"bs4": None}):
         import gnosis.services.document_parser as dp
         reload(dp)
-        result = await dp.parse_url("https://example.com")
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            result = await dp.parse_url("https://example.com")
 
     assert result.source == "https://example.com"
     assert result.raw_format == "url"
