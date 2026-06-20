@@ -7,11 +7,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import gnosis.services.document_parser as dp
 from gnosis.services.document_parser import ParsedDocument, detect_format
 
 
 def _make_httpx_mock(html: str):
-    """Build a properly wired httpx.AsyncClient mock for async-with usage."""
+    """Return a mock suitable for patching httpx.AsyncClient."""
     mock_resp = MagicMock()
     mock_resp.text = html
     mock_resp.raise_for_status = MagicMock()
@@ -39,7 +40,6 @@ def test_parse_pdf_returns_parsed_document():
     fake_fitz.open.return_value = mock_doc
 
     with patch.dict(sys.modules, {"fitz": fake_fitz}):
-        from gnosis.services import document_parser as dp
         result = dp.parse_pdf(Path("/vault/coverage.pdf"))
 
     assert isinstance(result, ParsedDocument)
@@ -56,33 +56,31 @@ def test_parse_pdf_no_meta_derives_title_from_stem():
     fake_fitz.open.return_value = mock_doc
 
     with patch.dict(sys.modules, {"fitz": fake_fitz}):
-        from gnosis.services import document_parser as dp
         result = dp.parse_pdf(Path("/vault/my-report.pdf"))
 
     assert result.title == "My Report"
 
 
 # ---------------------------------------------------------------------------
-# parse_url -- bs4 is installed, so BeautifulSoup runs on real HTML
+# parse_url
 # ---------------------------------------------------------------------------
 
 async def test_parse_url_returns_parsed_document():
     html = "<html><head><title>Hello</title></head><body><main><p>World</p></main></body></html>"
 
     with patch("httpx.AsyncClient", _make_httpx_mock(html)):
-        from gnosis.services import document_parser as dp
         result = await dp.parse_url("http://example.com")
 
     assert isinstance(result, ParsedDocument)
     assert result.raw_format == "url"
     assert result.source == "http://example.com"
+    assert result.title == "Hello"
 
 
 async def test_parse_url_sets_title():
     html = "<html><head><title>Stripped Title</title></head><body><p>content</p></body></html>"
 
     with patch("httpx.AsyncClient", _make_httpx_mock(html)):
-        from gnosis.services import document_parser as dp
         result = await dp.parse_url("http://example.com/page")
 
     assert result.title == "Stripped Title"
@@ -99,7 +97,6 @@ def test_parse_image_returns_parsed_document():
     fake_tesseract.image_to_string.return_value = "OCR text here"
 
     with patch.dict(sys.modules, {"pytesseract": fake_tesseract, "PIL": fake_pil}):
-        from gnosis.services import document_parser as dp
         result = dp.parse_image(Path("/vault/scan.png"))
 
     assert isinstance(result, ParsedDocument)

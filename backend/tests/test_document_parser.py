@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import gnosis.services.document_parser as dp
 from gnosis.services.document_parser import (
     ParsedDocument,
     detect_format,
@@ -97,7 +98,6 @@ def test_parse_pdf_uses_filename_as_title_when_no_meta():
     fake_fitz.open.return_value = mock_doc
 
     with patch.dict(sys.modules, {"fitz": fake_fitz}):
-        from gnosis.services import document_parser as dp
         result = dp.parse_pdf(Path("/vault/my-great-report.pdf"))
 
     assert result.raw_format == "pdf"
@@ -113,7 +113,6 @@ def test_parse_pdf_uses_metadata_title():
     fake_fitz.open.return_value = mock_doc
 
     with patch.dict(sys.modules, {"fitz": fake_fitz}):
-        from gnosis.services import document_parser as dp
         result = dp.parse_pdf(Path("/vault/anything.pdf"))
 
     assert result.title == "Executive Summary"
@@ -122,7 +121,6 @@ def test_parse_pdf_uses_metadata_title():
 
 def test_parse_pdf_missing_fitz_raises_runtime():
     with patch.dict(sys.modules, {"fitz": None}):
-        from gnosis.services import document_parser as dp
         with pytest.raises((RuntimeError, ImportError)):
             dp.parse_pdf(Path("/vault/file.pdf"))
 
@@ -144,7 +142,6 @@ def test_parse_docx_extracts_paragraphs():
     fake_docx_module.Document.return_value = mock_doc
 
     with patch.dict(sys.modules, {"docx": fake_docx_module}):
-        from gnosis.services import document_parser as dp
         result = dp.parse_docx(Path("/vault/essay.docx"))
 
     assert result.raw_format == "docx"
@@ -162,7 +159,6 @@ def test_parse_docx_empty_doc_uses_stem_as_title():
     fake_docx_module.Document.return_value = mock_doc
 
     with patch.dict(sys.modules, {"docx": fake_docx_module}):
-        from gnosis.services import document_parser as dp
         result = dp.parse_docx(Path("/vault/my-notes.docx"))
 
     assert result.title == "my-notes"
@@ -185,7 +181,6 @@ def test_parse_pptx_extracts_slide_text():
     fake_pptx.Presentation.return_value = prs
 
     with patch.dict(sys.modules, {"pptx": fake_pptx}):
-        from gnosis.services import document_parser as dp
         result = dp.parse_pptx(Path("/vault/deck.pptx"))
 
     assert result.raw_format == "pptx"
@@ -213,7 +208,6 @@ def test_parse_xlsx_builds_markdown_table():
     fake_openpyxl.load_workbook.return_value = wb
 
     with patch.dict(sys.modules, {"openpyxl": fake_openpyxl}):
-        from gnosis.services import document_parser as dp
         result = dp.parse_xlsx(Path("/vault/data.xlsx"))
 
     assert result.raw_format == "xlsx"
@@ -234,7 +228,6 @@ def test_parse_xlsx_skips_empty_sheet():
     fake_openpyxl.load_workbook.return_value = wb
 
     with patch.dict(sys.modules, {"openpyxl": fake_openpyxl}):
-        from gnosis.services import document_parser as dp
         result = dp.parse_xlsx(Path("/vault/empty.xlsx"))
 
     assert result.text == ""
@@ -252,7 +245,6 @@ def test_parse_image_extracts_ocr_text():
     fake_pytesseract.image_to_string.return_value = "  Hello OCR  "
 
     with patch.dict(sys.modules, {"pytesseract": fake_pytesseract, "PIL": fake_pil}):
-        from gnosis.services import document_parser as dp
         result = dp.parse_image(Path("/vault/scan.png"))
 
     assert result.raw_format == "image"
@@ -263,37 +255,35 @@ def test_parse_image_extracts_ocr_text():
 # ---------------------------------------------------------------------------
 # parse_url
 #
-# The source does:
+# parse_url does: `import httpx` inside the function body, then:
 #   async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
 #       resp = await client.get(url, headers={...})
 #       html = resp.text
 #
-# Mock chain:
-#   httpx.AsyncClient(...)  --> mock_instance  (MagicMock)
-#   async with mock_instance --> __aenter__ --> mock_client  (AsyncMock)
-#   await mock_client.get(...)  --> mock_resp  (MagicMock with .text = html)
+# Since `import httpx` resolves from sys.modules at call time, patching
+# `httpx.AsyncClient` directly replaces the class on the already-imported
+# httpx module object, which is what the function will find.
 #
-# bs4 IS installed in the venv, so BeautifulSoup actually runs on the
-# HTML string we provide -- no need to patch it out.
+# Mock chain required:
+#   httpx.AsyncClient(...)       --> mock_instance  (return_value of the class mock)
+#   async with mock_instance     --> mock_client    (via __aenter__)
+#   await mock_client.get(...)   --> mock_resp      (AsyncMock return_value)
+#   mock_resp.text               --> html string
 # ---------------------------------------------------------------------------
 
 def _make_httpx_mock(html: str):
-    """Build a properly wired httpx.AsyncClient mock for async-with usage."""
-    # What resp.text returns
+    """Return a mock suitable for patching httpx.AsyncClient."""
     mock_resp = MagicMock()
     mock_resp.text = html
     mock_resp.raise_for_status = MagicMock()
 
-    # The session yielded by `async with client` -- get() must be awaitable
     mock_client = AsyncMock()
     mock_client.get = AsyncMock(return_value=mock_resp)
 
-    # The object returned by httpx.AsyncClient(...)
     mock_instance = MagicMock()
     mock_instance.__aenter__ = AsyncMock(return_value=mock_client)
     mock_instance.__aexit__ = AsyncMock(return_value=False)
 
-    # The class itself
     return MagicMock(return_value=mock_instance)
 
 
@@ -303,22 +293,19 @@ async def test_parse_url_extracts_title_and_text():
         "<body><main><p>Main content here.</p></main></body></html>"
     )
     with patch("httpx.AsyncClient", _make_httpx_mock(html)):
-        from gnosis.services import document_parser as dp
         result = await dp.parse_url("https://example.com")
 
     assert result.raw_format == "url"
     assert result.source == "https://example.com"
-    # bs4 runs for real -- title tag text should be extracted
     assert result.title == "Test Page"
     assert "content" in result.text.lower()
 
 
 async def test_parse_url_fallback_without_bs4():
-    """When bs4 is unavailable, title falls back to the URL."""
+    """When bs4 is removed from sys.modules, title falls back to the URL."""
     html = "<html><body>raw html</body></html>"
     with patch("httpx.AsyncClient", _make_httpx_mock(html)), \
-         patch.dict(sys.modules, {"bs4": None, "bs4.BeautifulSoup": None}):
-        from gnosis.services import document_parser as dp
+         patch.dict(sys.modules, {"bs4": None}):
         result = await dp.parse_url("https://example.com/fallback")
 
     assert result.raw_format == "url"
