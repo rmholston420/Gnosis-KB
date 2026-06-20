@@ -1,7 +1,7 @@
 """Coverage tests for gnosis/routers/vault.py."""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch, AsyncIteratorMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -59,7 +59,7 @@ def test_vault_sync_file_returns_200():
     db = AsyncMock()
 
     with patch("gnosis.routers.vault.sync_single_file", new_callable=AsyncMock,
-               return_value={"status": "created", "note_id": "abc"}) as mock_sync:
+               return_value={"status": "created", "note_id": "abc"}):
         client = TestClient(_make_app(db))
         resp = client.post("/api/v1/vault/sync/file",
                            json={"path": "/vault/test.md"})
