@@ -1,30 +1,47 @@
-"""Coverage tests for gnosis/services/llm_provider.py - LLMProvider class."""
+"""Coverage tests for gnosis/services/llm_provider.py - LLMProvider class.
+
+Actual API:
+  - LLMProvider.__init__()           sets _available=[], _ollama_model=settings.ollama_llm_model
+  - LLMProvider.initialize()         probes Ollama/Groq/OpenAI, populates _available
+  - LLMProvider.is_available         bool property
+  - LLMProvider.active_provider      'ollama'|'groq'|'openai'|'none'
+  - LLMProvider.active_model         model name string or '' when none
+  - LLMProvider.swap_model(model)     hot-swap Ollama model (raises if ollama not available)
+  - LLMProvider.complete(prompt)      async, raises RuntimeError if all fail
+  - LLMProvider.stream(prompt)        async generator
+"""
 from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from gnosis.services.llm_provider import LLMProvider
 
 
-def _p(available=None):
+def _p(available=None, ollama_model="mistral"):
+    """Build a pre-configured LLMProvider bypassing initialize()."""
     p = LLMProvider()
-    if available is not None:
-        p._available = list(available)
+    p._available = list(available or [])
+    p._ollama_model = ollama_model
     return p
 
+
+# ---------------------------------------------------------------------------
+# initialize() tests
+# ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_initialize_ollama_available():
     p = LLMProvider()
     mock_resp = MagicMock(); mock_resp.status_code = 200
-    with patch("gnosis.services.llm_provider.httpx.AsyncClient") as mhx, \
-         patch("gnosis.services.llm_provider.get_settings") as mc:
-        mc.return_value = MagicMock(ollama_base_url="http://localhost:11434",
-            ollama_llm_model="mistral", groq_api_key=None, openai_api_key=None)
-        client = AsyncMock()
-        client.__aenter__ = AsyncMock(return_value=client)
-        client.__aexit__ = AsyncMock(return_value=False)
-        client.get = AsyncMock(return_value=mock_resp)
-        mhx.return_value = client
+    client = AsyncMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    client.get = AsyncMock(return_value=mock_resp)
+    with patch("gnosis.services.llm_provider.httpx.AsyncClient", return_value=client), \
+         patch("gnosis.services.llm_provider.settings") as ms:
+        ms.ollama_base_url = "http://localhost:11434"
+        ms.ollama_llm_model = "mistral"
+        ms.groq_api_key = None
+        ms.openai_api_key = None
         await p.initialize()
     assert "ollama" in p._available
     assert p.is_available is True
@@ -34,15 +51,17 @@ async def test_initialize_ollama_available():
 @pytest.mark.asyncio
 async def test_initialize_ollama_down_openai_fallback():
     p = LLMProvider()
-    with patch("gnosis.services.llm_provider.httpx.AsyncClient") as mhx, \
-         patch("gnosis.services.llm_provider.get_settings") as mc:
-        mc.return_value = MagicMock(ollama_base_url="http://localhost:11434",
-            ollama_llm_model="mistral", groq_api_key=None, openai_api_key="sk-x")
-        client = AsyncMock()
-        client.__aenter__ = AsyncMock(return_value=client)
-        client.__aexit__ = AsyncMock(return_value=False)
-        client.get = AsyncMock(side_effect=Exception("down"))
-        mhx.return_value = client
+    client = AsyncMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    client.get = AsyncMock(side_effect=Exception("down"))
+    with patch("gnosis.services.llm_provider.httpx.AsyncClient", return_value=client), \
+         patch("gnosis.services.llm_provider.settings") as ms, \
+         patch("gnosis.services.llm_provider.AsyncOpenAI"):
+        ms.ollama_base_url = "http://localhost:11434"
+        ms.ollama_llm_model = "mistral"
+        ms.groq_api_key = None
+        ms.openai_api_key = "sk-x"
         await p.initialize()
     assert "openai" in p._available
     assert p.active_provider == "openai"
@@ -50,21 +69,28 @@ async def test_initialize_ollama_down_openai_fallback():
 
 @pytest.mark.asyncio
 async def test_initialize_no_providers():
+    """Ollama down + no API keys → _available is empty."""
     p = LLMProvider()
-    with patch("gnosis.services.llm_provider.httpx.AsyncClient") as mhx, \
-         patch("gnosis.services.llm_provider.get_settings") as mc:
-        mc.return_value = MagicMock(ollama_base_url="http://localhost:11434",
-            ollama_llm_model="mistral", groq_api_key=None, openai_api_key=None)
-        client = AsyncMock()
-        client.__aenter__ = AsyncMock(return_value=client)
-        client.__aexit__ = AsyncMock(return_value=False)
-        client.get = AsyncMock(side_effect=Exception("down"))
-        mhx.return_value = client
+    client = AsyncMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    client.get = AsyncMock(side_effect=Exception("down"))
+    with patch("gnosis.services.llm_provider.httpx.AsyncClient", return_value=client), \
+         patch("gnosis.services.llm_provider.settings") as ms:
+        ms.ollama_base_url = "http://localhost:11434"
+        ms.ollama_llm_model = "mistral"
+        ms.groq_api_key = None
+        ms.openai_api_key = None
         await p.initialize()
     assert p._available == []
     assert p.is_available is False
+    # active_provider returns 'none' when list is empty
     assert p.active_provider == "none"
 
+
+# ---------------------------------------------------------------------------
+# complete() tests
+# ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_complete_returns_string():
@@ -81,7 +107,7 @@ async def test_complete_falls_back_on_error():
     p = _p(["ollama", "openai"])
     mo_o = AsyncMock()
     mo_o.chat.completions.create = AsyncMock(side_effect=Exception("fail"))
-    p._ollama_client = mo_o; p._ollama_model = "mistral"
+    p._ollama_client = mo_o
     mo_oa = AsyncMock()
     mo_oa.chat.completions.create = AsyncMock(
         return_value=MagicMock(choices=[MagicMock(message=MagicMock(content="fallback"))]))
@@ -102,9 +128,13 @@ async def test_complete_all_fail_raises():
 @pytest.mark.asyncio
 async def test_complete_no_providers_raises():
     p = _p([])
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="No LLM provider available"):
         await p.complete("q")
 
+
+# ---------------------------------------------------------------------------
+# stream() test
+# ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_stream_yields_chunks():
@@ -120,8 +150,12 @@ async def test_stream_yields_chunks():
     assert chunks == ["Hello ", "world"]
 
 
+# ---------------------------------------------------------------------------
+# Property tests
+# ---------------------------------------------------------------------------
+
 def test_active_model_ollama():
-    p = _p(["ollama"]); p._ollama_model = "llama3"
+    p = _p(["ollama"], ollama_model="llama3")
     assert p.active_model == "llama3"
 
 def test_active_model_groq():
@@ -131,14 +165,20 @@ def test_active_model_openai():
     assert _p(["openai"]).active_model == "gpt-4o-mini"
 
 def test_active_model_none():
-    assert _p([]).active_model == "none"
+    # active_provider == 'none' → active_model returns ''
+    assert _p([]).active_model == ""
 
-def test_set_ollama_model():
-    p = _p(["ollama"]); p._ollama_model = "old"
-    p.set_ollama_model("llama3")
+
+# ---------------------------------------------------------------------------
+# swap_model() tests  (the method is swap_model, not set_ollama_model)
+# ---------------------------------------------------------------------------
+
+def test_swap_model_updates_ollama_model():
+    p = _p(["ollama"], ollama_model="old")
+    p.swap_model("llama3")
     assert p._ollama_model == "llama3"
 
-def test_set_ollama_model_not_available_raises():
+def test_swap_model_not_available_raises():
     p = _p(["openai"])
     with pytest.raises(RuntimeError, match="not an available provider"):
-        p.set_ollama_model("llama3")
+        p.swap_model("llama3")
