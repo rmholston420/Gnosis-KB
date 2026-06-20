@@ -27,21 +27,13 @@ Isolation
 test_engine is function-scoped: each test gets a brand-new in-memory SQLite
 database with tables freshly created and dropped.
 
-_sync_app / test_client isolation
-----------------------------------
-_sync_app is a *synchronous* pytest fixture and MUST NOT depend on the async
-test_engine fixture — pytest-asyncio cannot inject async fixtures into sync
-fixtures.
-
-Instead, _sync_app creates a plain synchronous SQLite engine (sqlalchemy
-create_engine, no aiosqlite). asyncio.run() is NOT used here because
-pytest-asyncio already owns the running event loop and asyncio.run()
-raises RuntimeError when called inside a running loop.
-
-The sync engine is used only for table DDL (create_all / drop_all).
-The FastAPI app itself is async; Starlette's TestClient spawns it in a
-background thread with anyio, where it gets its own event loop — so the
-async session factory (aiosqlite) works fine inside the ASGI app.
+_sync_app vault path cache
+--------------------------
+vault_sync._VAULT_PATH is a module-level cache set on first call to
+_get_vault_path(). _sync_app resets it to None before and after each test
+so that _get_vault_path() re-reads settings.vault_path (which is patched
+to the tempdir) rather than returning a stale value from a previous test
+or from the real on-disk vault.
 """
 
 from __future__ import annotations
@@ -55,24 +47,23 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import create_engine          # sync engine for DDL only
+from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from starlette.testclient import TestClient
 
 from gnosis.database import Base, get_db
 from gnosis.main import create_app
 
-# ---------------------------------------------------------------------------
-# Test database — async, function-scoped
-# ---------------------------------------------------------------------------
+TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 
-TEST_DB_URL       = "sqlite+aiosqlite:///:memory:"
-TEST_DB_URL_SYNC  = "sqlite:///:memory:"   # sync URL for DDL in sync fixtures
+
+# ---------------------------------------------------------------------------
+# Async engine — function-scoped
+# ---------------------------------------------------------------------------
 
 
 @pytest_asyncio.fixture
 async def test_engine():
-    """Function-scoped async engine backed by in-memory SQLite."""
     engine = create_async_engine(
         TEST_DB_URL,
         echo=False,
@@ -88,14 +79,13 @@ async def test_engine():
 
 @pytest_asyncio.fixture
 async def test_db(test_engine) -> AsyncGenerator[AsyncSession, None]:
-    """Provide a clean database session per test."""
     session_factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
     async with session_factory() as session:
         yield session
 
 
 # ---------------------------------------------------------------------------
-# Vault directory — temporary, pre-populated with PARA folders
+# Vault directory
 # ---------------------------------------------------------------------------
 
 
@@ -112,7 +102,7 @@ def vault_dir():
 
 
 # ---------------------------------------------------------------------------
-# Service patches
+# Service stubs
 # ---------------------------------------------------------------------------
 
 
@@ -126,7 +116,7 @@ async def _mock_start_vault_watcher(owner_id: int = 1) -> _MockObserver:
 
 
 # ---------------------------------------------------------------------------
-# Fake authenticated user
+# Fake user
 # ---------------------------------------------------------------------------
 
 
@@ -146,7 +136,7 @@ async def _fake_require_user() -> _FakeUser:
 
 
 # ---------------------------------------------------------------------------
-# Async client factory
+# Async client
 # ---------------------------------------------------------------------------
 
 
@@ -194,27 +184,22 @@ async def client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, None]:
 # ---------------------------------------------------------------------------
 # Synchronous TestClient
 #
-# _sync_app is a plain sync fixture.  It must NOT depend on test_engine
-# (async fixture) and must NOT call asyncio.run() — both are incompatible
-# with pytest-asyncio's event-loop ownership.
+# _sync_app owns its own DB engines and vault dir. It must NOT depend on
+# test_engine (async fixture) and must NOT call asyncio.run() — both are
+# incompatible with pytest-asyncio's event-loop ownership.
 #
-# Strategy:
-#   1. Create a plain synchronous SQLite engine (no aiosqlite) for DDL only.
-#      sqlalchemy's sync create_engine + Base.metadata.create_all / drop_all
-#      require no event loop at all.
-#   2. Create a SEPARATE async engine (aiosqlite) that the FastAPI app will
-#      use for its async DB sessions inside the TestClient's anyio thread.
-#   3. Wire the async engine into app.dependency_overrides[get_db].
-#   4. Tear down: drop tables via the sync engine, dispose both engines.
-#      The async engine is disposed via run_until_complete on a fresh loop
-#      *only* during teardown (after pytest-asyncio has finished), which is
-#      safe.
+# _VAULT_PATH reset:
+#   vault_sync._VAULT_PATH is a module-level cache. We reset it to None
+#   before patching settings.vault_path so _get_vault_path() re-reads the
+#   patched value. We reset again in the finally block so subsequent tests
+#   (including async tests) start clean.
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
 def _sync_app():
-    """Patched FastAPI app for sync TestClient — owns its own DB engines."""
+    import gnosis.services.vault_sync as _vs
+
     with tempfile.TemporaryDirectory() as tmpdir:
         vault = Path(tmpdir)
         for folder in [
@@ -223,60 +208,68 @@ def _sync_app():
         ]:
             (vault / folder).mkdir()
 
-        # --- Sync engine: DDL only (no asyncio needed) ---
+        # Sync engine for DDL — no asyncio needed
         sync_engine = create_engine("sqlite:///:memory:", echo=False)
         Base.metadata.create_all(sync_engine)
 
-        # --- Async engine: used by the ASGI app inside TestClient's thread ---
+        # Async engine for the ASGI app's DB sessions inside TestClient's thread
         async_engine = create_async_engine(
             TEST_DB_URL,
             echo=False,
             connect_args={"check_same_thread": False},
         )
 
-        with (
-            patch("gnosis.services.vector_store.ensure_collection", return_value=None),
-            patch("gnosis.services.vault_sync.start_vault_watcher", new=_mock_start_vault_watcher),
-            patch("gnosis.services.graph_rag.graph_rag.initialize", new=AsyncMock(return_value=None)),
-        ):
-            from gnosis import config
-            from gnosis.core.auth import get_current_user, require_user
+        # Reset the vault path cache BEFORE patching settings so
+        # _get_vault_path() will pick up the patched tempdir value.
+        _vs._VAULT_PATH = None
 
-            settings = config.get_settings()
-            settings.vault_path = str(vault)
-
-            app = create_app()
-            session_factory = async_sessionmaker(bind=async_engine, expire_on_commit=False)
-
-            async def override_get_db():
-                async with session_factory() as session:
-                    yield session
-
-            app.dependency_overrides[get_db] = override_get_db
-            app.dependency_overrides[require_user] = _fake_require_user
-            app.dependency_overrides[get_current_user] = _fake_require_user
-
-            yield app
-            app.dependency_overrides.clear()
-
-        # Teardown: drop tables synchronously, dispose async engine in a
-        # fresh event loop that we create only for this purpose.
-        Base.metadata.drop_all(sync_engine)
-        sync_engine.dispose()
-
-        import asyncio
-        loop = asyncio.new_event_loop()
         try:
-            loop.run_until_complete(async_engine.dispose())
+            with (
+                patch("gnosis.services.vector_store.ensure_collection", return_value=None),
+                patch("gnosis.services.vault_sync.start_vault_watcher",
+                      new=_mock_start_vault_watcher),
+                patch("gnosis.services.graph_rag.graph_rag.initialize",
+                      new=AsyncMock(return_value=None)),
+            ):
+                from gnosis import config
+                from gnosis.core.auth import get_current_user, require_user
+
+                settings = config.get_settings()
+                settings.vault_path = str(vault)
+
+                app = create_app()
+                session_factory = async_sessionmaker(
+                    bind=async_engine, expire_on_commit=False
+                )
+
+                async def override_get_db():
+                    async with session_factory() as session:
+                        yield session
+
+                app.dependency_overrides[get_db] = override_get_db
+                app.dependency_overrides[require_user] = _fake_require_user
+                app.dependency_overrides[get_current_user] = _fake_require_user
+
+                yield app
+                app.dependency_overrides.clear()
         finally:
-            loop.close()
+            # Drop tables synchronously; dispose async engine in a fresh loop.
+            Base.metadata.drop_all(sync_engine)
+            sync_engine.dispose()
+
+            import asyncio
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(async_engine.dispose())
+            finally:
+                loop.close()
+
+            # Reset the cache again so subsequent tests start clean.
+            _vs._VAULT_PATH = None
 
 
 @pytest.fixture
 def test_client(_sync_app) -> TestClient:
-    """Synchronous Starlette TestClient for test_tag_autocomplete and
-    test_vault_sync_endpoint.
-    """
     with TestClient(_sync_app, raise_server_exceptions=False) as tc:
         yield tc
 

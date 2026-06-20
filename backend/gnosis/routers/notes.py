@@ -1,43 +1,4 @@
-"""Notes CRUD router.
-
-Handles all note lifecycle operations:
-- Create (writes .md to vault → triggers vault sync)
-- Read (single note with backlinks, list with filters)
-- Update (writes .md to vault → triggers vault sync)
-- Delete (soft delete in DB; vault file preserved)
-- Special endpoints: backlinks, outlinks, orphans, daily note, templates,
-  wikilink title search
-
-Isolation contract
-------------------
-Every ``select(Note)`` MUST be wrapped in ``scoped_note_stmt()`` so that
-cross-vault reads are impossible at the router layer.  The only exception
-is the internal ``_get_note_or_404`` helper, which applies the scope itself
-and additionally raises HTTP 403 when the authenticated user does not own
-(or share) the requested note.
-
-Legacy owner_id=0 sentinel
----------------------------
-Notes written before multi-user support carry owner_id=0.  These are
-treated as unowned and raise HTTP 403 for all normal users.  Run
-``scripts/fix_owner_ids.py`` to reassign them to a real owner.
-
-Dependency pattern
-------------------
-All read endpoints declare::
-
-   owner_ids: set[int] = Depends(get_vault_owner_ids)
-
-Write endpoints (update, delete, daily-note creation) that also need the
-calling user's identity keep::
-
-   current_user: User = Depends(get_current_user)
-   owner_ids:    set[int] = Depends(get_vault_owner_ids)
-
-get_vault_owner_ids honours the optional ``X-Vault-Owner-Id`` request header
-so the frontend VaultSwitcher can scope a request to a shared vault without
-any router-level changes.
-"""
+"""Notes CRUD router."""
 
 import math
 from datetime import date, datetime, timezone
@@ -46,7 +7,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from slugify import slugify
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, insert, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -73,6 +34,34 @@ from gnosis.services.markdown_parser import (
 from gnosis.core.auth import get_current_user, get_vault_owner_ids
 
 router = APIRouter(prefix="/notes", tags=["notes"])
+
+
+# ---------------------------------------------------------------------------
+# Helper: upsert tags via association table (bypasses ORM collection)
+# ---------------------------------------------------------------------------
+
+
+async def _upsert_tags(note_id: str, tag_names: list[str], db: AsyncSession) -> None:
+    """Insert note<->tag associations directly into the note_tags table.
+
+    This avoids touching the Note.tags ORM collection, which is None on a
+    brand-new Note instance (lazy='selectin' does not initialise the list
+    until the object is loaded from the DB).  vault_sync.py uses the same
+    pattern.
+    """
+    for tag_name in tag_names:
+        tag_result = await db.execute(select(Tag).where(Tag.name == tag_name))
+        tag = tag_result.scalar_one_or_none()
+        if tag is None:
+            tag = Tag(name=tag_name)
+            db.add(tag)
+            await db.flush()  # ensure Tag row exists before FK insert
+        # Upsert the association row; ignore if it already exists.
+        await db.execute(
+            insert(NoteTag)
+            .values(note_id=note_id, tag_id=tag_name)
+            .prefix_with("OR IGNORE")  # SQLite; Postgres uses ON CONFLICT DO NOTHING
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +103,7 @@ async def _get_note_or_404(
 
 def _note_to_read(note: Note) -> NoteRead:
     from gnosis.schemas.note import LinkSchema
+    tags = note.tags if isinstance(note.tags, list) else []
     return NoteRead(
         id=note.id,
         title=note.title,
@@ -133,7 +123,7 @@ def _note_to_read(note: Note) -> NoteRead:
         vector_indexed=note.vector_indexed,
         graph_indexed=note.graph_indexed,
         frontmatter=note.frontmatter or {},
-        tags=[t.name for t in (note.tags if isinstance(note.tags, list) else ([note.tags] if note.tags else []))],
+        tags=[t.name for t in tags],
         outgoing_links=[
             LinkSchema(
                 source_id=lnk.source_id,
@@ -168,7 +158,7 @@ async def list_notes(
     note_type: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     tags: Optional[list[str]] = Query(None),
-    q: Optional[str] = Query(None, description="Full-text filter on title"),
+    q: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
@@ -180,7 +170,6 @@ async def list_notes(
         .where(Note.is_deleted.is_(False)),
         owner_ids,
     )
-
     if folder:
         query = query.where(Note.folder == folder)
     if note_type:
@@ -197,7 +186,6 @@ async def list_notes(
 
     count_result = await db.execute(select(func.count()).select_from(query.subquery()))
     total = count_result.scalar_one()
-
     query = query.order_by(Note.modified_at.desc().nullslast(), Note.created_at.desc())
     query = query.offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(query)
@@ -206,35 +194,26 @@ async def list_notes(
     return NoteListResponse(
         items=[
             NoteListItem(
-                id=n.id,
-                title=n.title,
-                slug=n.slug,
-                note_type=n.note_type,
-                status=n.status,
-                folder=n.folder,
-                word_count=n.word_count,
-                created_at=n.created_at,
-                modified_at=n.modified_at,
-                tags=[t.name for t in (n.tags if isinstance(n.tags, list) else ([n.tags] if n.tags else []))],
+                id=n.id, title=n.title, slug=n.slug, note_type=n.note_type,
+                status=n.status, folder=n.folder, word_count=n.word_count,
+                created_at=n.created_at, modified_at=n.modified_at,
+                tags=[t.name for t in (n.tags if isinstance(n.tags, list) else [])],
             )
             for n in notes
         ],
-        total=total,
-        page=page,
-        page_size=page_size,
+        total=total, page=page, page_size=page_size,
         pages=math.ceil(total / page_size) if total else 1,
     )
 
 
 # ---------------------------------------------------------------------------
-# Wikilink title search  (GET /notes/by-title)
-# IMPORTANT: declared BEFORE /{note_id}
+# Wikilink title search  (GET /notes/by-title) — BEFORE /{note_id}
 # ---------------------------------------------------------------------------
 
 
-@router.get("/by-title", response_model=NoteListResponse, summary="Search notes by title (wikilink resolution)")
+@router.get("/by-title", response_model=NoteListResponse)
 async def notes_by_title(
-    q: str = Query(..., description="Title text to search (case-insensitive contains)"),
+    q: str = Query(...),
     page_size: int = Query(10, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
@@ -253,156 +232,53 @@ async def notes_by_title(
     return NoteListResponse(
         items=[
             NoteListItem(
-                id=n.id,
-                title=n.title,
-                slug=n.slug,
-                note_type=n.note_type,
-                status=n.status,
-                folder=n.folder,
-                word_count=n.word_count,
-                created_at=n.created_at,
-                modified_at=n.modified_at,
-                tags=[t.name for t in (n.tags if isinstance(n.tags, list) else ([n.tags] if n.tags else []))],
+                id=n.id, title=n.title, slug=n.slug, note_type=n.note_type,
+                status=n.status, folder=n.folder, word_count=n.word_count,
+                created_at=n.created_at, modified_at=n.modified_at,
+                tags=[t.name for t in (n.tags if isinstance(n.tags, list) else [])],
             )
             for n in notes
         ],
-        total=total,
-        page=1,
-        page_size=page_size,
+        total=total, page=1, page_size=page_size,
         pages=math.ceil(total / page_size) if total else 1,
     )
 
 
 # ---------------------------------------------------------------------------
-# Note templates  (GET /notes/templates)
-# IMPORTANT: Also before /{note_id}.
+# Templates  (GET /notes/templates) — BEFORE /{note_id}
 # ---------------------------------------------------------------------------
 
 
 @router.get("/templates", summary="List available note templates")
 async def list_templates() -> list[dict]:
     return [
-        {
-            "id": "blank",
-            "name": "Blank Note",
-            "description": "Start with an empty canvas.",
-            "note_type": "permanent",
-            "folder": "10-zettelkasten",
-            "body": "",
-            "icon": "file",
-        },
-        {
-            "id": "zettel",
-            "name": "Zettelkasten Slip",
-            "description": "Atomic concept note with one clear idea.",
-            "note_type": "permanent",
-            "folder": "10-zettelkasten",
-            "body": (
-                "## Main Idea\n\n"
-                "<!-- State the single idea this note captures. -->\n\n"
-                "## Elaboration\n\n"
-                "## References\n\n"
-                "## Links\n\n"
-                "- [[Related Note]]"
-            ),
-            "icon": "zap",
-        },
-        {
-            "id": "literature",
-            "name": "Literature Note",
-            "description": "Capture and process a source (book, paper, article).",
-            "note_type": "literature",
-            "folder": "30-literature",
-            "body": (
-                "## Source\n\n"
-                "- **Title:** \n"
-                "- **Author:** \n"
-                "- **Year:** \n"
-                "- **URL:** \n\n"
-                "## Key Points\n\n"
-                "1. \n\n"
-                "## My Take\n\n"
-                "## Fleeting Quotes\n\n"
-                "> Quote here\n\n"
-                "## Links\n\n"
-            ),
-            "icon": "book-open",
-        },
-        {
-            "id": "project",
-            "name": "Project Note",
-            "description": "Track a bounded project with goals and tasks.",
-            "note_type": "project",
-            "folder": "20-projects",
-            "body": (
-                "## Goal\n\n"
-                "## Why This Matters\n\n"
-                "## Tasks\n\n"
-                "- [ ] \n"
-                "- [ ] \n\n"
-                "## Notes\n\n"
-                "## Resources\n\n"
-                "## Status\n\n"
-                "- **Started:** {{ DATE }}\n"
-                "- **Target:** \n"
-            ),
-            "icon": "layout",
-        },
-        {
-            "id": "moc",
-            "name": "Map of Content",
-            "description": "Index and navigate a topic cluster.",
-            "note_type": "moc",
-            "folder": "00-mocs",
-            "body": (
-                "## Overview\n\n"
-                "<!-- What territory does this MOC cover? -->\n\n"
-                "## Core Notes\n\n"
-                "- [[Note A]]"
-                "- [[Note B]]\n\n"
-                "## Sub-Topics\n\n"
-                "## Entry Points\n\n"
-            ),
-            "icon": "map",
-        },
-        {
-            "id": "meeting",
-            "name": "Meeting Note",
-            "description": "Capture decisions and action items from a meeting.",
-            "note_type": "fleeting",
-            "folder": "00-inbox",
-            "body": (
-                "## Date & Attendees\n\n"
-                "- **Date:** {{ DATE }}\n"
-                "- **Attendees:** \n\n"
-                "## Agenda\n\n"
-                "1. \n\n"
-                "## Decisions\n\n"
-                "## Action Items\n\n"
-                "- [ ] (owner) \n\n"
-                "## Follow-Up Notes\n\n"
-            ),
-            "icon": "users",
-        },
-        {
-            "id": "dharma",
-            "name": "Dharma Teaching",
-            "description": "Record a teaching, practice instruction, or reflection.",
-            "note_type": "permanent",
-            "folder": "40-teachings",
-            "body": (
-                "## Teaching / Source\n\n"
-                "- **Teacher:** \n"
-                "- **Lineage:** \n"
-                "- **Date received:** {{ DATE }}\n\n"
-                "## Core Teaching\n\n"
-                "## Practice Instructions\n\n"
-                "## Personal Reflection\n\n"
-                "## Links to Other Teachings\n\n"
-                "- [[Related Teaching]]"
-            ),
-            "icon": "sun",
-        },
+        {"id": "blank", "name": "Blank Note", "description": "Start with an empty canvas.",
+         "note_type": "permanent", "folder": "10-zettelkasten", "body": "", "icon": "file"},
+        {"id": "zettel", "name": "Zettelkasten Slip",
+         "description": "Atomic concept note with one clear idea.",
+         "note_type": "permanent", "folder": "10-zettelkasten",
+         "body": "## Main Idea\n\n## Elaboration\n\n## References\n\n## Links\n\n- [[Related Note]]",
+         "icon": "zap"},
+        {"id": "literature", "name": "Literature Note",
+         "description": "Capture and process a source.",
+         "note_type": "literature", "folder": "30-literature",
+         "body": "## Source\n\n- **Title:** \n- **Author:** \n\n## Key Points\n\n## My Take\n\n## Links\n",
+         "icon": "book-open"},
+        {"id": "project", "name": "Project Note",
+         "description": "Track a bounded project.",
+         "note_type": "project", "folder": "20-projects",
+         "body": "## Goal\n\n## Tasks\n\n- [ ] \n\n## Status\n",
+         "icon": "layout"},
+        {"id": "moc", "name": "Map of Content",
+         "description": "Index and navigate a topic cluster.",
+         "note_type": "moc", "folder": "00-mocs",
+         "body": "## Overview\n\n## Core Notes\n\n- [[Note A]]\n\n## Sub-Topics\n",
+         "icon": "map"},
+        {"id": "dharma", "name": "Dharma Teaching",
+         "description": "Record a teaching or practice instruction.",
+         "note_type": "permanent", "folder": "40-teachings",
+         "body": "## Teaching / Source\n\n- **Teacher:** \n- **Lineage:** \n\n## Core Teaching\n\n## Practice Instructions\n\n## Personal Reflection\n",
+         "icon": "sun"},
     ]
 
 
@@ -411,99 +287,68 @@ async def list_templates() -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/", response_model=NoteRead, status_code=status.HTTP_201_CREATED, summary="Create note")
+@router.post("/", response_model=NoteRead, status_code=status.HTTP_201_CREATED)
 async def create_note(
     data: NoteCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> NoteRead:
-    """Create a new note and write it to the authenticated user's vault."""
     from gnosis.core.namespace import resolve_vault_path
 
     note_id = data.id or generate_note_id()
     title = data.title
     slug = slugify(title)
-
     owner_ids = {current_user.id}
+
     existing_stmt = scoped_note_stmt(
         select(Note).where(Note.slug == slug, Note.is_deleted.is_(False)),
-        owner_ids,
-        include_null_owner=False,
+        owner_ids, include_null_owner=False,
     )
     existing = await db.execute(existing_stmt)
     if existing.scalars().unique().one_or_none():
         raise NoteConflictError(title)
 
     fm = build_default_frontmatter(
-        note_id=note_id,
-        title=title,
-        note_type=data.note_type,
-        status=data.status,
-        tags=data.tags,
-        source_url=data.source_url,
+        note_id=note_id, title=title, note_type=data.note_type,
+        status=data.status, tags=data.tags, source_url=data.source_url,
     )
     fm.update(data.frontmatter)
 
     vault_root = resolve_vault_path(current_user)
     vault_dir = vault_root / data.folder
     filename = f"{note_id}-{slug[:50]}.md"
-    vault_file = vault_dir / filename
     vault_path_rel = f"{data.folder}/{filename}"
 
     try:
-        write_note_file(vault_file, title, data.body, fm)
+        write_note_file(vault_root / data.folder / filename, title, data.body, fm)
     except Exception as e:
-        raise VaultWriteError(str(vault_file), str(e)) from e
+        raise VaultWriteError(str(vault_root / data.folder / filename), str(e)) from e
 
     import mistune
-    renderer = mistune.create_markdown(plugins=["strikethrough", "footnotes", "table", "task_lists"])
+    renderer = mistune.create_markdown(
+        plugins=["strikethrough", "footnotes", "table", "task_lists"]
+    )
     body_html = str(renderer(data.body))
 
     note = Note(
-        id=note_id,
-        title=title,
-        slug=slug,
-        body=data.body,
-        body_html=body_html,
-        note_type=data.note_type,
-        status=data.status,
-        vault_path=vault_path_rel,
-        folder=data.folder,
-        source_url=data.source_url,
-        word_count=len(data.body.split()),
-        frontmatter=fm,
-        last_reviewed=data.last_reviewed,
-        is_deleted=False,
-        vector_indexed=False,
-        graph_indexed=False,
-        owner_id=current_user.id,
+        id=note_id, title=title, slug=slug, body=data.body, body_html=body_html,
+        note_type=data.note_type, status=data.status, vault_path=vault_path_rel,
+        folder=data.folder, source_url=data.source_url,
+        word_count=len(data.body.split()), frontmatter=fm,
+        last_reviewed=data.last_reviewed, is_deleted=False,
+        vector_indexed=False, graph_indexed=False, owner_id=current_user.id,
     )
     db.add(note)
+    await db.flush()  # INSERT note row so FK in note_tags is valid
 
-    # Flush the Note INSERT so the row exists before we touch the tags
-    # relationship.  After flush(), SQLAlchemy initialises note.tags as
-    # an empty InstrumentedList.  db.refresh(note, ["tags"]) then fires
-    # a SELECT to confirm the collection is empty — this is what ensures
-    # note.tags is a live InstrumentedList (not None) before append().
-    # DO NOT replace note.tags with a plain list [] — that destroys the
-    # ORM instrumentation and causes:
-    #   AttributeError: 'list' object has no attribute '_sa_instance_state'
-    await db.flush()
-    await db.refresh(note, ["tags"])
-
-    for tag_name in (data.tags or []):
-        tag_result = await db.execute(select(Tag).where(Tag.name == tag_name))
-        tag = tag_result.scalar_one_or_none()
-        if not tag:
-            tag = Tag(name=tag_name)
-            db.add(tag)
-            await db.flush()
-        note.tags.append(tag)
+    # Insert tags via association table — do NOT use note.tags.append().
+    # Note.tags is lazy='selectin' and is None on a new instance until the
+    # object is loaded from the DB. Direct insert avoids that entirely.
+    if data.tags:
+        await _upsert_tags(note_id, data.tags, db)
 
     await db.commit()
-
-    owner_ids_full = {current_user.id}
-    note = await _get_note_or_404(note_id, db, owner_ids_full)
+    note = await _get_note_or_404(note_id, db, owner_ids)
     return _note_to_read(note)
 
 
@@ -512,18 +357,15 @@ async def create_note(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/orphans", response_model=list[NoteListItem], summary="Get orphan notes")
+@router.get("/orphans", response_model=list[NoteListItem])
 async def get_orphan_notes(
     db: AsyncSession = Depends(get_db),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> list[NoteListItem]:
-    notes_with_links = (
-        select(Note.id)
-        .where(
-            or_(
-                Note.id.in_(select(Link.source_id)),
-                Note.id.in_(select(Link.target_id)),
-            )
+    notes_with_links = select(Note.id).where(
+        or_(
+            Note.id.in_(select(Link.source_id)),
+            Note.id.in_(select(Link.target_id)),
         )
     )
     base_stmt = (
@@ -539,7 +381,7 @@ async def get_orphan_notes(
             id=n.id, title=n.title, slug=n.slug, note_type=n.note_type,
             status=n.status, folder=n.folder, word_count=n.word_count,
             created_at=n.created_at, modified_at=n.modified_at,
-            tags=[t.name for t in (n.tags if isinstance(n.tags, list) else ([n.tags] if n.tags else []))],
+            tags=[t.name for t in (n.tags if isinstance(n.tags, list) else [])],
         )
         for n in notes
     ]
@@ -550,7 +392,7 @@ async def get_orphan_notes(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/daily", response_model=NoteRead, summary="Get or create today's daily note")
+@router.get("/daily", response_model=NoteRead)
 async def get_or_create_daily_note(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -583,37 +425,27 @@ async def get_or_create_daily_note(
         )
         note_id = generate_note_id(datetime.combine(today, datetime.min.time()))
         fm = build_default_frontmatter(
-            note_id=note_id,
-            title=f"Daily Note — {today_str}",
-            note_type="journal",
-            status="in-progress",
+            note_id=note_id, title=f"Daily Note — {today_str}",
+            note_type="journal", status="in-progress",
         )
         vault_root = resolve_vault_path(current_user)
-        vault_file = vault_root / "60-journals" / f"{today_str}.md"
-        write_note_file(vault_file, f"Daily Note — {today_str}", body, fm)
-
+        write_note_file(
+            vault_root / "60-journals" / f"{today_str}.md",
+            f"Daily Note — {today_str}", body, fm,
+        )
         note = Note(
-            id=note_id,
-            title=f"Daily Note — {today_str}",
-            slug=slugify(f"daily-note-{today_str}"),
-            body=body,
+            id=note_id, title=f"Daily Note — {today_str}",
+            slug=slugify(f"daily-note-{today_str}"), body=body,
             body_html=f"<h1>Daily Note — {today_str}</h1>",
-            note_type="journal",
-            status="in-progress",
-            vault_path=vault_path_rel,
-            folder="60-journals",
-            word_count=len(body.split()),
-            frontmatter=fm,
-            is_deleted=False,
-            vector_indexed=False,
-            graph_indexed=False,
+            note_type="journal", status="in-progress",
+            vault_path=vault_path_rel, folder="60-journals",
+            word_count=len(body.split()), frontmatter=fm,
+            is_deleted=False, vector_indexed=False, graph_indexed=False,
             owner_id=current_user.id,
         )
         db.add(note)
-        # Same flush+refresh pattern as create_note: flush to insert the row,
-        # then refresh(["tags"]) to initialise the InstrumentedList.
-        await db.flush()
-        await db.refresh(note, ["tags"])
+        await db.flush()  # INSERT note row before FK
+        # Daily notes have no tags — no _upsert_tags call needed.
         await db.commit()
         note = await _get_note_or_404(note_id, db, owner_ids)
 
@@ -625,7 +457,7 @@ async def get_or_create_daily_note(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/{note_id}", response_model=NoteRead, summary="Get note by ID")
+@router.get("/{note_id}", response_model=NoteRead)
 async def get_note(
     note_id: str,
     db: AsyncSession = Depends(get_db),
@@ -640,7 +472,7 @@ async def get_note(
 # ---------------------------------------------------------------------------
 
 
-@router.put("/{note_id}", response_model=NoteRead, summary="Update note")
+@router.put("/{note_id}", response_model=NoteRead)
 async def update_note(
     note_id: str,
     data: NoteUpdate,
@@ -649,6 +481,7 @@ async def update_note(
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> NoteRead:
     from gnosis.core.namespace import resolve_vault_path
+    from sqlalchemy import delete
 
     note = await _get_note_or_404(note_id, db, owner_ids)
 
@@ -664,7 +497,9 @@ async def update_note(
     if data.body is not None:
         note.body = data.body
         import mistune
-        renderer = mistune.create_markdown(plugins=["strikethrough", "footnotes", "table", "task_lists"])
+        renderer = mistune.create_markdown(
+            plugins=["strikethrough", "footnotes", "table", "task_lists"]
+        )
         note.body_html = str(renderer(data.body))
         note.word_count = len(data.body.split())
     if data.note_type is not None:
@@ -677,28 +512,22 @@ async def update_note(
         note.source_url = data.source_url
     if data.last_reviewed is not None:
         note.last_reviewed = data.last_reviewed
-
-    if data.tags is not None:
-        note.tags.clear()
-        await db.flush()
-        for tag_name in data.tags:
-            tag_result = await db.execute(select(Tag).where(Tag.name == tag_name))
-            tag = tag_result.scalar_one_or_none()
-            if not tag:
-                tag = Tag(name=tag_name)
-                db.add(tag)
-                await db.flush()
-            note.tags.append(tag)
-
     if data.frontmatter is not None:
         note.frontmatter = {**(note.frontmatter or {}), **data.frontmatter}
+
+    if data.tags is not None:
+        # Replace tags: delete existing associations then re-insert.
+        await db.execute(delete(NoteTag).where(NoteTag.c.note_id == note_id))
+        await db.flush()
+        await _upsert_tags(note_id, data.tags, db)
 
     note.vector_indexed = False
     await db.commit()
 
     vault_root = resolve_vault_path(current_user)
     vault_file = vault_root / note.vault_path
-    fm = {**(note.frontmatter or {}), "title": note.title, "modified": datetime.now(timezone.utc).isoformat()}
+    fm = {**(note.frontmatter or {}), "title": note.title,
+          "modified": datetime.now(timezone.utc).isoformat()}
     try:
         write_note_file(vault_file, note.title, note.body, fm)
     except Exception as e:
@@ -713,7 +542,7 @@ async def update_note(
 # ---------------------------------------------------------------------------
 
 
-@router.delete("/{note_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Soft delete note")
+@router.delete("/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_note(
     note_id: str,
     db: AsyncSession = Depends(get_db),
@@ -721,13 +550,11 @@ async def delete_note(
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> None:
     note = await _get_note_or_404(note_id, db, owner_ids)
-
     if note.owner_id is not None and note.owner_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You cannot delete notes in a shared vault.",
         )
-
     note.is_deleted = True
     await db.commit()
 
@@ -737,15 +564,14 @@ async def delete_note(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/{note_id}/backlinks", response_model=list[NoteListItem], summary="Get backlinks")
+@router.get("/{note_id}/backlinks", response_model=list[NoteListItem])
 async def get_backlinks(
     note_id: str,
     db: AsyncSession = Depends(get_db),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> list[NoteListItem]:
     base_stmt = (
-        select(Note)
-        .options(selectinload(Note.tags))
+        select(Note).options(selectinload(Note.tags))
         .join(Link, Link.source_id == Note.id)
         .where(Link.target_id == note_id, Note.is_deleted.is_(False))
     )
@@ -756,21 +582,20 @@ async def get_backlinks(
             id=n.id, title=n.title, slug=n.slug, note_type=n.note_type,
             status=n.status, folder=n.folder, word_count=n.word_count,
             created_at=n.created_at, modified_at=n.modified_at,
-            tags=[t.name for t in (n.tags if isinstance(n.tags, list) else ([n.tags] if n.tags else []))],
+            tags=[t.name for t in (n.tags if isinstance(n.tags, list) else [])],
         )
         for n in notes
     ]
 
 
-@router.get("/{note_id}/outlinks", response_model=list[NoteListItem], summary="Get outlinks")
+@router.get("/{note_id}/outlinks", response_model=list[NoteListItem])
 async def get_outlinks(
     note_id: str,
     db: AsyncSession = Depends(get_db),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> list[NoteListItem]:
     base_stmt = (
-        select(Note)
-        .options(selectinload(Note.tags))
+        select(Note).options(selectinload(Note.tags))
         .join(Link, Link.target_id == Note.id)
         .where(Link.source_id == note_id, Note.is_deleted.is_(False))
     )
@@ -781,7 +606,7 @@ async def get_outlinks(
             id=n.id, title=n.title, slug=n.slug, note_type=n.note_type,
             status=n.status, folder=n.folder, word_count=n.word_count,
             created_at=n.created_at, modified_at=n.modified_at,
-            tags=[t.name for t in (n.tags if isinstance(n.tags, list) else ([n.tags] if n.tags else []))],
+            tags=[t.name for t in (n.tags if isinstance(n.tags, list) else [])],
         )
         for n in notes
     ]
