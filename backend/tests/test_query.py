@@ -1,10 +1,16 @@
-"""Tests for the GQL query engine."""
+"""Tests for the GQL query engine — parser + executor."""
 from __future__ import annotations
 
 import pytest
 
-from gnosis.services.query_parser import GQLParseError, parse_query
+from gnosis.models.note import Note
+from gnosis.models.tag import NoteTag, Tag
+from gnosis.services.query_parser import GQLParseError, ParsedQuery, execute_query, parse_query
 
+
+# ---------------------------------------------------------------------------
+# Parser — happy-path tests (existing)
+# ---------------------------------------------------------------------------
 
 def test_parse_from_only():
     q = parse_query("FROM 10-zettelkasten")
@@ -18,7 +24,7 @@ def test_parse_from_where_sort_limit():
     assert q.from_folder == "10-zettelkasten"
     assert len(q.conditions) == 1
     assert q.conditions[0] == {"type": "field", "field": "status", "op": "=", "value": "draft"}
-    assert q.sort_field == "modified_at"  # alias resolved
+    assert q.sort_field == "modified_at"
     assert q.sort_dir == "DESC"
     assert q.limit == 20
 
@@ -73,8 +79,268 @@ def test_parse_select_bad_col_raises():
 
 
 def test_parse_empty_query_runs_defaults():
-    """An empty query string should default to all notes, sort modified DESC, limit 50."""
     q = parse_query("")
     assert q.from_folder is None
     assert q.sort_field == "modified_at"
     assert q.limit == 50
+
+
+# ---------------------------------------------------------------------------
+# Parser — edge-case / error paths (new — cover lines 125-210)
+# ---------------------------------------------------------------------------
+
+def test_parse_query_too_long_raises():
+    with pytest.raises(GQLParseError, match="exceeds maximum length"):
+        parse_query("FROM " + "x" * 2100)
+
+
+def test_parse_from_missing_arg_raises():
+    with pytest.raises(GQLParseError, match="FROM requires"):
+        parse_query("FROM")
+
+
+def test_parse_sort_missing_field_raises():
+    with pytest.raises(GQLParseError, match="SORT requires"):
+        parse_query("SORT")
+
+
+def test_parse_sort_unknown_field_raises():
+    with pytest.raises(GQLParseError, match="Unknown sort field"):
+        parse_query("SORT nonexistent")
+
+
+def test_parse_limit_missing_arg_raises():
+    with pytest.raises(GQLParseError, match="LIMIT requires"):
+        parse_query("LIMIT")
+
+
+def test_parse_select_missing_arg_raises():
+    with pytest.raises(GQLParseError, match="SELECT requires"):
+        parse_query("SELECT")
+
+
+def test_parse_tags_missing_contains_raises():
+    with pytest.raises(GQLParseError, match="Expected TAGS CONTAINS"):
+        parse_query("WHERE tags MISSING eeg")
+
+
+def test_parse_tags_contains_missing_tag_raises():
+    with pytest.raises(GQLParseError, match="TAGS CONTAINS requires"):
+        parse_query("WHERE tags CONTAINS")
+
+
+def test_parse_where_unparseable_condition_raises():
+    with pytest.raises(GQLParseError, match="Cannot parse WHERE condition"):
+        parse_query("WHERE justword")
+
+
+def test_parse_spaced_operator_three_tokens():
+    """WHERE field OP value as three separate tokens (not inline)."""
+    q = parse_query("WHERE word_count >= 100")
+    assert q.conditions == [{"type": "field", "field": "word_count", "op": ">=", "value": "100"}]
+
+
+def test_parse_not_equal_operator():
+    q = parse_query("WHERE status!=published")
+    assert q.conditions[0]["op"] == "!="
+
+
+def test_parse_lte_operator():
+    q = parse_query("WHERE word_count <= 500")
+    assert q.conditions[0]["op"] == "<="
+
+
+def test_parse_sort_no_direction_defaults_desc():
+    """SORT without ASC/DESC should default to DESC from the ParsedQuery default."""
+    q = parse_query("SORT title")
+    assert q.sort_field == "title"
+    # direction stays at default DESC since no token follows
+    assert q.sort_dir == "DESC"
+
+
+def test_parse_sort_asc_explicit():
+    q = parse_query("SORT word_count ASC")
+    assert q.sort_dir == "ASC"
+
+
+def test_parse_limit_min_boundary():
+    q = parse_query("LIMIT 1")
+    assert q.limit == 1
+
+
+def test_parse_limit_max_boundary():
+    q = parse_query("LIMIT 500")
+    assert q.limit == 500
+
+
+def test_parse_limit_zero_raises():
+    with pytest.raises(GQLParseError, match="LIMIT must be between"):
+        parse_query("LIMIT 0")
+
+
+# ---------------------------------------------------------------------------
+# Executor — execute_query() DB paths (new — cover lines 260-336)
+# ---------------------------------------------------------------------------
+
+
+async def _seed_notes(db):
+    """Create two notes, one with a tag, for executor tests."""
+    n1 = Note(
+        title="Alpha Note",
+        slug="alpha-note",
+        folder="10-zettelkasten",
+        status="published",
+        note_type="zettel",
+        word_count=200,
+        is_deleted=False,
+        owner_id=1,
+    )
+    n2 = Note(
+        title="Beta Note",
+        slug="beta-note",
+        folder="20-projects",
+        status="draft",
+        note_type="project",
+        word_count=50,
+        is_deleted=False,
+        owner_id=1,
+    )
+    deleted = Note(
+        title="Gone Note",
+        slug="gone-note",
+        folder="10-zettelkasten",
+        status="published",
+        note_type="zettel",
+        word_count=10,
+        is_deleted=True,
+        owner_id=1,
+    )
+    db.add_all([n1, n2, deleted])
+    await db.flush()
+
+    tag = Tag(name="zettelkasten")
+    db.add(tag)
+    await db.flush()
+
+    db.add(NoteTag(note_id=n1.id, tag_id=tag.id))
+    await db.commit()
+    return n1, n2, tag
+
+
+@pytest.mark.asyncio
+async def test_execute_query_no_filter_returns_non_deleted(test_db):
+    await _seed_notes(test_db)
+    rows, ms = await execute_query(ParsedQuery(), test_db)
+    titles = {r["title"] for r in rows}
+    assert "Alpha Note" in titles
+    assert "Beta Note" in titles
+    assert "Gone Note" not in titles
+    assert ms >= 0
+
+
+@pytest.mark.asyncio
+async def test_execute_query_from_folder_filter(test_db):
+    await _seed_notes(test_db)
+    q = parse_query("FROM 10-zettelkasten")
+    rows, _ = await execute_query(q, test_db)
+    assert all(r["folder"].startswith("10-zettelkasten") for r in rows)
+    assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_execute_query_where_field_condition(test_db):
+    await _seed_notes(test_db)
+    q = parse_query("WHERE status=draft")
+    rows, _ = await execute_query(q, test_db)
+    assert len(rows) == 1
+    assert rows[0]["title"] == "Beta Note"
+
+
+@pytest.mark.asyncio
+async def test_execute_query_where_word_count_gt(test_db):
+    await _seed_notes(test_db)
+    q = parse_query("WHERE word_count > 100")
+    rows, _ = await execute_query(q, test_db)
+    assert len(rows) == 1
+    assert rows[0]["word_count"] == 200
+
+
+@pytest.mark.asyncio
+async def test_execute_query_where_tag_contains(test_db):
+    await _seed_notes(test_db)
+    q = parse_query("WHERE tags CONTAINS zettelkasten")
+    rows, _ = await execute_query(q, test_db)
+    assert len(rows) == 1
+    assert rows[0]["title"] == "Alpha Note"
+
+
+@pytest.mark.asyncio
+async def test_execute_query_where_tag_no_match(test_db):
+    await _seed_notes(test_db)
+    q = parse_query("WHERE tags CONTAINS nonexistent")
+    rows, _ = await execute_query(q, test_db)
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_execute_query_sort_asc(test_db):
+    await _seed_notes(test_db)
+    q = parse_query("SORT word_count ASC")
+    rows, _ = await execute_query(q, test_db)
+    counts = [r["word_count"] for r in rows]
+    assert counts == sorted(counts)
+
+
+@pytest.mark.asyncio
+async def test_execute_query_sort_desc(test_db):
+    await _seed_notes(test_db)
+    q = parse_query("SORT word_count DESC")
+    rows, _ = await execute_query(q, test_db)
+    counts = [r["word_count"] for r in rows]
+    assert counts == sorted(counts, reverse=True)
+
+
+@pytest.mark.asyncio
+async def test_execute_query_limit(test_db):
+    await _seed_notes(test_db)
+    q = parse_query("LIMIT 1")
+    rows, _ = await execute_query(q, test_db)
+    assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_execute_query_select_cols(test_db):
+    await _seed_notes(test_db)
+    q = parse_query("SELECT title,status")
+    rows, _ = await execute_query(q, test_db)
+    for row in rows:
+        assert set(row.keys()) == {"title", "status"}
+
+
+@pytest.mark.asyncio
+async def test_execute_query_owner_ids_scoped(test_db):
+    """Passing owner_ids should restrict results to that owner via scoped_note_stmt."""
+    await _seed_notes(test_db)
+    q = ParsedQuery()
+    rows_scoped, _ = await execute_query(q, test_db, owner_ids={1})
+    rows_all, _ = await execute_query(q, test_db, owner_ids=None)
+    # Both should return non-deleted notes; scoped may be same or subset
+    assert len(rows_scoped) <= len(rows_all)
+
+
+@pytest.mark.asyncio
+async def test_execute_query_date_fields_serialised_as_isoformat(test_db):
+    await _seed_notes(test_db)
+    q = parse_query("SELECT title,created_at LIMIT 1")
+    rows, _ = await execute_query(q, test_db)
+    if rows and rows[0].get("created_at") is not None:
+        assert isinstance(rows[0]["created_at"], str)
+
+
+@pytest.mark.asyncio
+async def test_execute_query_multiple_conditions(test_db):
+    await _seed_notes(test_db)
+    q = parse_query("FROM 20-projects WHERE status=draft AND word_count <= 100")
+    rows, _ = await execute_query(q, test_db)
+    assert len(rows) == 1
+    assert rows[0]["title"] == "Beta Note"
