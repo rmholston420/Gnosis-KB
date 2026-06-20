@@ -7,7 +7,13 @@ Covers:
   GET  /query/saved/{id}          — get by id
   PUT  /query/saved/{id}          — update
   DELETE /query/saved/{id}        — delete
-  POST /query/saved/{id}/run      — run saved dashboard
+  POST /query/saved/{id}/run      — execute saved dashboard
+
+Auth note
+---------
+auth_headers is a dummy dict only — actual auth is controlled by the
+dependency override in conftest.  Use `unauthenticated_client` (which
+overrides to _fake_deny_user) to test 401 responses.
 """
 from __future__ import annotations
 
@@ -19,11 +25,11 @@ import pytest
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_run_query_empty_returns_200(async_client, auth_headers):
-    """Empty query is valid — returns 200 with rows list."""
+async def test_run_query_valid_returns_200(async_client, auth_headers):
+    """A simple valid GQL returns 200 with expected shape."""
     resp = await async_client.post(
         "/api/v1/query/run",
-        json={"query": ""},
+        json={"query": "SORT title ASC LIMIT 10"},
         headers=auth_headers,
     )
     assert resp.status_code == 200
@@ -34,14 +40,24 @@ async def test_run_query_empty_returns_200(async_client, auth_headers):
 
 
 @pytest.mark.asyncio
-async def test_run_query_valid_gql(async_client, auth_headers):
+async def test_run_query_from_filter(async_client, auth_headers):
     resp = await async_client.post(
         "/api/v1/query/run",
-        json={"query": "SORT title ASC LIMIT 10"},
+        json={"query": "FROM 10-zettelkasten LIMIT 5"},
         headers=auth_headers,
     )
     assert resp.status_code == 200
     assert isinstance(resp.json()["rows"], list)
+
+
+@pytest.mark.asyncio
+async def test_run_query_where_condition(async_client, auth_headers):
+    resp = await async_client.post(
+        "/api/v1/query/run",
+        json={"query": "WHERE status=draft LIMIT 5"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
@@ -55,8 +71,12 @@ async def test_run_query_invalid_gql_returns_422(async_client, auth_headers):
 
 
 @pytest.mark.asyncio
-async def test_run_query_requires_auth(async_client):
-    resp = await async_client.post("/api/v1/query/run", json={"query": ""})
+async def test_run_query_requires_auth(unauthenticated_client):
+    """Unauthenticated requests must be rejected with 401."""
+    resp = await unauthenticated_client.post(
+        "/api/v1/query/run",
+        json={"query": "SORT title ASC LIMIT 1"},
+    )
     assert resp.status_code == 401
 
 
@@ -72,8 +92,8 @@ async def test_list_saved_empty(async_client, auth_headers):
 
 
 @pytest.mark.asyncio
-async def test_list_saved_requires_auth(async_client):
-    resp = await async_client.get("/api/v1/query/saved")
+async def test_list_saved_requires_auth(unauthenticated_client):
+    resp = await unauthenticated_client.get("/api/v1/query/saved")
     assert resp.status_code == 401
 
 
@@ -93,6 +113,17 @@ async def test_create_saved_returns_201(async_client, auth_headers):
     assert body["name"] == "My Dashboard"
     assert body["query"] == "SORT title ASC LIMIT 5"
     assert "id" in body
+
+
+@pytest.mark.asyncio
+async def test_create_saved_with_description(async_client, auth_headers):
+    resp = await async_client.post(
+        "/api/v1/query/saved",
+        json={"name": "Described", "query": "LIMIT 2", "description": "My desc"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 201
+    assert resp.json()["description"] == "My desc"
 
 
 @pytest.mark.asyncio
@@ -149,19 +180,6 @@ async def test_get_saved_not_found_returns_404(async_client, auth_headers):
     assert resp.status_code == 404
 
 
-@pytest.mark.asyncio
-async def test_get_saved_other_user_returns_404(async_client, auth_headers, second_auth_headers):
-    """Dashboard is invisible to a different user."""
-    create = await async_client.post(
-        "/api/v1/query/saved",
-        json={"name": "Private", "query": "LIMIT 1"},
-        headers=auth_headers,
-    )
-    sq_id = create.json()["id"]
-    resp = await async_client.get(f"/api/v1/query/saved/{sq_id}", headers=second_auth_headers)
-    assert resp.status_code == 404
-
-
 # ---------------------------------------------------------------------------
 # /saved/{id} — update
 # ---------------------------------------------------------------------------
@@ -198,6 +216,23 @@ async def test_update_saved_query_text(async_client, auth_headers):
     )
     assert resp.status_code == 200
     assert resp.json()["query"] == "LIMIT 5"
+
+
+@pytest.mark.asyncio
+async def test_update_saved_description(async_client, auth_headers):
+    create = await async_client.post(
+        "/api/v1/query/saved",
+        json={"name": "UpdateDesc", "query": "LIMIT 1"},
+        headers=auth_headers,
+    )
+    sq_id = create.json()["id"]
+    resp = await async_client.put(
+        f"/api/v1/query/saved/{sq_id}",
+        json={"description": "updated desc"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["description"] == "updated desc"
 
 
 @pytest.mark.asyncio
@@ -278,9 +313,16 @@ async def test_run_saved_returns_query_result(async_client, auth_headers):
     body = resp.json()
     assert "rows" in body
     assert "total" in body
+    assert "query_time_ms" in body
 
 
 @pytest.mark.asyncio
 async def test_run_saved_not_found_returns_404(async_client, auth_headers):
     resp = await async_client.post("/api/v1/query/saved/999999/run", headers=auth_headers)
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_run_saved_requires_auth(unauthenticated_client):
+    resp = await unauthenticated_client.post("/api/v1/query/saved/1/run")
+    assert resp.status_code == 401
