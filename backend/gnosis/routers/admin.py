@@ -16,7 +16,7 @@ Those rows are invisible to normal queries that filter by the authenticated
 user's real ID.  This endpoint:
   1. Selects all Note rows with owner_id = 0.
   2. Resolves the canonical owner using the same logic as vault_sync.
-  3. Updates the row in-place (owner_id, updated_at).
+  3. Updates the row in-place (owner_id, modified_at).
   4. Re-ingests the note content into LightRAG so it appears in the graph.
   5. Returns a per-note status list so the caller can verify the operation.
 """
@@ -62,12 +62,17 @@ async def _reindex_note(
     new_owner_id: int,
     db: AsyncSession,
 ) -> dict[str, Any]:
-    """Update owner_id on *note* and re-ingest into LightRAG."""
+    """Update owner_id on *note* and re-ingest into LightRAG.
+
+    Field name notes (Note model):
+      - text content is stored in  ``body``        (not ``content``)
+      - timestamp column is named  ``modified_at`` (not ``updated_at``)
+    """
     try:
         await db.execute(
             update(Note)
             .where(Note.id == note.id)
-            .values(owner_id=new_owner_id, updated_at=datetime.now(timezone.utc))
+            .values(owner_id=new_owner_id, modified_at=datetime.now(timezone.utc))
         )
         await db.flush()
     except Exception as exc:  # noqa: BLE001
@@ -79,7 +84,8 @@ async def _reindex_note(
     try:
         from gnosis.services.graph_rag import graph_rag  # lazy
 
-        content = note.content or ""
+        # Note model field is ``body``, not ``content``
+        content = note.body or ""
         if content.strip():
             await graph_rag.ingest_note(
                 note_id=note.id,
