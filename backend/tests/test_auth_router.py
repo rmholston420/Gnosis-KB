@@ -1,8 +1,8 @@
 """Tests for gnosis/routers/auth.py — login, register, me endpoints.
 
-Existing test_auth.py covers the happy-path JWT flow via the full ASGI stack.
-These tests call the handler functions directly to hit the remaining branches
-(duplicate email, bad credentials) without standing up the full app.
+The @auth_limit decorator (slowapi) requires a live Request with state.limiter
+attached. We bypass it by importing and calling the underlying coroutine
+functions directly after patching the limiter at module level.
 """
 from __future__ import annotations
 
@@ -29,13 +29,29 @@ def _make_form(username="user@example.com", password="secret"):
     return form
 
 
+def _make_request():
+    """Minimal Request mock that satisfies slowapi key_func (get_remote_address)."""
+    req = MagicMock()
+    req.client = MagicMock()
+    req.client.host = "127.0.0.1"
+    # slowapi stores limiter on app.state
+    req.app = MagicMock()
+    req.app.state = MagicMock()
+    req.app.state.limiter = MagicMock()
+    req.state = MagicMock()
+    return req
+
+
+# Patch the limiter so @auth_limit becomes a no-op pass-through
+_NOOP_LIMIT = lambda f: f  # noqa: E731
+
+
 # ---------------------------------------------------------------------------
 # POST /auth/token
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_login_returns_token_on_valid_credentials():
-    from gnosis.routers.auth import login
     from gnosis.core.auth import get_password_hash
 
     user = MagicMock()
@@ -45,23 +61,20 @@ async def test_login_returns_token_on_valid_credentials():
 
     db = _make_db(user=user)
     form = _make_form()
-    request = MagicMock()
-    response = MagicMock()
 
-    # Bypass the @auth_limit decorator
-    with patch("gnosis.routers.auth.auth_limit", lambda f: f):
-        from gnosis.routers import auth as auth_mod
-        # Call the underlying coroutine directly
-        token = await auth_mod.login.__wrapped__(request, response, form, db) \
-            if hasattr(auth_mod.login, "__wrapped__") \
-            else await auth_mod.login(request, response, form, db)
+    with patch("gnosis.routers.auth.auth_limit", _NOOP_LIMIT):
+        # Re-import to pick up the patched decorator
+        import importlib
+        import gnosis.routers.auth as auth_mod
+        importlib.reload(auth_mod)
+        token = await auth_mod.login(_make_request(), MagicMock(), form, db)
+
     assert token.access_token
 
 
 @pytest.mark.asyncio
 async def test_login_raises_401_on_wrong_password():
     from fastapi import HTTPException
-    from gnosis.routers.auth import login
     from gnosis.core.auth import get_password_hash
 
     user = MagicMock()
@@ -71,26 +84,29 @@ async def test_login_raises_401_on_wrong_password():
 
     db = _make_db(user=user)
     form = _make_form(password="wrong")
-    request = MagicMock()
-    response = MagicMock()
 
-    with pytest.raises(HTTPException) as exc_info:
-        await login(request, response, form, db)
+    with patch("gnosis.routers.auth.auth_limit", _NOOP_LIMIT):
+        import importlib
+        import gnosis.routers.auth as auth_mod
+        importlib.reload(auth_mod)
+        with pytest.raises(HTTPException) as exc_info:
+            await auth_mod.login(_make_request(), MagicMock(), form, db)
     assert exc_info.value.status_code == 401
 
 
 @pytest.mark.asyncio
 async def test_login_raises_401_when_user_not_found():
     from fastapi import HTTPException
-    from gnosis.routers.auth import login
 
     db = _make_db(user=None)
     form = _make_form()
-    request = MagicMock()
-    response = MagicMock()
 
-    with pytest.raises(HTTPException) as exc_info:
-        await login(request, response, form, db)
+    with patch("gnosis.routers.auth.auth_limit", _NOOP_LIMIT):
+        import importlib
+        import gnosis.routers.auth as auth_mod
+        importlib.reload(auth_mod)
+        with pytest.raises(HTTPException) as exc_info:
+            await auth_mod.login(_make_request(), MagicMock(), form, db)
     assert exc_info.value.status_code == 401
 
 
@@ -100,40 +116,25 @@ async def test_login_raises_401_when_user_not_found():
 
 @pytest.mark.asyncio
 async def test_register_creates_new_user():
-    from gnosis.routers.auth import register
-
     db = _make_db(user=None)  # no existing user
-
-    new_user = MagicMock()
-    new_user.id = 5
-    new_user.email = "new@example.com"
-    db.refresh = AsyncMock(side_effect=lambda u: None)
 
     payload = MagicMock()
     payload.email = "new@example.com"
     payload.password = "pass1234"
     payload.full_name = "New User"
-    request = MagicMock()
-    response = MagicMock()
 
-    # The handler returns the User ORM object after refresh; mock the DB
-    # so the returned object is the one add() received
-    created_user = None
+    with patch("gnosis.routers.auth.auth_limit", _NOOP_LIMIT):
+        import importlib
+        import gnosis.routers.auth as auth_mod
+        importlib.reload(auth_mod)
+        await auth_mod.register(_make_request(), MagicMock(), payload, db)
 
-    def capture_add(u):
-        nonlocal created_user
-        created_user = u
-
-    db.add = capture_add
-    result = await register(request, response, payload, db)
-    # Should reach db.commit without raising
     db.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_register_raises_400_on_duplicate_email():
     from fastapi import HTTPException
-    from gnosis.routers.auth import register
 
     existing = MagicMock()
     db = _make_db(user=existing)  # existing user found
@@ -142,11 +143,13 @@ async def test_register_raises_400_on_duplicate_email():
     payload.email = "existing@example.com"
     payload.password = "pass"
     payload.full_name = "Dup"
-    request = MagicMock()
-    response = MagicMock()
 
-    with pytest.raises(HTTPException) as exc_info:
-        await register(request, response, payload, db)
+    with patch("gnosis.routers.auth.auth_limit", _NOOP_LIMIT):
+        import importlib
+        import gnosis.routers.auth as auth_mod
+        importlib.reload(auth_mod)
+        with pytest.raises(HTTPException) as exc_info:
+            await auth_mod.register(_make_request(), MagicMock(), payload, db)
     assert exc_info.value.status_code == 400
 
 
