@@ -20,6 +20,7 @@ const DailyNotePage  = React.lazy(() => import('@/pages/DailyNotePage'));
 const ReviewPage     = React.lazy(() => import('@/pages/ReviewPage'));
 const IngestPage     = React.lazy(() => import('@/pages/IngestPage'));
 const MocPage        = React.lazy(() => import('@/pages/MocPage'));
+const TagsPage       = React.lazy(() => import('@/pages/TagsPage'));
 
 registerSW({
   onNeedRefresh: () => {
@@ -100,6 +101,7 @@ export default function App() {
             <Route path="/review" element={<ReviewPage />} />
             <Route path="/ingest" element={<IngestPage />} />
             <Route path="/moc" element={<MocPage />} />
+            <Route path="/tags" element={<TagsPage />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />

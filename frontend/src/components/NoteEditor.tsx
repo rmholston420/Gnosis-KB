@@ -2,14 +2,27 @@
  * NoteEditor
  * ==========
  * CodeMirror 6 Markdown editor with:
- *   - [[wikilink]] autocomplete
+ *   - [[wikilink]] autocomplete (built-in CM6 completions)
  *   - Split edit/preview/both modes
  *   - Auto-save with debounce
  *   - BacklinkPanel showing incoming + outgoing links
  *   - Pre-fill title from ?title= query param (for broken-link creation)
+ *
+ * Props added in Slice 9
+ * ----------------------
+ * onBodyChange?: (value: string) => void
+ *   Called on every body keystroke so NoteEditorPage can mirror the value
+ *   for the wikilink detector without CodeMirror-level access.
+ *
+ * textareaRef?: React.RefObject<HTMLDivElement>
+ *   Attached to the CodeMirror host div.  WikilinkAutocomplete in
+ *   NoteEditorPage uses this ref to anchor its positioning.
+ *   (CM6 renders a contenteditable div, not a <textarea>, so we expose
+ *   the outer wrapper ref instead.)
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import React from 'react';
 import { useSearchParams } from 'react-router-dom';
 import CodeMirror from '@uiw/react-codemirror';
 import { markdown } from '@codemirror/lang-markdown';
@@ -26,9 +39,23 @@ interface NoteEditorProps {
   note: Note;
   onSave: (body: string, title?: string) => Promise<void>;
   isLoading?: boolean;
+  /** Mirror every body change to parent (used by wikilink detector). */
+  onBodyChange?: (value: string) => void;
+  /**
+   * Ref attached to the CM wrapper div so the parent can position
+   * WikilinkAutocomplete relative to the editor area.
+   * Note: CM6 uses a contenteditable, not a <textarea>.
+   */
+  textareaRef?: React.RefObject<HTMLDivElement>;
 }
 
-export default function NoteEditor({ note, onSave, isLoading }: NoteEditorProps) {
+export default function NoteEditor({
+  note,
+  onSave,
+  isLoading,
+  onBodyChange,
+  textareaRef,
+}: NoteEditorProps) {
   const [searchParams] = useSearchParams();
   const { editorMode, setEditorMode } = useAppStore();
 
@@ -60,7 +87,8 @@ export default function NoteEditor({ note, onSave, isLoading }: NoteEditorProps)
 
   const wikilinkCompletion: CompletionSource = useCallback(
     (context) => {
-      const before = context.matchBefore(/\[\[[^\]]*/);
+      const before = context.matchBefore(/\[\[[^\]]*/
+);
       if (!before) return null;
       const query = before.text.slice(2);
       return {
@@ -77,6 +105,7 @@ export default function NoteEditor({ note, onSave, isLoading }: NoteEditorProps)
   const handleBodyChange = (value: string) => {
     setBody(value);
     setIsDirty(true);
+    onBodyChange?.(value);
     if (saveTimeout.current) clearTimeout(saveTimeout.current);
     saveTimeout.current = setTimeout(async () => {
       try {
@@ -145,7 +174,13 @@ export default function NoteEditor({ note, onSave, isLoading }: NoteEditorProps)
       {/* ---- Editor + Preview panes ---- */}
       <div className="flex-1 flex overflow-hidden min-h-0">
         {showEditor && (
-          <div className={`overflow-auto ${showPreview ? 'w-1/2 border-r border-border' : 'w-full'}`}>
+          // textareaRef is attached here — the CM6 wrapper div.
+          // WikilinkAutocomplete in NoteEditorPage positions itself
+          // relative to this element.
+          <div
+            ref={textareaRef as React.RefObject<HTMLDivElement>}
+            className={`overflow-auto ${showPreview ? 'w-1/2 border-r border-border' : 'w-full'}`}
+          >
             <CodeMirror
               value={body}
               onChange={handleBodyChange}

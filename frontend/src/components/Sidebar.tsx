@@ -1,37 +1,41 @@
+/**
+ * Sidebar
+ * =======
+ * Primary navigation sidebar with collapsible state persisted to app store.
+ * Nav items ordered by usage frequency; Tags link added in Slice 9.
+ */
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
-  BookOpen, Search, GitBranch, MessageSquare,
-  Upload, CalendarDays, Settings, ChevronLeft, ChevronRight,
-  Inbox, Brain, LayoutList, LogOut,
+  BookOpen, Brain, FileText, GitBranch, Hash,
+  HelpCircle, Home, LogOut, Plus, Search,
+  Settings, Upload, Zap,
 } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 
-const PARA_FOLDERS = [
-  { id: '00-inbox',       label: 'Inbox' },
-  { id: '10-zettelkasten',label: 'Zettelkasten' },
-  { id: '20-projects',    label: 'Projects' },
-  { id: '30-areas',       label: 'Areas' },
-  { id: '40-resources',   label: 'Resources' },
-  { id: '50-archive',     label: 'Archive' },
-  { id: '60-journals',    label: 'Journals' },
-  { id: '70-sources',     label: 'Sources' },
-  { id: '80-meta',        label: 'Meta' },
+interface NavItem {
+  to: string;
+  icon: React.ReactNode;
+  label: string;
+}
+
+const NAV_ITEMS: NavItem[] = [
+  { to: '/',        icon: <Home size={16} />,      label: 'Notes'     },
+  { to: '/search',  icon: <Search size={16} />,    label: 'Search'    },
+  { to: '/ai',      icon: <Zap size={16} />,        label: 'AI Chat'   },
+  { to: '/graph',   icon: <GitBranch size={16} />, label: 'Graph'     },
+  { to: '/tags',    icon: <Hash size={16} />,      label: 'Tags'      },
+  { to: '/review',  icon: <Brain size={16} />,     label: 'Review'    },
+  { to: '/daily',   icon: <BookOpen size={16} />,  label: 'Daily'     },
+  { to: '/moc',     icon: <FileText size={16} />,  label: 'MOC'       },
+  { to: '/query',   icon: <HelpCircle size={16} />, label: 'Query'    },
+  { to: '/ingest',  icon: <Upload size={16} />,    label: 'Ingest'    },
+  { to: '/settings',icon: <Settings size={16} />,  label: 'Settings'  },
 ];
 
-const NAV_ITEMS = [
-  { to: '/notes',    label: 'Notes',    icon: BookOpen },
-  { to: '/graph',    label: 'Graph',    icon: GitBranch },
-  { to: '/search',   label: 'Search',   icon: Search },
-  { to: '/ai',       label: 'AI Chat',  icon: MessageSquare },
-  { to: '/daily',    label: 'Daily',    icon: CalendarDays },
-  { to: '/review',   label: 'Review',   icon: Brain },
-  { to: '/moc',      label: 'MOC',      icon: LayoutList },
-  { to: '/ingest',   label: 'Ingest',   icon: Upload },
-  { to: '/settings', label: 'Settings', icon: Settings },
-];
+import React from 'react';
 
 export default function Sidebar() {
-  const { sidebarCollapsed, toggleSidebar, setActiveFolder, activeFolder } = useAppStore();
+  const { sidebarCollapsed, setSidebarCollapsed } = useAppStore();
   const navigate = useNavigate();
 
   function handleLogout() {
@@ -41,77 +45,76 @@ export default function Sidebar() {
 
   return (
     <aside
-      className="fixed top-0 left-0 h-full bg-bg-secondary border-r border-border flex flex-col z-30 transition-all duration-200"
-      style={{ width: sidebarCollapsed ? '48px' : '260px' }}
+      className={`flex flex-col border-r border-border bg-bg-secondary transition-all duration-200 ${
+        sidebarCollapsed ? 'w-12' : 'w-48'
+      }`}
     >
-      {/* Logo + collapse */}
-      <div className="h-12 flex items-center justify-between px-3 border-b border-border flex-shrink-0">
+      {/* Logo / collapse toggle */}
+      <div className="flex items-center justify-between px-3 py-3 border-b border-border flex-shrink-0">
         {!sidebarCollapsed && (
-          <span className="font-semibold text-text-primary text-sm tracking-wide">Gnosis KB</span>
+          <span className="text-sm font-semibold text-text-primary tracking-tight">Gnosis</span>
         )}
         <button
-          onClick={toggleSidebar}
-          className="p-1.5 rounded hover:bg-bg-tertiary text-text-secondary transition-colors ml-auto"
+          onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+          className="p-1 rounded hover:bg-bg-elevated text-text-muted hover:text-text-primary transition-colors"
+          aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         >
-          {sidebarCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            {sidebarCollapsed
+              ? <path d="M9 18l6-6-6-6" />
+              : <path d="M15 18l-6-6 6-6" />}
+          </svg>
         </button>
       </div>
 
-      <nav className="flex-1 overflow-y-auto py-2 no-scrollbar">
-        {/* Main nav */}
-        <div className="space-y-0.5 px-2">
-          {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
-            <NavLink
-              key={to}
-              to={to}
-              className={({ isActive }) =>
-                `flex items-center gap-2.5 px-2 py-1.5 rounded text-sm transition-colors ${
-                  isActive
-                    ? 'bg-bg-tertiary text-text-primary'
-                    : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary'
-                }`
-              }
-            >
-              <Icon size={15} className="flex-shrink-0" />
-              {!sidebarCollapsed && <span>{label}</span>}
-            </NavLink>
-          ))}
-        </div>
+      {/* New note shortcut */}
+      <div className="px-2 py-2 border-b border-border flex-shrink-0">
+        <button
+          onClick={() => navigate('/notes/new')}
+          className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs font-medium bg-accent-cyan/10 hover:bg-accent-cyan/20 text-accent-cyan transition-colors ${
+            sidebarCollapsed ? 'justify-center' : ''
+          }`}
+          title="New note"
+        >
+          <Plus size={14} />
+          {!sidebarCollapsed && 'New Note'}
+        </button>
+      </div>
 
-        {/* PARA folders */}
-        {!sidebarCollapsed && (
-          <div className="mt-4 px-2">
-            <p className="text-xs font-semibold text-text-muted uppercase tracking-wider px-2 mb-1.5">
-              Folders
-            </p>
-            {PARA_FOLDERS.map((folder) => (
-              <button
-                key={folder.id}
-                onClick={() => setActiveFolder(activeFolder === folder.id ? null : folder.id)}
-                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm transition-colors ${
-                  activeFolder === folder.id
-                    ? 'bg-bg-elevated text-text-primary'
-                    : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary'
-                }`}
-              >
-                <Inbox size={13} className="flex-shrink-0" />
-                <span className="truncate">{folder.label}</span>
-              </button>
-            ))}
-          </div>
-        )}
+      {/* Nav items */}
+      <nav className="flex-1 overflow-y-auto py-2 space-y-0.5 px-1">
+        {NAV_ITEMS.map(({ to, icon, label }) => (
+          <NavLink
+            key={to}
+            to={to}
+            end={to === '/'}
+            className={({ isActive }) =>
+              `flex items-center gap-2.5 px-2 py-1.5 rounded text-xs transition-colors ${
+                isActive
+                  ? 'bg-bg-elevated text-text-primary font-medium'
+                  : 'text-text-muted hover:text-text-primary hover:bg-bg-elevated'
+              } ${sidebarCollapsed ? 'justify-center' : ''}`
+            }
+            title={sidebarCollapsed ? label : undefined}
+          >
+            {icon}
+            {!sidebarCollapsed && <span>{label}</span>}
+          </NavLink>
+        ))}
       </nav>
 
       {/* Logout */}
-      <div className="flex-shrink-0 px-2 py-2 border-t border-border">
+      <div className="px-1 py-2 border-t border-border flex-shrink-0">
         <button
           onClick={handleLogout}
-          className="w-full flex items-center gap-2.5 px-2 py-1.5 rounded text-sm text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-colors"
-          title="Sign out"
+          className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded text-xs text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors ${
+            sidebarCollapsed ? 'justify-center' : ''
+          }`}
+          title="Log out"
         >
-          <LogOut size={15} className="flex-shrink-0" />
-          {!sidebarCollapsed && <span>Sign out</span>}
+          <LogOut size={14} />
+          {!sidebarCollapsed && 'Log out'}
         </button>
       </div>
     </aside>

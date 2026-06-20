@@ -1,24 +1,27 @@
 /**
  * useOfflineSync
  * ==============
- * Manages an in-memory queue of note creates/updates that were attempted
- * while the browser was offline.  On reconnect the queue is drained
- * sequentially via the real API, with real toast feedback per item.
+ * Manages an in-memory queue of note creates/updates attempted while offline.
+ * On reconnect the queue is drained sequentially via the real API.
  *
- * Usage
- * -----
- *   const { queueCreate, queueUpdate, queueLength, draining } = useOfflineSync();
+ * Signature (unchanged from pre-Slice-8 contract used by App.tsx):
+ *   const { isOnline, queuedCount, triggerSync } = useOfflineSync(onToast);
  *
- *   if (!navigator.onLine) {
- *     queueCreate(noteData);
- *   } else {
- *     await api.createNote(noteData);
- *   }
+ * onToast is the react-hot-toast callback injected by App.tsx so toasts use
+ * the same Toaster instance already mounted there.  Internally we also
+ * call the same callback for granular per-item feedback.
+ *
+ * Additional exports:
+ *   queueCreate(payload)  — queue a create-note payload
+ *   queueUpdate(id, payload) — queue/merge an update-note payload
+ *   draining              — true while drain is in progress
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import api from '../services/api';
-import { toast } from './useToast';
+
+type ToastVariant = 'info' | 'success' | 'warning';
+type ToastCallback = (message: string, variant: ToastVariant) => void;
 
 interface QueueItem {
   id: string;
@@ -31,31 +34,31 @@ function uuid() {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-export function useOfflineSync() {
-  const queueRef = useRef<QueueItem[]>([]);
-  const [queueLength, setQueueLength] = useState(0);
-  const [draining, setDraining] = useState(false);
+export function useOfflineSync(onToast?: ToastCallback) {
+  const [isOnline, setIsOnline]   = useState(navigator.onLine);
+  const [queuedCount, setQueuedCount] = useState(0);
+  const [draining, setDraining]   = useState(false);
+
+  const queueRef    = useRef<QueueItem[]>([]);
   const drainingRef = useRef(false);
 
-  function syncQueueLength() {
-    setQueueLength(queueRef.current.length);
-  }
+  function syncCount() { setQueuedCount(queueRef.current.length); }
 
   const queueCreate = useCallback((payload: unknown) => {
     queueRef.current.push({ id: uuid(), type: 'create', payload });
-    syncQueueLength();
+    syncCount();
   }, []);
 
   const queueUpdate = useCallback((noteId: string, payload: unknown) => {
-    const existing = queueRef.current.findIndex(
-      (item) => item.type === 'update' && item.noteId === noteId
+    const i = queueRef.current.findIndex(
+      (item) => item.type === 'update' && item.noteId === noteId,
     );
-    if (existing >= 0) {
-      queueRef.current[existing].payload = payload;
+    if (i >= 0) {
+      queueRef.current[i].payload = payload;
     } else {
       queueRef.current.push({ id: uuid(), type: 'update', noteId, payload });
     }
-    syncQueueLength();
+    syncCount();
   }, []);
 
   const drainQueue = useCallback(async () => {
@@ -64,10 +67,10 @@ export function useOfflineSync() {
     setDraining(true);
 
     const total = queueRef.current.length;
-    toast.info(`Syncing ${total} offline change${total > 1 ? 's' : ''}…`);
+    onToast?.(`Syncing ${total} offline change${total > 1 ? 's' : ''}…`, 'info');
 
     let succeeded = 0;
-    let failed = 0;
+    let failed    = 0;
 
     while (queueRef.current.length > 0) {
       const item = queueRef.current[0];
@@ -79,9 +82,10 @@ export function useOfflineSync() {
         }
         queueRef.current.shift();
         succeeded++;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Unknown error';
-        toast.error(`Sync failed for "${(item.payload as { title?: string })?.title ?? item.id}": ${msg}`);
+      } catch {
+        const title = (item.payload as { title?: string })?.title ?? item.id;
+        onToast?.(`Sync failed for "${title}" — will retry on next reconnect.`, 'warning');
+        // Move failing item to tail; break if all items are failing
         queueRef.current.shift();
         queueRef.current.push({ ...item, id: uuid() });
         failed++;
@@ -89,25 +93,33 @@ export function useOfflineSync() {
       }
     }
 
-    syncQueueLength();
+    syncCount();
     drainingRef.current = false;
     setDraining(false);
 
     if (succeeded > 0) {
-      toast.success(`✓ Synced ${succeeded} offline note${succeeded > 1 ? 's' : ''}`);
+      onToast?.(`✓ Synced ${succeeded} offline note${succeeded > 1 ? 's' : ''}`, 'success');
     }
-    if (failed > 0) {
-      toast.error(`${failed} item${failed > 1 ? 's' : ''} could not be synced and remain queued.`, 8000);
-    }
-  }, []);
+  }, [onToast]);
+
+  const triggerSync = useCallback(() => { void drainQueue(); }, [drainQueue]);
 
   useEffect(() => {
-    const handleOnline = () => { void drainQueue(); };
-    window.addEventListener('online', handleOnline);
-    return () => window.removeEventListener('online', handleOnline);
+    function handleOnline() {
+      setIsOnline(true);
+      void drainQueue();
+    }
+    function handleOffline() { setIsOnline(false); }
+
+    window.addEventListener('online',  handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online',  handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
   }, [drainQueue]);
 
-  return { queueCreate, queueUpdate, queueLength, draining, drainQueue };
+  return { isOnline, queuedCount, triggerSync, queueCreate, queueUpdate, draining };
 }
 
 export default useOfflineSync;

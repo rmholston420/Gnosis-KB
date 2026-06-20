@@ -1,10 +1,25 @@
+/**
+ * SettingsPage
+ * ============
+ * Sections:
+ *   1. AI Provider   — model picker + connection status
+ *   2. RAG Mode      — hybrid / local / global radio
+ *   3. Export        — vault export with format picker (markdown zip / JSON)
+ *   4. Security      — auth info
+ */
 import { useEffect, useState } from 'react';
-import { Settings, Cpu, Database, Shield, Save, RefreshCw } from 'lucide-react';
+import {
+  Settings, Cpu, Database, Shield, Save, RefreshCw,
+  Download, Archive, FileJson,
+} from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import type { RagMode } from '../store/useAppStore';
 import api from '../services/api';
 
-// Models that are embedding-only — hide from chat model picker
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 const EMBED_PATTERNS = ['embed', 'nomic', 'mxbai', 'bge', 'e5', 'minilm'];
 function isChatModel(name: string) {
   const lower = name.toLowerCase();
@@ -17,6 +32,8 @@ const RAG_MODES: { value: RagMode; label: string; desc: string }[] = [
   { value: 'global', label: 'Global', desc: 'Graph-wide community search' },
 ];
 
+type ExportFormat = 'markdown' | 'json';
+
 interface ProviderInfo {
   provider: string;
   model: string;
@@ -24,13 +41,24 @@ interface ProviderInfo {
   models: string[];
 }
 
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
 export default function SettingsPage() {
   const { ragMode, setRagMode } = useAppStore();
+
+  // AI Provider state
   const [provider, setProvider] = useState<ProviderInfo | null>(null);
   const [selectedModel, setSelectedModel] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+
+  // Export state
+  const [exportFormat, setExportFormat] = useState<ExportFormat>('markdown');
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
 
   useEffect(() => {
     api
@@ -59,6 +87,42 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleExport() {
+    setExporting(true);
+    setExportError('');
+    try {
+      const token = localStorage.getItem('gnosis_token') ?? '';
+      const res = await fetch(
+        `/api/v1/export/?format=${exportFormat}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(typeof detail.detail === 'string' ? detail.detail : res.statusText);
+      }
+
+      // Determine filename from Content-Disposition or fallback
+      const disposition = res.headers.get('Content-Disposition') ?? '';
+      const match = disposition.match(/filename="?([^"]+)"?/);
+      const ext  = exportFormat === 'json' ? 'json' : 'zip';
+      const filename = match?.[1] ?? `gnosis-export-${new Date().toISOString().slice(0, 10)}.${ext}`;
+
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : 'Export failed');
+    } finally {
+      setExporting(false);
+    }
+  }
+
   const chatModels = provider?.models.filter(isChatModel) ?? [];
 
   return (
@@ -74,7 +138,7 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* AI Provider */}
+      {/* ── AI Provider ────────────────────────────────────────────────── */}
       <section className="space-y-4">
         <div className="flex items-center gap-2 pb-2 border-b border-border">
           <Cpu size={14} className="text-text-muted" />
@@ -130,7 +194,7 @@ export default function SettingsPage() {
         )}
       </section>
 
-      {/* RAG Mode */}
+      {/* ── RAG Mode ───────────────────────────────────────────────────── */}
       <section className="space-y-4">
         <div className="flex items-center gap-2 pb-2 border-b border-border">
           <Database size={14} className="text-text-muted" />
@@ -164,14 +228,77 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      {/* Security */}
+      {/* ── Export ─────────────────────────────────────────────────────── */}
+      <section className="space-y-4">
+        <div className="flex items-center gap-2 pb-2 border-b border-border">
+          <Archive size={14} className="text-text-muted" />
+          <h2 className="text-sm font-semibold text-text-primary">Export Vault</h2>
+        </div>
+
+        <p className="text-xs text-text-muted">
+          Download all your notes as a zip archive of Markdown files, or as a
+          single JSON file containing every note with full metadata.
+        </p>
+
+        {exportError && (
+          <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-xs px-3 py-2 rounded">
+            {exportError}
+          </div>
+        )}
+
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Format picker */}
+          <div className="flex rounded border border-border overflow-hidden text-xs">
+            <button
+              onClick={() => setExportFormat('markdown')}
+              className={`flex items-center gap-1.5 px-3 py-2 transition-colors ${
+                exportFormat === 'markdown'
+                  ? 'bg-accent-cyan/20 text-accent-cyan border-r border-border'
+                  : 'text-text-muted hover:bg-bg-tertiary border-r border-border'
+              }`}
+            >
+              <Archive size={12} /> Markdown (.zip)
+            </button>
+            <button
+              onClick={() => setExportFormat('json')}
+              className={`flex items-center gap-1.5 px-3 py-2 transition-colors ${
+                exportFormat === 'json'
+                  ? 'bg-accent-cyan/20 text-accent-cyan'
+                  : 'text-text-muted hover:bg-bg-tertiary'
+              }`}
+            >
+              <FileJson size={12} /> JSON
+            </button>
+          </div>
+
+          {/* Download button */}
+          <button
+            onClick={handleExport}
+            disabled={exporting}
+            className="flex items-center gap-2 px-4 py-2 bg-bg-elevated hover:bg-bg-tertiary border border-border rounded text-sm text-text-primary disabled:opacity-50 transition-colors"
+          >
+            {exporting
+              ? <RefreshCw size={13} className="animate-spin text-text-muted" />
+              : <Download size={13} className="text-text-muted" />}
+            {exporting ? 'Preparing…' : 'Download'}
+          </button>
+        </div>
+
+        <p className="text-xs text-text-faint">
+          Export is scoped to your vault. Shared vaults you have read access to
+          are not included.
+        </p>
+      </section>
+
+      {/* ── Security ───────────────────────────────────────────────────── */}
       <section className="space-y-4">
         <div className="flex items-center gap-2 pb-2 border-b border-border">
           <Shield size={14} className="text-text-muted" />
           <h2 className="text-sm font-semibold text-text-primary">Security</h2>
         </div>
         <p className="text-sm text-text-muted">
-          Authentication is JWT-based. Tokens expire after 24 hours. Change your password via the API at{' '}
+          Authentication is JWT-based. Tokens expire after 24 hours. Change your
+          password via the API at{' '}
           <code className="text-xs bg-bg-tertiary px-1.5 py-0.5 rounded">/api/v1/auth/change-password</code>.
         </p>
       </section>
