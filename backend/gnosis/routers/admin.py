@@ -11,9 +11,9 @@ authenticated user has user_id == 1 (the bootstrap admin).
 
 Why this exists
 ---------------
-Early vault syncs wrote notes with owner_id = 0 (a sentinel meaning “unresolved”).
+Early vault syncs wrote notes with owner_id = 0 (a sentinel meaning "unresolved").
 Those rows are invisible to normal queries that filter by the authenticated
-user’s real ID.  This endpoint:
+user's real ID.  This endpoint:
   1. Selects all Note rows with owner_id = 0.
   2. Resolves the canonical owner using the same logic as vault_sync.
   3. Updates the row in-place (owner_id, updated_at).
@@ -31,7 +31,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from gnosis.core.auth import get_current_user
+# require_user (not get_current_user) is used here so that:
+#   1. The dependency is consistent with every other router in the codebase.
+#   2. conftest.py's dependency override for require_user is respected in tests;
+#      get_current_user is NOT overridden by conftest and would return None
+#      against an empty in-memory SQLite DB, breaking the admin tests.
+from gnosis.core.auth import require_user
 from gnosis.database import get_db
 from gnosis.models.note import Note
 from gnosis.models.user import User
@@ -110,7 +115,7 @@ async def _reindex_note(
 )
 async def reindex_legacy_notes(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_user),
 ) -> dict[str, Any]:
     """
     Fix notes written with the legacy ``owner_id=0`` sentinel.
@@ -152,7 +157,7 @@ async def reindex_legacy_notes(
         }
 
     logger.info(
-        "Reindexing %d legacy note(s) → owner_id=%d",
+        "Reindexing %d legacy note(s) \u2192 owner_id=%d",
         len(legacy_notes),
         new_owner_id,
     )
