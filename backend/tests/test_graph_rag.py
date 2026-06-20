@@ -1,25 +1,8 @@
-"""Tests for gnosis/services/graph_rag.py.
-
-LightRAG is an optional dependency. All tests either mock it or test
-the fallback behaviour when it's unavailable.
-"""
+"""Tests for gnosis/services/graph_rag.py."""
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _make_service(lightrag_available=False):
-    """Return a GraphRAGService with lightrag availability set."""
-    import gnosis.services.graph_rag as gr_mod
-    with patch.object(gr_mod, "_LIGHTRAG_AVAILABLE", lightrag_available):
-        from gnosis.services.graph_rag import GraphRAGService
-        svc = GraphRAGService()
-    return svc
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +46,7 @@ async def test_is_available_false_when_lightrag_not_installed():
 
 
 # ---------------------------------------------------------------------------
-# _get_instance — returns None when lightrag unavailable
+# _get_instance
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -77,7 +60,7 @@ async def test_get_instance_returns_none_when_unavailable():
 
 
 # ---------------------------------------------------------------------------
-# ingest_note — graceful no-op when lightrag unavailable
+# ingest_note
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -86,12 +69,28 @@ async def test_ingest_note_noop_when_unavailable():
     import gnosis.services.graph_rag as gr_mod
     with patch.object(gr_mod, "_LIGHTRAG_AVAILABLE", False):
         svc = GraphRAGService()
-    # Must not raise
     await svc.ingest_note("Title", "Body", user_id=1)
 
 
+@pytest.mark.asyncio
+async def test_ingest_note_calls_ainsert_when_available():
+    from gnosis.services.graph_rag import GraphRAGService
+    import gnosis.services.graph_rag as gr_mod
+
+    fake_instance = MagicMock()
+    fake_instance.ainsert = AsyncMock()
+
+    svc = GraphRAGService()
+    svc._instances[1] = fake_instance
+
+    with patch.object(gr_mod, "_LIGHTRAG_AVAILABLE", True):
+        await svc.ingest_note("Title", "Body", user_id=1)
+
+    fake_instance.ainsert.assert_called_once()
+
+
 # ---------------------------------------------------------------------------
-# query — fallback message when lightrag unavailable
+# query — fallback when unavailable
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -106,7 +105,7 @@ async def test_query_returns_fallback_message_when_unavailable():
 
 
 # ---------------------------------------------------------------------------
-# query — single-graph fast path with mocked LightRAG
+# query — single-graph fast path
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -146,7 +145,7 @@ async def test_query_multi_vault_merges_answers():
     svc._instances[2] = fake_inst_2
 
     fake_llm = MagicMock()
-    fake_llm.is_available = False  # triggers concatenation fallback
+    fake_llm.is_available = False
 
     with patch.object(gr_mod, "_LIGHTRAG_AVAILABLE", True), \
          patch("gnosis.services.graph_rag.QueryParam", MagicMock()), \
@@ -158,7 +157,7 @@ async def test_query_multi_vault_merges_answers():
 
 
 # ---------------------------------------------------------------------------
-# stream — yields strings
+# stream — fallback when unavailable (yields exactly one string)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -167,31 +166,56 @@ async def test_stream_yields_fallback_when_unavailable():
     import gnosis.services.graph_rag as gr_mod
     with patch.object(gr_mod, "_LIGHTRAG_AVAILABLE", False):
         svc = GraphRAGService()
-    chunks = []
-    async for chunk in svc.stream("question", user_id=1):
-        chunks.append(chunk)
+    chunks = [chunk async for chunk in svc.stream("question", user_id=1)]
+    assert len(chunks) >= 1
     assert all(isinstance(c, str) for c in chunks)
 
 
+# ---------------------------------------------------------------------------
+# stream — with mocked instance
+#
+# The source checks for `astream_query`; if absent it falls back to aquery.
+# We give the mock an aquery method so the fallback path runs.
+# ---------------------------------------------------------------------------
+
 @pytest.mark.asyncio
-async def test_stream_yields_from_instance():
+async def test_stream_yields_from_instance_via_aquery_fallback():
+    """When instance has no astream_query, stream() falls back to aquery."""
     from gnosis.services.graph_rag import GraphRAGService
     import gnosis.services.graph_rag as gr_mod
 
-    async def _fake_astream(*args, **kwargs):
-        for token in ["token1", " token2", " token3"]:
-            yield token
-
-    fake_instance = MagicMock()
-    fake_instance.astream = _fake_astream
+    fake_instance = MagicMock(spec=["aquery"])  # spec excludes astream_query
+    fake_instance.aquery = AsyncMock(return_value="streamed token")
 
     svc = GraphRAGService()
     svc._instances[1] = fake_instance
 
     with patch.object(gr_mod, "_LIGHTRAG_AVAILABLE", True), \
          patch("gnosis.services.graph_rag.QueryParam", MagicMock()):
-        chunks = []
-        async for chunk in svc.stream("question", user_id=1):
-            chunks.append(chunk)
+        chunks = [chunk async for chunk in svc.stream("question", user_id=1)]
 
-    assert len(chunks) > 0
+    assert len(chunks) >= 1
+    assert "streamed token" in chunks
+
+
+@pytest.mark.asyncio
+async def test_stream_yields_from_astream_query():
+    """When instance has astream_query, stream() should iterate it."""
+    from gnosis.services.graph_rag import GraphRAGService
+    import gnosis.services.graph_rag as gr_mod
+
+    async def _fake_astream_query(*args, **kwargs):
+        for token in ["tok1", " tok2", " tok3"]:
+            yield token
+
+    fake_instance = MagicMock()
+    fake_instance.astream_query = _fake_astream_query
+
+    svc = GraphRAGService()
+    svc._instances[1] = fake_instance
+
+    with patch.object(gr_mod, "_LIGHTRAG_AVAILABLE", True), \
+         patch("gnosis.services.graph_rag.QueryParam", MagicMock()):
+        chunks = [chunk async for chunk in svc.stream("question", user_id=1)]
+
+    assert chunks == ["tok1", " tok2", " tok3"]
