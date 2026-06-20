@@ -46,6 +46,8 @@ interface AppState {
   ragMode: RAGMode;
   sessionId: string | null;
   appendChatMessage: (msg: ChatMessage) => void;
+  /** Mutate the content of the last assistant bubble in-place (for streaming). */
+  updateLastAssistantMessage: (content: string) => void;
   clearChat: () => void;
   setRagMode: (mode: RAGMode) => void;
 
@@ -86,6 +88,15 @@ export const useAppStore = create<AppState>()(
       sessionId: null,
       appendChatMessage: (msg) =>
         set((s) => ({ chatMessages: [...s.chatMessages, msg] })),
+      updateLastAssistantMessage: (content) =>
+        set((s) => {
+          const msgs = [...s.chatMessages];
+          const last = msgs[msgs.length - 1];
+          if (last?.role === 'assistant') {
+            msgs[msgs.length - 1] = { ...last, content };
+          }
+          return { chatMessages: msgs };
+        }),
       clearChat: () => set({ chatMessages: [], sessionId: null }),
       setRagMode: (mode) => set({ ragMode: mode }),
 

@@ -3,6 +3,7 @@
  *
  * Uses fetch() + ReadableStream for SSE so we can send the Authorization
  * header — EventSource does not support custom headers.
+ * Token is read from localStorage ('gnosis_token') to mirror api.ts.
  */
 
 import { useRef, useState, useEffect } from 'react';
@@ -13,9 +14,21 @@ import type { ChatMessage } from '../types';
 
 const RAG_MODES = ['hybrid', 'local', 'global'] as const;
 
+function getToken(): string {
+  return localStorage.getItem('gnosis_token') ?? '';
+}
+
 export default function AIChat() {
-  const { chatMessages, appendChatMessage, updateLastAssistantMessage, clearChat, ragMode, setRagMode, sessionId, token } =
-    useAppStore();
+  const {
+    chatMessages,
+    appendChatMessage,
+    updateLastAssistantMessage,
+    clearChat,
+    ragMode,
+    setRagMode,
+    sessionId,
+  } = useAppStore();
+
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -40,23 +53,26 @@ export default function AIChat() {
     setInput('');
     setIsLoading(true);
 
-    // Seed an empty assistant bubble immediately
-    const assistantMsg: ChatMessage = {
+    // Seed an empty assistant bubble immediately so it appears while streaming
+    appendChatMessage({
       role: 'assistant',
       content: '',
       timestamp: new Date().toISOString(),
-    };
-    appendChatMessage(assistantMsg);
+    });
 
     const ctrl = new AbortController();
     abortRef.current = ctrl;
 
     try {
-      const url = `/api/v1/ai/stream/chat?message=${encodeURIComponent(userMsg.content)}&mode=${ragMode}`;
+      const url =
+        `/api/v1/ai/stream/chat` +
+        `?message=${encodeURIComponent(userMsg.content)}` +
+        `&mode=${ragMode}`;
+
       const resp = await fetch(url, {
         signal: ctrl.signal,
         headers: {
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${getToken()}`,
           Accept: 'text/event-stream',
         },
       });
@@ -89,14 +105,18 @@ export default function AIChat() {
             accumulated += chunk;
             updateLastAssistantMessage(accumulated);
           } catch {
-            // ignore malformed lines
+            // ignore malformed SSE lines
           }
         }
       }
 
-      // Fallback: if stream returned nothing, use POST endpoint
+      // Fallback: stream returned nothing, use POST endpoint
       if (!accumulated) {
-        const resp2 = await api.chat(userMsg.content, ragMode, sessionId || undefined) as { answer: string };
+        const resp2 = (await api.chat(
+          userMsg.content,
+          ragMode,
+          sessionId || undefined
+        )) as { answer: string };
         updateLastAssistantMessage(resp2.answer);
       }
     } catch (err) {
@@ -129,7 +149,9 @@ export default function AIChat() {
             className="text-xs bg-bg-tertiary border border-border rounded px-2 py-1 text-text-secondary"
           >
             {RAG_MODES.map((m) => (
-              <option key={m} value={m}>{m}</option>
+              <option key={m} value={m}>
+                {m}
+              </option>
             ))}
           </select>
           <button
@@ -152,7 +174,9 @@ export default function AIChat() {
         {chatMessages.map((msg, i) => (
           <div
             key={i}
-            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+            className={`flex ${
+              msg.role === 'user' ? 'justify-end' : 'justify-start'
+            }`}
           >
             <div
               className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
@@ -163,10 +187,12 @@ export default function AIChat() {
             >
               <p className="whitespace-pre-wrap leading-relaxed">
                 {msg.content}
-                {/* blinking cursor on the last assistant bubble while streaming */}
-                {isLoading && i === chatMessages.length - 1 && msg.role === 'assistant' && (
-                  <span className="inline-block w-0.5 h-3.5 bg-current ml-0.5 animate-pulse align-middle" />
-                )}
+                {/* blinking cursor on last assistant bubble while streaming */}
+                {isLoading &&
+                  i === chatMessages.length - 1 &&
+                  msg.role === 'assistant' && (
+                    <span className="inline-block w-0.5 h-3.5 bg-current ml-0.5 animate-pulse align-middle" />
+                  )}
               </p>
             </div>
           </div>
@@ -195,7 +221,7 @@ export default function AIChat() {
             <button
               onClick={handleStop}
               className="p-2 bg-red-500 hover:bg-red-600 text-white rounded transition-colors flex-shrink-0"
-              title="Stop"
+              title="Stop generation"
             >
               <span className="w-3.5 h-3.5 block bg-white rounded-sm" />
             </button>
