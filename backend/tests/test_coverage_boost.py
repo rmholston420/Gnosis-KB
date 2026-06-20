@@ -982,6 +982,14 @@ class TestVaultSync:
 #   application.include_router(notes.router,  prefix=API_V1)  # /api/v1/notes
 #   application.include_router(tags.router,   prefix=API_V1)  # /api/v1/tags
 #   application.include_router(vault_router.router, prefix=API_V1)  # /api/v1/vault
+#
+# Query router endpoints:
+#   POST /api/v1/query/run          — execute a one-off GQL query
+#   GET  /api/v1/query/saved        — list saved dashboards
+#
+# Vault router endpoints:
+#   POST /api/v1/vault/sync         — trigger sync
+#   GET  /api/v1/vault/sync/status  — poll sync state
 # ---------------------------------------------------------------------------
 
 from fastapi.testclient import TestClient
@@ -1008,8 +1016,22 @@ async def _override_owner_ids():
 
 
 async def _override_db():
+    # Build a mock DB whose execute() returns a result with a fully chainable
+    # scalars() → unique() → one_or_none() / all() interface so both list and
+    # single-item endpoints can call any variant without AttributeError.
+    scalar_result = MagicMock()
+    scalar_result.all.return_value = []
+    scalar_result.unique.return_value = scalar_result
+    scalar_result.one_or_none.return_value = None
+
+    exec_result = MagicMock()
+    exec_result.scalars.return_value = scalar_result
+    # scalar_one() used by count queries (list_notes)
+    exec_result.scalar_one.return_value = 0
+    exec_result.scalar_one_or_none.return_value = None
+
     db = AsyncMock()
-    db.execute.return_value = MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[]))))
+    db.execute.return_value = exec_result
     yield db
 
 
@@ -1033,15 +1055,16 @@ class TestSearchRouter:
 
 class TestQueryRouter:
     def test_query_endpoint_post(self):
-        resp = client.post("/api/v1/query", json={"query": "FROM notes LIMIT 5"})
+        # The run-query endpoint is POST /api/v1/query/run
+        resp = client.post("/api/v1/query/run", json={"query": "FROM notes LIMIT 5"})
         assert resp.status_code in (200, 422, 500)
 
     def test_query_endpoint_empty_query(self):
-        resp = client.post("/api/v1/query", json={"query": ""})
+        resp = client.post("/api/v1/query/run", json={"query": ""})
         assert resp.status_code in (200, 422, 500)
 
     def test_query_endpoint_invalid_gql(self):
-        resp = client.post("/api/v1/query", json={"query": "FOOBAR"})
+        resp = client.post("/api/v1/query/run", json={"query": "FOOBAR"})
         assert resp.status_code in (200, 400, 422, 500)
 
 
@@ -1051,7 +1074,9 @@ class TestNotesRouter:
         assert resp.status_code in (200, 500)
 
     def test_get_note_not_found(self):
-        resp = client.get("/api/v1/notes/99999")
+        # /{note_id} param is a str (e.g. "20240101-120000"), not an int.
+        # With mock DB returning one_or_none()=None the router raises 404.
+        resp = client.get("/api/v1/notes/nonexistent-note-id")
         assert resp.status_code in (404, 500)
 
 
@@ -1063,5 +1088,6 @@ class TestTagsRouter:
 
 class TestVaultRouter:
     def test_vault_status(self):
-        resp = client.get("/api/v1/vault/status")
+        # The status endpoint is GET /api/v1/vault/sync/status
+        resp = client.get("/api/v1/vault/sync/status")
         assert resp.status_code in (200, 500)
