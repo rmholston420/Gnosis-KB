@@ -84,6 +84,24 @@ def _upsert_patches():
     return stack, fake_client
 
 
+def _extract_upsert_points(fake_client):
+    """Robustly extract the 'points' list from a mock upsert() call.
+
+    client.upsert(collection_name=..., points=[...]) is called with keyword
+    args in the source, so call_args.kwargs is always the right place to look.
+    Positional fallback handles any future refactor.
+    """
+    call = fake_client.upsert.call_args
+    if call is None:
+        return []
+    if "points" in call.kwargs:
+        return call.kwargs["points"]
+    # positional: upsert(collection_name, points)
+    if len(call.args) >= 2:
+        return call.args[1]
+    return []
+
+
 def test_upsert_note_calls_upsert():
     from gnosis.services.vector_store import upsert_note
     stack, fake_client = _upsert_patches()
@@ -114,10 +132,9 @@ def test_upsert_note_passes_owner_id_in_payload():
             tags=[],
             owner_id=42,
         )
-    call_kwargs = fake_client.upsert.call_args
-    points = call_kwargs.kwargs.get("points") or call_kwargs[0][1] if call_kwargs[0] else []
-    payload = points[0].payload if points else {}
-    assert payload.get("owner_id") == 42
+    points = _extract_upsert_points(fake_client)
+    assert points, "upsert() was not called or 'points' kwarg was missing"
+    assert points[0].payload.get("owner_id") == 42
 
 
 def test_upsert_note_embed_failure_returns_early():
