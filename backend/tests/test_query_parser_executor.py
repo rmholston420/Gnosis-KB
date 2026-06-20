@@ -94,7 +94,6 @@ async def test_execute_query_serialises_datetime():
     parsed = ParsedQuery(select_cols=["modified_at"])
 
     rows, _ = await execute_query(parsed, db)
-    # datetime should be serialised to ISO string
     assert isinstance(rows[0]["modified_at"], str)
 
 
@@ -120,7 +119,6 @@ async def test_execute_query_from_folder_applies_filter():
     parsed = ParsedQuery(from_folder="10")
 
     rows, _ = await execute_query(parsed, db)
-    # DB is mocked — just ensure no exception and execute was called
     db.execute.assert_called()
 
 
@@ -182,7 +180,6 @@ async def test_execute_query_unknown_op_is_skipped():
         conditions=[{"type": "field", "field": "status", "op": "~", "value": "x"}]
     )
     rows, _ = await execute_query(parsed, db)
-    # Should complete without error
     assert isinstance(rows, list)
 
 
@@ -212,6 +209,8 @@ async def test_execute_query_sort_desc():
 
 # ---------------------------------------------------------------------------
 # owner_ids namespace scoping
+# scoped_note_stmt is imported LOCALLY inside execute_query, so we must
+# patch it at the source: gnosis.core.namespace.scoped_note_stmt
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -221,15 +220,23 @@ async def test_execute_query_calls_scoped_note_stmt_when_owner_ids_given():
     db = _make_db([])
     parsed = ParsedQuery()
 
-    fake_stmt = MagicMock()
-    # scoped_note_stmt should return something that supports .where / .order_by / .limit
-    # chain; easiest to let MagicMock handle that automatically.
-    with patch("gnosis.services.query_parser.scoped_note_stmt", return_value=fake_stmt) as mock_scoped:
-        try:
-            await execute_query(parsed, db, owner_ids={1, 2})
-        except Exception:
-            pass  # stmt chain may fail on MagicMock; that's fine
-        mock_scoped.assert_called_once()
+    # scoped_note_stmt must return something that supports SQLAlchemy chaining.
+    # The easiest approach: let it return the real base statement unchanged.
+    # We just verify it was called.
+    original_import = None
+
+    def fake_scoped(stmt, owner_ids, **kwargs):
+        fake_scoped.called = True
+        fake_scoped.owner_ids = owner_ids
+        return stmt  # pass through so execute() chain still works
+
+    fake_scoped.called = False
+
+    with patch("gnosis.core.namespace.scoped_note_stmt", side_effect=fake_scoped):
+        await execute_query(parsed, db, owner_ids={1, 2})
+
+    assert fake_scoped.called
+    assert fake_scoped.owner_ids == {1, 2}
 
 
 @pytest.mark.asyncio
@@ -239,6 +246,6 @@ async def test_execute_query_no_scope_when_owner_ids_none():
     db = _make_db([])
     parsed = ParsedQuery()
 
-    with patch("gnosis.services.query_parser.scoped_note_stmt") as mock_scoped:
+    with patch("gnosis.core.namespace.scoped_note_stmt") as mock_scoped:
         await execute_query(parsed, db, owner_ids=None)
         mock_scoped.assert_not_called()

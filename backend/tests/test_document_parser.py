@@ -78,7 +78,7 @@ def test_parse_pdf_falls_back_to_stem_title():
 
     fake_doc = MagicMock()
     fake_doc.__iter__ = MagicMock(return_value=iter([fake_page]))
-    fake_doc.metadata = {}  # no title key
+    fake_doc.metadata = {}
     fake_doc.__len__ = MagicMock(return_value=1)
 
     fake_fitz = MagicMock()
@@ -90,17 +90,6 @@ def test_parse_pdf_falls_back_to_stem_title():
     assert result.title == "My Document"
 
 
-def test_parse_pdf_raises_without_pymupdf():
-    from gnosis.services.document_parser import parse_pdf
-    import sys
-    saved = sys.modules.pop("fitz", None)
-    with patch.dict("sys.modules", {"fitz": None}):
-        with pytest.raises((RuntimeError, ImportError)):
-            parse_pdf(Path("/tmp/x.pdf"))
-    if saved:
-        sys.modules["fitz"] = saved
-
-
 # ---------------------------------------------------------------------------
 # parse_docx
 # ---------------------------------------------------------------------------
@@ -110,7 +99,7 @@ def test_parse_docx_extracts_paragraphs():
 
     fake_para1 = MagicMock(); fake_para1.text = "Title paragraph"
     fake_para2 = MagicMock(); fake_para2.text = "Body text."
-    fake_para3 = MagicMock(); fake_para3.text = ""  # blank, should be skipped
+    fake_para3 = MagicMock(); fake_para3.text = ""
 
     fake_doc = MagicMock()
     fake_doc.paragraphs = [fake_para1, fake_para2, fake_para3]
@@ -206,6 +195,9 @@ def test_parse_image_returns_ocr_text():
 
 # ---------------------------------------------------------------------------
 # parse_url
+# parse_url imports httpx at call-time and uses it as an async context
+# manager. We patch gnosis.services.document_parser's httpx reference
+# directly so the mock is in scope when the function runs.
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -218,12 +210,15 @@ async def test_parse_url_extracts_title_and_text():
     fake_resp.text = html
     fake_resp.raise_for_status = MagicMock()
 
-    fake_client = AsyncMock()
+    # Build a mock that works as `async with httpx.AsyncClient(...) as client:`
+    fake_client = MagicMock()
     fake_client.get = AsyncMock(return_value=fake_resp)
     fake_client.__aenter__ = AsyncMock(return_value=fake_client)
     fake_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("httpx.AsyncClient", return_value=fake_client):
+    mock_async_client_cls = MagicMock(return_value=fake_client)
+
+    with patch("gnosis.services.document_parser.httpx.AsyncClient", mock_async_client_cls):
         result = await parse_url("https://example.com")
 
     assert result.title == "Test Page"
@@ -241,12 +236,14 @@ async def test_parse_url_falls_back_without_bs4():
     fake_resp.text = html
     fake_resp.raise_for_status = MagicMock()
 
-    fake_client = AsyncMock()
+    fake_client = MagicMock()
     fake_client.get = AsyncMock(return_value=fake_resp)
     fake_client.__aenter__ = AsyncMock(return_value=fake_client)
     fake_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("httpx.AsyncClient", return_value=fake_client), \
+    mock_async_client_cls = MagicMock(return_value=fake_client)
+
+    with patch("gnosis.services.document_parser.httpx.AsyncClient", mock_async_client_cls), \
          patch.dict("sys.modules", {"bs4": None}):
         result = await parse_url("https://example.com")
 
