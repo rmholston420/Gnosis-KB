@@ -16,6 +16,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Marked, type MarkedExtension, type TokenizerExtension, type RendererExtension } from 'marked';
+import DOMPurify from 'dompurify';
 import type { NoteListItem } from '../types';
 import WikilinkPopup, { type PopupState } from './WikilinkPopup';
 
@@ -117,7 +118,8 @@ export default function WikilinkPreview({
   const html = useMemo(() => {
     const instance = new Marked();
     instance.use(buildWikilinkExtension(notesByTitle));
-    return instance.parse(body) as string;
+    const raw = instance.parse(body) as string;
+  return DOMPurify.sanitize(raw, { ADD_ATTR: ['data-note-id', 'data-note-title'] });
   }, [body, notesByTitle]);
 
   // ---- Event delegation ------------------------------------------------
