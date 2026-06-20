@@ -19,7 +19,7 @@ import re
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from gnosis.core.auth import get_current_user, get_password_hash, require_user
 from gnosis.core.namespace import ensure_vault_directory
@@ -38,6 +38,8 @@ _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,78}[a-z0-9]$")
 # ---------------------------------------------------------------------------
 
 class UserProfile(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     email: str
     full_name: str | None
@@ -45,9 +47,6 @@ class UserProfile(BaseModel):
     vault_path: str | None
     vault_display_name: str | None
     is_superuser: bool
-
-    class Config:
-        from_attributes = True
 
 
 class UpdateMeRequest(BaseModel):
@@ -300,13 +299,13 @@ async def update_grant(
 
 
 # ---------------------------------------------------------------------------
-# DELETE /users/me/vaults/{grant_id}  — revoke access
+# DELETE /users/me/vaults/{grant_id}  — revoke
 # ---------------------------------------------------------------------------
 
 @router.delete(
     "/me/vaults/{grant_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Revoke a vault share grant",
+    summary="Revoke a share grant",
 )
 async def revoke_grant(
     grant_id: int,
@@ -328,108 +327,65 @@ async def revoke_grant(
 
 
 # ---------------------------------------------------------------------------
-# POST /users/me/vaults/{grant_id}/accept  — member accepts invite
+# GET /users/  — superuser only
 # ---------------------------------------------------------------------------
 
-@router.post(
-    "/me/vaults/{grant_id}/accept",
-    response_model=SharedVaultGrant,
-    summary="Accept a vault share invitation",
-)
-async def accept_invite(
-    grant_id: int,
-    session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(require_user),
-) -> SharedVaultGrant:
-    from datetime import datetime, timezone
-
-    result = await session.execute(
-        select(SharedVault).where(
-            SharedVault.id == grant_id,
-            SharedVault.member_id == current_user.id,
-            SharedVault.is_active.is_(True),
-        )
-    )
-    grant = result.scalar_one_or_none()
-    if grant is None:
-        raise HTTPException(status_code=404, detail="Invite not found")
-
-    grant.accepted_at = datetime.now(timezone.utc)
-    await session.commit()
-    await session.refresh(grant)
-
-    return SharedVaultGrant(
-        id=grant.id,
-        owner_id=grant.owner_id,
-        owner_email=grant.owner.email,
-        owner_vault_display_name=grant.owner.vault_display_name,
-        member_id=grant.member_id,
-        member_email=grant.member.email,
-        permission=grant.permission,
-        is_active=grant.is_active,
-        accepted_at=grant.accepted_at.isoformat() if grant.accepted_at else None,
-    )
-
-
-# ---------------------------------------------------------------------------
-# GET /users  — superuser only
-# ---------------------------------------------------------------------------
-
-@router.get("/", response_model=list[UserProfile], summary="List all users (superuser only)")
+@router.get("/", summary="List all users (superuser only)")
 async def list_users(
-    page: int = Query(default=1, ge=1),
-    per_page: int = Query(default=20, ge=1, le=100),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
-) -> list[UserProfile]:
+) -> dict:
     if not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="Superuser access required")
-
-    offset = (page - 1) * per_page
     result = await session.execute(
-        select(User).order_by(User.created_at.desc()).offset(offset).limit(per_page)
+        select(User).offset((page - 1) * page_size).limit(page_size)
     )
     users = result.scalars().all()
-    return [UserProfile.model_validate(u) for u in users]
+    return {
+        "users": [
+            {
+                "id": u.id,
+                "email": u.email,
+                "full_name": u.full_name,
+                "vault_slug": u.vault_slug,
+                "is_superuser": u.is_superuser,
+                "is_active": u.is_active,
+            }
+            for u in users
+        ],
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 # ---------------------------------------------------------------------------
-# POST /users  — superuser only
+# POST /users/  — superuser only
 # ---------------------------------------------------------------------------
 
-@router.post(
-    "/",
-    response_model=UserProfile,
-    status_code=status.HTTP_201_CREATED,
-    summary="Create a new user (superuser only)",
-)
+@router.post("/", status_code=status.HTTP_201_CREATED, summary="Create a new user (superuser only)")
 async def create_user(
     req: CreateUserRequest,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
-) -> UserProfile:
+) -> dict:
     if not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="Superuser access required")
 
     existing = await session.execute(select(User).where(User.email == req.email))
     if existing.scalar_one_or_none() is not None:
-        raise HTTPException(status_code=409, detail="Email already registered")
+        raise HTTPException(status_code=409, detail=f"User with email {req.email} already exists")
 
-    slug = req.vault_slug or req.email.split("@")[0].lower()
     user = User(
         email=req.email,
         hashed_password=get_password_hash(req.password),
         full_name=req.full_name,
-        vault_slug=slug,
+        vault_slug=req.vault_slug,
         is_superuser=req.is_superuser,
+        is_active=True,
     )
     session.add(user)
     await session.commit()
     await session.refresh(user)
-
-    try:
-        ensure_vault_directory(user)
-    except OSError as exc:
-        logger.warning("Could not create vault directory for new user: %s", exc)
-
-    return UserProfile.model_validate(user)
+    return {"id": user.id, "email": user.email, "is_superuser": user.is_superuser}
