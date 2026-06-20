@@ -1,7 +1,5 @@
 /* ============================================================
  * Gnosis KB — global styles
- *
- * Tailwind base is imported first, then component-level overrides.
  * ============================================================ */
 
 @tailwind base;
@@ -9,8 +7,9 @@
 @tailwind utilities;
 
 /* ----------------------------------------------------------
- * CSS custom properties — mirrors the Tailwind palette so that
- * any component using var(--color-*) gets the correct dark values.
+ * CSS custom properties — dark theme baseline.
+ * These mirror the Tailwind palette so components using
+ * var(--color-*) or var(--space-*) get correct values.
  * ---------------------------------------------------------- */
 :root {
   /* Backgrounds */
@@ -31,10 +30,32 @@
   /* Accent */
   --color-primary:         #4f98a3;
   --color-primary-hover:   #227f8b;
+  --color-error:           #da3633;
+  --color-success:         #238636;
   --color-accent-blue:     #1f6feb;
-  --color-accent-green:    #238636;
-  --color-accent-red:      #da3633;
-  --color-accent-orange:   #d18616;
+
+  /* Spacing (4px base) */
+  --space-1:  0.25rem;
+  --space-2:  0.5rem;
+  --space-3:  0.75rem;
+  --space-4:  1rem;
+  --space-5:  1.25rem;
+  --space-6:  1.5rem;
+  --space-8:  2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+
+  /* Radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.4);
+  --shadow-lg: 0 12px 32px rgba(0,0,0,0.5);
 
   /* Type scale */
   --text-xs:   0.75rem;
@@ -46,8 +67,7 @@
 }
 
 /* ----------------------------------------------------------
- * Global dark base — ensures dark bg/text even if Tailwind
- * dark: variants haven't activated yet on a given element.
+ * Global dark base
  * ---------------------------------------------------------- */
 html, body, #root {
   background-color: #0d1117;
@@ -58,11 +78,24 @@ html, body, #root {
   -moz-osx-font-smoothing: grayscale;
 }
 
+* { box-sizing: border-box; }
+
+/* ----------------------------------------------------------
+ * Scrollbar styling
+ * ---------------------------------------------------------- */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #484f58; }
+
 /* ----------------------------------------------------------
  * gnosis-prose — Markdown preview typography
  * ---------------------------------------------------------- */
 .gnosis-prose {
-  color: var(--color-text, #e6edf3);
+  color: #e6edf3;
   line-height: 1.7;
 }
 .gnosis-prose h1, .gnosis-prose h2, .gnosis-prose h3,
@@ -136,20 +169,14 @@ html, body, #root {
   cursor: pointer;
   transition: color 0.15s ease, border-color 0.15s ease;
 }
-.wikilink.wikilink-exists:hover {
-  color: #227f8b;
-  border-bottom-color: #227f8b;
-}
+.wikilink.wikilink-exists:hover { color: #227f8b; border-bottom-color: #227f8b; }
 
 .wikilink.wikilink-broken {
   color: #9ca3af;
   border-bottom: 1px dashed #6b7280;
   cursor: pointer;
 }
-.wikilink.wikilink-broken:hover {
-  color: #d1d5db;
-  border-bottom-color: #9ca3af;
-}
+.wikilink.wikilink-broken:hover { color: #d1d5db; border-bottom-color: #9ca3af; }
 
 @keyframes wikilink-nudge {
   0%   { transform: translateX(0); }
@@ -159,74 +186,34 @@ html, body, #root {
 }
 
 /* ----------------------------------------------------------
- * WikilinkPopup — hover preview card
+ * WikilinkPopup
  * ---------------------------------------------------------- */
 .wikilink-popup-inner {
   background: #1c1b19;
   border: 1px solid #393836;
   border-radius: 0.5rem;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
   padding: 0.75rem;
   font-size: 0.8125rem;
   line-height: 1.5;
 }
-
-.wikilink-popup-header {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  margin-bottom: 0.375rem;
+.wikilink-popup-header { display: flex; align-items: center; gap: 0.375rem; margin-bottom: 0.375rem; }
+.wikilink-popup-icon   { color: #4f98a3; flex-shrink: 0; }
+.wikilink-popup-title  {
+  font-weight: 600; color: #cdccca; flex: 1;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-
-.wikilink-popup-icon { color: #4f98a3; flex-shrink: 0; }
-
-.wikilink-popup-title {
-  font-weight: 600;
-  color: #cdccca;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .wikilink-popup-open {
-  flex-shrink: 0;
-  color: #797876;
-  padding: 0.125rem;
-  border-radius: 0.25rem;
-  background: none;
-  border: none;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
+  flex-shrink: 0; color: #797876; padding: 0.125rem; border-radius: 0.25rem;
+  background: none; border: none; cursor: pointer; display: flex; align-items: center;
   transition: color 0.12s ease, background 0.12s ease;
 }
-.wikilink-popup-open:hover {
-  color: #4f98a3;
-  background: rgba(79, 152, 163, 0.12);
-}
-
-.wikilink-popup-meta {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.375rem;
-}
-
+.wikilink-popup-open:hover { color: #4f98a3; background: rgba(79,152,163,0.12); }
+.wikilink-popup-meta   { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.375rem; }
 .wikilink-popup-folder { font-size: 0.75rem; color: #5a5957; font-family: 'JetBrains Mono', monospace; }
 .wikilink-popup-words  { font-size: 0.75rem; color: #5a5957; margin-left: auto; }
-
-.wikilink-popup-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem;
-  margin-top: 0.25rem;
-}
-
-.wikilink-popup-tag {
-  font-size: 0.6875rem;
-  background: rgba(79, 152, 163, 0.1);
-  color: #4f98a3;
-  border-radius: 9999px;
-  padding: 0.1rem 0.5rem;
+.wikilink-popup-tags   { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.25rem; }
+.wikilink-popup-tag    {
+  font-size: 0.6875rem; background: rgba(79,152,163,0.1); color: #4f98a3;
+  border-radius: 9999px; padding: 0.1rem 0.5rem;
 }

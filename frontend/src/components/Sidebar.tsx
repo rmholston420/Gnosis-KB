@@ -1,35 +1,43 @@
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import {
   BookOpen, Search, GitBranch, MessageSquare,
   Upload, CalendarDays, Settings, ChevronLeft, ChevronRight,
-  Inbox
+  Inbox, Brain, LayoutList, LogOut,
 } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 
 const PARA_FOLDERS = [
-  { id: '00-inbox', label: 'Inbox' },
-  { id: '10-zettelkasten', label: 'Zettelkasten' },
-  { id: '20-projects', label: 'Projects' },
-  { id: '30-areas', label: 'Areas' },
-  { id: '40-resources', label: 'Resources' },
-  { id: '50-archive', label: 'Archive' },
-  { id: '60-journals', label: 'Journals' },
-  { id: '70-sources', label: 'Sources' },
-  { id: '80-meta', label: 'Meta' },
+  { id: '00-inbox',       label: 'Inbox' },
+  { id: '10-zettelkasten',label: 'Zettelkasten' },
+  { id: '20-projects',    label: 'Projects' },
+  { id: '30-areas',       label: 'Areas' },
+  { id: '40-resources',   label: 'Resources' },
+  { id: '50-archive',     label: 'Archive' },
+  { id: '60-journals',    label: 'Journals' },
+  { id: '70-sources',     label: 'Sources' },
+  { id: '80-meta',        label: 'Meta' },
 ];
 
 const NAV_ITEMS = [
-  { to: '/notes', label: 'Notes', icon: BookOpen },
-  { to: '/graph', label: 'Graph', icon: GitBranch },
-  { to: '/search', label: 'Search', icon: Search },
-  { to: '/chat', label: 'AI Chat', icon: MessageSquare },
-  { to: '/ingest', label: 'Ingest', icon: Upload },
-  { to: '/daily', label: 'Daily', icon: CalendarDays },
+  { to: '/notes',    label: 'Notes',    icon: BookOpen },
+  { to: '/graph',    label: 'Graph',    icon: GitBranch },
+  { to: '/search',   label: 'Search',   icon: Search },
+  { to: '/ai',       label: 'AI Chat',  icon: MessageSquare },
+  { to: '/daily',    label: 'Daily',    icon: CalendarDays },
+  { to: '/review',   label: 'Review',   icon: Brain },
+  { to: '/moc',      label: 'MOC',      icon: LayoutList },
+  { to: '/ingest',   label: 'Ingest',   icon: Upload },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
 
 export default function Sidebar() {
   const { sidebarCollapsed, toggleSidebar, setActiveFolder, activeFolder } = useAppStore();
+  const navigate = useNavigate();
+
+  function handleLogout() {
+    localStorage.removeItem('gnosis_token');
+    navigate('/login');
+  }
 
   return (
     <aside
@@ -94,6 +102,18 @@ export default function Sidebar() {
           </div>
         )}
       </nav>
+
+      {/* Logout */}
+      <div className="flex-shrink-0 px-2 py-2 border-t border-border">
+        <button
+          onClick={handleLogout}
+          className="w-full flex items-center gap-2.5 px-2 py-1.5 rounded text-sm text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-colors"
+          title="Sign out"
+        >
+          <LogOut size={15} className="flex-shrink-0" />
+          {!sidebarCollapsed && <span>Sign out</span>}
+        </button>
+      </div>
     </aside>
   );
 }

@@ -2,11 +2,12 @@ import React, { useCallback } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { Toaster, toast } from 'react-hot-toast';
 
+import Layout                        from '@/components/Layout';
 import { OfflineBanner }             from '@/components/OfflineBanner';
 import { useOfflineSync }            from '@/hooks/useOfflineSync';
 import { registerSW, skipWaiting }   from '@/registerSW';
 
-// Pages — lazy loaded for smaller initial bundle
+// Pages — lazy loaded
 const LoginPage      = React.lazy(() => import('@/pages/LoginPage'));
 const NotesPage      = React.lazy(() => import('@/pages/NotesPage'));
 const NoteEditorPage = React.lazy(() => import('@/pages/NoteEditorPage'));
@@ -20,7 +21,6 @@ const ReviewPage     = React.lazy(() => import('@/pages/ReviewPage'));
 const IngestPage     = React.lazy(() => import('@/pages/IngestPage'));
 const MocPage        = React.lazy(() => import('@/pages/MocPage'));
 
-// Register SW once at app startup (idempotent — safe to call multiple times)
 registerSW({
   onNeedRefresh: () => {
     toast(
@@ -43,6 +43,22 @@ registerSW({
   },
 });
 
+/** Redirect to /login if no JWT in localStorage. */
+function PrivateRoute({ children }: { children: React.ReactNode }) {
+  const token = localStorage.getItem('gnosis_token');
+  if (!token) return <Navigate to="/login" replace />;
+  return <>{children}</>;
+}
+
+const Fallback = (
+  <div style={{
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    height: '100dvh', color: '#8b949e', fontSize: '0.875rem',
+  }}>
+    Loading…
+  </div>
+);
+
 export default function App() {
   const handleToast = useCallback(
     (message: string, variant: 'info' | 'success' | 'warning') => {
@@ -57,36 +73,36 @@ export default function App() {
 
   return (
     <BrowserRouter>
-      <OfflineBanner
-        isOnline={isOnline}
-        queuedCount={queuedCount}
-        onSyncClick={triggerSync}
-      />
+      <OfflineBanner isOnline={isOnline} queuedCount={queuedCount} onSyncClick={triggerSync} />
 
-      <React.Suspense
-        fallback={
-          <div style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            height: '100dvh', color: 'var(--color-text-muted)', fontSize: 'var(--text-sm)',
-          }}>
-            Loading…
-          </div>
-        }
-      >
+      <React.Suspense fallback={Fallback}>
         <Routes>
-          <Route path="/login"     element={<LoginPage />} />
-          <Route path="/"          element={<NotesPage />} />
-          <Route path="/notes/:id" element={<NoteEditorPage />} />
-          <Route path="/graph"     element={<GraphPage />} />
-          <Route path="/search"    element={<SearchPage />} />
-          <Route path="/ai"        element={<AIPage />} />
-          <Route path="/settings"  element={<SettingsPage />} />
-          <Route path="/query"     element={<QueryPage />} />
-          <Route path="/daily"     element={<DailyNotePage />} />
-          <Route path="/review"    element={<ReviewPage />} />
-          <Route path="/ingest"    element={<IngestPage />} />
-          <Route path="/moc"       element={<MocPage />} />
-          <Route path="*"          element={<Navigate to="/" replace />} />
+          {/* Public */}
+          <Route path="/login" element={<LoginPage />} />
+
+          {/* Protected — all wrapped in Layout (sidebar + topbar) */}
+          <Route
+            element={
+              <PrivateRoute>
+                <Layout />
+              </PrivateRoute>
+            }
+          >
+            <Route index element={<NotesPage />} />
+            <Route path="/notes" element={<NotesPage />} />
+            <Route path="/notes/:id" element={<NoteEditorPage />} />
+            <Route path="/graph" element={<GraphPage />} />
+            <Route path="/search" element={<SearchPage />} />
+            <Route path="/ai" element={<AIPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/query" element={<QueryPage />} />
+            <Route path="/daily" element={<DailyNotePage />} />
+            <Route path="/review" element={<ReviewPage />} />
+            <Route path="/ingest" element={<IngestPage />} />
+            <Route path="/moc" element={<MocPage />} />
+          </Route>
+
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </React.Suspense>
 
@@ -94,10 +110,10 @@ export default function App() {
         position="bottom-right"
         toastOptions={{
           style: {
-            background: 'var(--color-surface-2)',
-            color:      'var(--color-text)',
-            border:     '1px solid var(--color-border)',
-            fontSize:   'var(--text-sm)',
+            background: '#21262d',
+            color: '#e6edf3',
+            border: '1px solid #30363d',
+            fontSize: '0.875rem',
           },
         }}
       />
