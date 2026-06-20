@@ -1,15 +1,27 @@
 """Pytest fixtures for Gnosis test suite.
 
 Provides:
-  - async_client: HTTPX async test client with in-memory SQLite DB
-  - test_db: isolated async session for direct DB operations
-  - test_vault: temporary directory acting as the vault
+  - async_client  : HTTPX async test client with in-memory SQLite DB
+  - test_db       : isolated async session for direct DB operations
+  - vault_dir     : temporary directory acting as the vault
+
+External service patching
+-------------------------
+Three lifespan calls are patched at *session* scope so that pytest runs
+cleanly on a dev machine with no Postgres, Qdrant, Ollama, or LightRAG:
+
+  1. ensure_collection()         — Qdrant collection setup  → no-op
+  2. start_vault_watcher()       — watchdog + initial sync  → mock Observer
+  3. graph_rag.initialize()      — LightRAG warm-up         → async no-op
 """
+
+from __future__ import annotations
 
 import asyncio
 import tempfile
 from pathlib import Path
 from typing import AsyncGenerator
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -19,13 +31,16 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from gnosis.database import Base, get_db
 from gnosis.main import create_app
 
-# Use SQLite for tests (no PostgreSQL needed in CI)
+# ---------------------------------------------------------------------------
+# Test database — SQLite (no Postgres needed in CI or local runs)
+# ---------------------------------------------------------------------------
+
 TEST_DB_URL = "sqlite+aiosqlite:///./test_gnosis.db"
 
 
 @pytest.fixture(scope="session")
 def event_loop():
-    """Create an event loop for the test session."""
+    """Create an event loop shared across the test session."""
     loop = asyncio.new_event_loop()
     yield loop
     loop.close()
@@ -33,7 +48,7 @@ def event_loop():
 
 @pytest_asyncio.fixture(scope="session")
 async def test_engine():
-    """Create a test async engine with SQLite."""
+    """Session-scoped async engine backed by SQLite."""
     engine = create_async_engine(TEST_DB_URL, echo=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -45,16 +60,21 @@ async def test_engine():
 
 @pytest_asyncio.fixture
 async def test_db(test_engine) -> AsyncGenerator[AsyncSession, None]:
-    """Provide a clean database session for each test."""
+    """Provide a clean, rolled-back database session per test."""
     session_factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
     async with session_factory() as session:
         yield session
         await session.rollback()
 
 
+# ---------------------------------------------------------------------------
+# Vault directory — temporary, pre-populated with PARA folders
+# ---------------------------------------------------------------------------
+
+
 @pytest.fixture
 def vault_dir():
-    """Provide a temporary vault directory."""
+    """Provide a temporary vault directory with standard PARA sub-folders."""
     with tempfile.TemporaryDirectory() as tmpdir:
         vault = Path(tmpdir)
         for folder in [
@@ -65,26 +85,66 @@ def vault_dir():
         yield vault
 
 
+# ---------------------------------------------------------------------------
+# Service patches — applied session-wide so lifespan doesn’t hit real services
+# ---------------------------------------------------------------------------
+
+
+class _MockObserver:
+    """Minimal stand-in for watchdog.observers.Observer."""
+    def stop(self) -> None: ...
+    def join(self) -> None: ...
+
+
+async def _mock_start_vault_watcher(owner_id: int = 1) -> _MockObserver:  # noqa: ARG001
+    return _MockObserver()
+
+
+# ---------------------------------------------------------------------------
+# Test client — wired to SQLite DB, patched services, temp vault
+# ---------------------------------------------------------------------------
+
+
 @pytest_asyncio.fixture
 async def async_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, None]:
-    """HTTPX async client wired to the FastAPI app with test DB and vault."""
-    from gnosis import config
-    settings = config.get_settings()
-    settings.vault_path = vault_dir
+    """HTTPX async client wired to the FastAPI app with:
+    - SQLite test DB (no Postgres)
+    - temp vault directory
+    - Qdrant / watchdog / LightRAG stubbed out
+    """
+    # Patch all three external-service calls before the app is constructed
+    # and before the lifespan context runs.
+    with (
+        patch(
+            "gnosis.services.vector_store.ensure_collection",
+            return_value=None,
+        ),
+        patch(
+            "gnosis.services.vault_sync.start_vault_watcher",
+            new=_mock_start_vault_watcher,
+        ),
+        patch(
+            "gnosis.services.graph_rag.graph_rag.initialize",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
+        from gnosis import config
+        settings = config.get_settings()
+        settings.vault_path = str(vault_dir)
 
-    app = create_app()
+        app = create_app()
 
-    # Override DB dependency
-    session_factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+        # Override the DB dependency so every request uses the SQLite session
+        session_factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
 
-    async def override_get_db():
-        async with session_factory() as session:
-            yield session
+        async def override_get_db():
+            async with session_factory() as session:
+                yield session
 
-    app.dependency_overrides[get_db] = override_get_db
+        app.dependency_overrides[get_db] = override_get_db
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as client:
-        yield client
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            yield client
