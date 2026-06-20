@@ -12,6 +12,7 @@ Routers registered:
   /api/v1/review   — spaced repetition
   /api/v1/export   — vault export
   /api/v1/tags     — tag list
+  /api/v1/vault    — vault sync trigger (Slice 15)
   /api/v1/ingest   — vault watcher ingest
   /api/v1/users    — user profiles + vault sharing (multi-user)
 """
@@ -43,6 +44,7 @@ from gnosis.routers import (
     tags,
     users,
 )
+from gnosis.routers import vault as vault_router
 from gnosis.services.graph_rag import graph_rag
 from gnosis.services.llm_provider import llm_provider
 from gnosis.services.vault_sync import start_vault_watcher
@@ -95,7 +97,7 @@ _settings = get_settings()
 
 app = FastAPI(
     title="Gnosis Knowledge Base API",
-    version="0.4.1",
+    version="0.5.0",
     description=(
         "REST + SSE backend for the Gnosis personal knowledge management system. "
         "Features: vault sync, Zettelkasten notes, LightRAG graph-RAG, "
@@ -120,15 +122,16 @@ app.add_middleware(
 )
 
 API_V1 = "/api/v1"
-app.include_router(health.router, prefix=API_V1)
-app.include_router(auth.router, prefix=API_V1)
-app.include_router(notes.router, prefix=API_V1)
-app.include_router(search.router, prefix=API_V1)
-app.include_router(ai.router, prefix=API_V1)
-app.include_router(graph.router, prefix=API_V1)
-app.include_router(query.router, prefix=API_V1)
-app.include_router(review.router, prefix=API_V1)
-app.include_router(export.router, prefix=API_V1)
-app.include_router(tags.router, prefix=API_V1)
-app.include_router(ingest.router, prefix=API_V1)
-app.include_router(users.router, prefix=API_V1)
+app.include_router(health.router,       prefix=API_V1)
+app.include_router(auth.router,         prefix=API_V1)
+app.include_router(notes.router,        prefix=API_V1)
+app.include_router(search.router,       prefix=API_V1)
+app.include_router(ai.router,           prefix=API_V1)
+app.include_router(graph.router,        prefix=API_V1)
+app.include_router(query.router,        prefix=API_V1)
+app.include_router(review.router,       prefix=API_V1)
+app.include_router(export.router,       prefix=API_V1)
+app.include_router(tags.router,         prefix=API_V1)
+app.include_router(vault_router.router, prefix=API_V1)  # Slice 15
+app.include_router(ingest.router,       prefix=API_V1)
+app.include_router(users.router,        prefix=API_V1)

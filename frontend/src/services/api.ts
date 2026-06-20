@@ -6,7 +6,7 @@
  * Vault scoping
  * -------------
  * When the user is browsing a shared vault, useVaultStore holds a non-null
- * activeVaultOwnerId.  request() reads this synchronously via Zustand's
+ * activeVaultOwnerId.  request() reads this synchronously via Zustand’s
  * getState() selector (safe outside React components) and appends the header
  *   X-Vault-Owner-Id: <owner_id>
  * to every request.  The backend reads this header in a FastAPI dependency
@@ -89,7 +89,7 @@ export const api = {
 
   /**
    * Wikilink title resolution — returns notes whose title contains `q`,
-   * scoped to the caller's accessible vaults.
+   * scoped to the caller’s accessible vaults.
    */
   searchNoteByTitle: (q: string) =>
     request('GET', `/notes/by-title?${new URLSearchParams({ q }).toString()}`),
@@ -121,6 +121,10 @@ export const api = {
   /** Fetch LightRAG entity/relation graph for D3 visualisation. */
   getLightRagGraph: () => request('GET', '/graph/lightrag'),
 
+  /** Fetch raw LightRAG entity list for the entities panel. */
+  getGraphEntities: (limit = 100) =>
+    request<{ entities: GraphEntitySummary[] }>('GET', `/graph/entities?limit=${limit}`),
+
   // --- AI ---
   chat: (message: string, mode = 'hybrid', sessionId?: string) =>
     request('POST', '/ai/chat', { message, mode, session_id: sessionId }),
@@ -139,8 +143,40 @@ export const api = {
 
   setModel: (model: string) => request('POST', '/ai/providers/model', { model }),
 
+  // --- Vault Sync (Slice 15) ---
+
+  /**
+   * Trigger a background vault sync (non-streaming).
+   * Returns { status: 'accepted', message, user_id } immediately.
+   */
+  triggerVaultSync: () =>
+    request<{ status: string; message: string; user_id: number }>('POST', '/vault/sync'),
+
+  /**
+   * Poll the current sync state for the authenticated user.
+   * Returns SyncStatusResponse: { state, elapsed, files_processed, files_total }
+   */
+  getVaultSyncStatus: () =>
+    request<VaultSyncStatus>('GET', '/vault/sync/status'),
+
+  /**
+   * Open an SSE stream for vault sync progress.
+   *
+   * Returns a native EventSource that emits one line per file processed.
+   * The last event will be `data: [done]` or `data: [error] <msg>`.
+   *
+   * Note: EventSource does not support custom headers, so the auth token is
+   * passed as a query param. The backend vault router reads ?token= as a
+   * fallback when the Authorization header is absent.
+   */
+  openVaultSyncStream: (): EventSource => {
+    const token = localStorage.getItem('gnosis_token') ?? '';
+    const url = `${BASE_URL}/vault/sync?stream=true&token=${encodeURIComponent(token)}`;
+    return new EventSource(url);
+  },
+
   // --- Ingest ---
-  // FormData requests can't use Content-Type: application/json, so they
+  // FormData requests can’t use Content-Type: application/json, so they
   // build headers manually via buildCommonHeaders() (no Content-Type override).
   ingestFile: (file: File, folder = '70-sources') => {
     const form = new FormData();
@@ -170,5 +206,24 @@ export const api = {
     });
   },
 };
+
+// --- Shared types used by api methods above --------------------------------
+
+export interface VaultSyncStatus {
+  state: 'idle' | 'running' | 'done' | 'error';
+  started: number | null;
+  elapsed: number | null;
+  files_processed: number;
+  files_total: number;
+  last_error: string | null;
+}
+
+export interface GraphEntitySummary {
+  id: string;
+  label: string;
+  description?: string;
+  cluster?: number;
+  source_note_ids?: string[];
+}
 
 export default api;

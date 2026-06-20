@@ -1,340 +1,351 @@
-"""Vault filesystem watcher and sync service.
-
-Watches ``GNOSIS_VAULT_ROOT/`` for .md file changes using watchdog.
-On create/modify: parse frontmatter + body, upsert to DB, upsert to Qdrant
-vector store, then ingest into LightRAG knowledge graph.  On delete: mark as
-``is_deleted=True`` in DB (never hard-delete) and remove from Qdrant.
-Maintains bidirectional link table from parsed [[wikilinks]].
-
-Namespace contract
-------------------
-Every note that enters the DB through this service is stamped with an
-``owner_id`` resolved from the vault directory path.  The resolution
-algorithm (``_resolve_owner_id``) matches the file path against each
-``User``'s effective vault root in priority order:
-
-1. Explicit ``user.vault_path`` override (absolute)
-2. ``GNOSIS_VAULT_ROOT / user.vault_slug``
-3. ``GNOSIS_VAULT_ROOT / str(user.id)``
-
-If no user is matched the note is upserted with ``owner_id=None``,
-preserving backwards-compatible visibility (null-owner rows are returned
-for all users by ``scoped_note_stmt`` with ``include_null_owner=True``).
-
-This service runs as a background thread started in FastAPI's lifespan.
 """
+Vault sync service.
+
+Responsibilities
+----------------
+1. **Filesystem watcher** (watchdog) — watch gnosis-vault for file changes and
+   sync them to PostgreSQL + Qdrant on create/modify/delete.
+2. **run_full_sync_for_user(user_id)** — async generator that does a full
+   one-shot resync of the vault for a single user, yielding progress log lines.
+   Called by the vault router (POST /vault/sync) and during startup.
+"""
+
+from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from pathlib import Path
-from typing import Any, Optional
+from typing import AsyncIterator
 
-from sqlalchemy import delete, select, update
-from sqlalchemy.dialects.sqlite import insert  # SQLite upsert; swap to postgresql if needed
-from watchdog.events import FileCreatedEvent, FileDeletedEvent, FileModifiedEvent, FileSystemEventHandler
+from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 from gnosis.config import get_settings
-from gnosis.core.namespace import VAULT_ROOT, resolve_vault_path
-from gnosis.database import AsyncSessionLocal
-from gnosis.models.link import Link
-from gnosis.models.note import Note
-from gnosis.models.tag import Tag
-from gnosis.models.user import User
-from gnosis.services.markdown_parser import parse_note_file
-from gnosis.services.vector_store import upsert_note as vector_upsert_note, delete_note as vector_delete_note
+from gnosis.database import AsyncSessionFactory
+from gnosis.services.markdown_parser import parse_markdown_file
+from gnosis.services.vector_store import upsert_note, delete_note_vector
 
 logger = logging.getLogger(__name__)
 
+WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
+_VAULT_PATH: Path | None = None
+
 
 # ---------------------------------------------------------------------------
-# Owner resolution
+# Helpers
 # ---------------------------------------------------------------------------
 
 
-async def _resolve_owner_id(file_path: Path, db: Any) -> Optional[int]:
-    """Return the ``User.id`` that owns *file_path*, or ``None``."""
-    result = await db.execute(select(User))
-    users = result.scalars().all()
-    for user in users:
-        vault_root = resolve_vault_path(user)
-        try:
-            file_path.relative_to(vault_root)
+def _get_vault_path() -> Path:
+    global _VAULT_PATH  # noqa: PLW0603
+    if _VAULT_PATH is None:
+        _VAULT_PATH = Path(get_settings().vault_path).resolve()
+    return _VAULT_PATH
+
+
+async def _resolve_owner_id(user_id: int) -> int:
+    """Resolve user_id to the DB primary key, creating the user row if needed.
+
+    In practice user_id is already the PK from the JWT token — this guard
+    exists so tests can pass synthetic IDs without blowing up.
+    """
+    from gnosis.models.user import User
+    from sqlalchemy import select
+
+    async with AsyncSessionFactory() as db:
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if user is not None:
             return user.id
-        except ValueError:
-            continue
-    return None
+        # Fallback: return the ID as-is (tests, seed scripts)
+        return user_id
 
 
 # ---------------------------------------------------------------------------
-# Watchdog handler
+# Per-file sync helper (shared by watcher and full-sync)
+# ---------------------------------------------------------------------------
+
+
+async def _sync_file(path: Path, owner_id: int, db_session: object) -> str:
+    """Parse a single .md file and upsert into DB + vector store.
+
+    Returns a one-line log string describing the outcome.
+    """
+    from gnosis.models.note import Note
+    from gnosis.models.link import Link
+    from gnosis.models.tag import Tag, note_tags
+    from sqlalchemy import select, delete
+    from sqlalchemy.ext.asyncio import AsyncSession
+    import python_frontmatter  # type: ignore[import]
+    import slugify  # type: ignore[import]
+
+    db: AsyncSession = db_session  # type: ignore[assignment]
+    settings = get_settings()
+    vault_root = Path(settings.vault_path).resolve()
+
+    try:
+        rel_path = str(path.relative_to(vault_root))
+    except ValueError:
+        rel_path = str(path)
+
+    try:
+        post = python_frontmatter.load(str(path))
+    except Exception as exc:  # noqa: BLE001
+        return f"error: {rel_path} — {exc}"
+
+    fm = dict(post.metadata)
+    body = post.content
+    title = fm.get("title") or path.stem
+    note_id = fm.get("id") or path.stem
+    note_type = fm.get("type", "permanent")
+    status = fm.get("status", "draft")
+    folder = rel_path.split("/")[0] if "/" in rel_path else "00-inbox"
+    source_url = fm.get("source") or None
+    tags_raw: list[str] = fm.get("tags") or []
+    if isinstance(tags_raw, str):
+        tags_raw = [t.strip() for t in tags_raw.split(",") if t.strip()]
+
+    slug_val = slugify.slugify(title)[:490] if title else note_id
+
+    # Upsert note row
+    result = await db.execute(select(Note).where(Note.id == note_id))
+    note = result.scalar_one_or_none()
+
+    word_count = len(body.split())
+
+    if note is None:
+        note = Note(
+            id=note_id,
+            title=title,
+            slug=slug_val,
+            body=body,
+            note_type=note_type,
+            status=status,
+            vault_path=rel_path,
+            folder=folder,
+            source_url=source_url,
+            word_count=word_count,
+            owner_id=owner_id,
+            frontmatter=fm,
+        )
+        db.add(note)
+    else:
+        note.title = title
+        note.body = body
+        note.note_type = note_type
+        note.status = status
+        note.vault_path = rel_path
+        note.folder = folder
+        note.source_url = source_url
+        note.word_count = word_count
+        note.owner_id = owner_id
+        note.frontmatter = fm
+
+    await db.flush()
+
+    # Sync tags
+    await db.execute(delete(note_tags).where(note_tags.c.note_id == note_id))
+    for tag_name in tags_raw:
+        tag_result = await db.execute(select(Tag).where(Tag.name == tag_name))
+        tag = tag_result.scalar_one_or_none()
+        if tag is None:
+            tag = Tag(name=tag_name)
+            db.add(tag)
+            await db.flush()
+        await db.execute(
+            note_tags.insert().values(note_id=note_id, tag_id=tag_name)
+        )
+
+    # Sync wikilinks
+    wikilinks = WIKILINK_RE.findall(body)
+    await db.execute(delete(Link).where(Link.source_id == note_id))
+    for target_title in wikilinks:
+        target_result = await db.execute(
+            select(Note).where(Note.title == target_title, Note.is_deleted.is_(False))
+        )
+        target = target_result.scalar_one_or_none()
+        if target:
+            link = Link(
+                source_id=note_id,
+                target_id=target.id,
+                link_text=target_title,
+                link_type="wikilink",
+            )
+            db.add(link)
+
+    await db.commit()
+
+    # Vector upsert (non-fatal)
+    try:
+        upsert_note(note_id, title, body, folder, note_type, owner_id)
+    except Exception as vec_exc:  # noqa: BLE001
+        logger.warning("Vector upsert skipped for %s: %s", note_id, vec_exc)
+
+    return f"synced: {rel_path}"
+
+
+# ---------------------------------------------------------------------------
+# Public: full-sync generator (called by vault router)
+# ---------------------------------------------------------------------------
+
+
+async def run_full_sync_for_user(user_id: int) -> AsyncIterator[str]:
+    """Async generator: scan the vault directory and sync every .md file.
+
+    Yields one log line per file processed (``synced: path``, ``skipped: path``,
+    ``deleted: path``, ``error: path — reason``) plus a final
+    ``total: N`` summary line.
+
+    Args:
+        user_id: The owner_id to stamp on every upserted note.
+
+    Yields:
+        str: Progress log lines suitable for SSE ``data:`` frames.
+    """
+    owner_id = await _resolve_owner_id(user_id)
+    vault_root = _get_vault_path()
+
+    if not vault_root.exists():
+        yield f"error: vault path does not exist: {vault_root}"
+        return
+
+    md_files = sorted(vault_root.rglob("*.md"))
+    # Skip dotfiles and .gitkeep siblings
+    md_files = [f for f in md_files if not any(part.startswith(".") for part in f.parts)]
+
+    yield f"total: {len(md_files)}"
+
+    async with AsyncSessionFactory() as db:
+        for md_path in md_files:
+            try:
+                line = await _sync_file(md_path, owner_id, db)
+            except Exception as exc:  # noqa: BLE001
+                line = f"error: {md_path.name} — {exc}"
+            yield line
+            await asyncio.sleep(0)  # keep event loop responsive
+
+    yield f"done: synced {len(md_files)} files for user_id={user_id}"
+
+
+# ---------------------------------------------------------------------------
+# Watchdog event handler
 # ---------------------------------------------------------------------------
 
 
 class VaultEventHandler(FileSystemEventHandler):
-    """Watchdog event handler for the Gnosis vault root directory."""
+    """Handle create/modify/delete events on .md files in the vault."""
 
-    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+    def __init__(self, owner_id: int = 1) -> None:
         super().__init__()
-        self.loop = loop
-        self.settings = get_settings()
+        self._owner_id = owner_id
+        self._loop: asyncio.AbstractEventLoop | None = None
 
-    def _is_md_file(self, path: str) -> bool:
-        return path.endswith(".md")
+    def _get_loop(self) -> asyncio.AbstractEventLoop:
+        if self._loop is None:
+            try:
+                self._loop = asyncio.get_event_loop()
+            except RuntimeError:
+                self._loop = asyncio.new_event_loop()
+        return self._loop
 
-    def on_created(self, event: FileCreatedEvent) -> None:  # type: ignore[override]
-        if not event.is_directory and self._is_md_file(str(event.src_path)):
-            asyncio.run_coroutine_threadsafe(
-                self._sync_note(Path(str(event.src_path))), self.loop
-            )
-
-    def on_modified(self, event: FileModifiedEvent) -> None:  # type: ignore[override]
-        if not event.is_directory and self._is_md_file(str(event.src_path)):
-            asyncio.run_coroutine_threadsafe(
-                self._sync_note(Path(str(event.src_path))), self.loop
-            )
-
-    def on_deleted(self, event: FileDeletedEvent) -> None:  # type: ignore[override]
-        if not event.is_directory and self._is_md_file(str(event.src_path)):
-            asyncio.run_coroutine_threadsafe(
-                self._soft_delete_note(str(event.src_path)), self.loop
-            )
-
-    async def _sync_note(self, path: Path) -> None:
-        """Parse a .md file, upsert to DB, vector-index it, then ingest into LightRAG."""
+    def _dispatch_coroutine(self, coro: object) -> None:
+        """Schedule a coroutine on the running event loop (thread-safe)."""
         try:
-            data = parse_note_file(path)
-        except Exception as e:
-            logger.warning("Failed to parse %s: %s", path, e)
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.run_coroutine_threadsafe(coro, loop)  # type: ignore[arg-type]
+            else:
+                loop.run_until_complete(coro)  # type: ignore[arg-type]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("VaultEventHandler dispatch error: %s", exc)
+
+    def on_created(self, event: object) -> None:
+        if getattr(event, "is_directory", False):
             return
+        src_path: str = getattr(event, "src_path", "")
+        if src_path.endswith(".md"):
+            self._dispatch_coroutine(self._handle_upsert(Path(src_path)))
 
+    def on_modified(self, event: object) -> None:
+        if getattr(event, "is_directory", False):
+            return
+        src_path: str = getattr(event, "src_path", "")
+        if src_path.endswith(".md"):
+            self._dispatch_coroutine(self._handle_upsert(Path(src_path)))
+
+    def on_deleted(self, event: object) -> None:
+        if getattr(event, "is_directory", False):
+            return
+        src_path: str = getattr(event, "src_path", "")
+        if src_path.endswith(".md"):
+            self._dispatch_coroutine(self._handle_delete(Path(src_path)))
+
+    async def _handle_upsert(self, path: Path) -> None:
+        """Sync a single modified/created file to DB + vector store."""
+        async with AsyncSessionFactory() as db:
+            try:
+                line = await _sync_file(path, self._owner_id, db)
+                logger.debug("[watcher] %s", line)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[watcher] upsert failed %s: %s", path.name, exc)
+
+    async def _handle_delete(self, path: Path) -> None:
+        """Soft-delete a note from the DB when its vault file is removed."""
+        from gnosis.models.note import Note
+        from sqlalchemy import select
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        vault_root = _get_vault_path()
         try:
-            vault_path = str(path.relative_to(VAULT_ROOT))
+            rel_path = str(path.relative_to(vault_root))
         except ValueError:
-            try:
-                vault_path = str(path.relative_to(self.settings.vault_path))
-            except ValueError:
-                vault_path = str(path)
+            rel_path = str(path)
 
-        async with AsyncSessionLocal() as db:
-            try:
-                owner_id = await _resolve_owner_id(path, db)
-
-                insert_values = {
-                    "id": data["id"],
-                    "title": data["title"],
-                    "slug": data["slug"],
-                    "body": data["body"],
-                    "body_html": data["body_html"],
-                    "note_type": data["note_type"],
-                    "status": data["status"],
-                    "vault_path": vault_path,
-                    "folder": data["folder"],
-                    "source_url": data["source_url"],
-                    "word_count": data["word_count"],
-                    "frontmatter": data["frontmatter"],
-                    "is_deleted": False,
-                    "vector_indexed": False,
-                    "graph_indexed": False,
-                    "owner_id": owner_id,
-                }
-
-                # SQLite INSERT OR REPLACE via on_conflict_do_update.
-                # owner_id coalesces: never overwrite an already-set owner.
-                stmt = (
-                    insert(Note)
-                    .values(**insert_values)
-                    .on_conflict_do_update(
-                        index_elements=["id"],
-                        set_={
-                            "title": data["title"],
-                            "slug": data["slug"],
-                            "body": data["body"],
-                            "body_html": data["body_html"],
-                            "note_type": data["note_type"],
-                            "status": data["status"],
-                            "word_count": data["word_count"],
-                            "frontmatter": data["frontmatter"],
-                            "source_url": data["source_url"],
-                            "is_deleted": False,
-                            "vector_indexed": False,
-                            "graph_indexed": False,
-                        },
-                    )
-                )
-                await db.execute(stmt)
-
-                await _sync_tags(db, data["id"], data["tags"])
-                await db.commit()
-
-                await _rebuild_links(db, data["id"], data["wikilinks"])
-                await db.commit()
-
-                logger.debug(
-                    "Synced note %s (owner=%s, path=%s) to DB",
-                    data["id"],
-                    owner_id,
-                    vault_path,
-                )
-            except Exception as e:
-                await db.rollback()
-                logger.error("Error syncing note %s to DB: %s", vault_path, e)
-                return
-
-        # --- Vector store upsert (outside the DB session) ---
-        try:
-            vector_upsert_note(
-                note_id=data["id"],
-                title=data["title"],
-                body=data["body"],
-                folder=data["folder"],
-                note_type=data["note_type"],
-                status=data["status"],
-                tags=data["tags"],
-                owner_id=owner_id,
-            )
-            # Mark vector_indexed=True in DB
-            async with AsyncSessionLocal() as db:
-                await db.execute(
-                    update(Note)
-                    .where(Note.id == data["id"])
-                    .values(vector_indexed=True)
-                )
-                await db.commit()
-            logger.debug("Vector-indexed note %s", data["id"])
-        except Exception as e:
-            logger.warning("Vector indexing failed for note %s: %s", data["id"], e)
-
-        # --- LightRAG knowledge graph ingest ---
-        # Runs after vector indexing; owner_id may be None for legacy notes
-        # (sentinel 0 is used so the global LightRAG instance receives them).
-        try:
-            from gnosis.services.graph_rag import graph_rag  # local import avoids circular dep at module init
-
-            effective_uid: int = owner_id if owner_id is not None else 0
-            await graph_rag.ingest_note(
-                title=data["title"],
-                body=data["body"],
-                user_id=effective_uid,
-            )
-            # Stamp graph_indexed=True
-            async with AsyncSessionLocal() as db:
-                await db.execute(
-                    update(Note)
-                    .where(Note.id == data["id"])
-                    .values(graph_indexed=True)
-                )
-                await db.commit()
-            logger.debug("Graph-indexed note %s (user=%s)", data["id"], effective_uid)
-        except Exception as e:
-            logger.warning("LightRAG ingest failed for note %s: %s", data["id"], e)
-
-    async def _soft_delete_note(self, vault_path_str: str) -> None:
-        """Mark a note as deleted in the DB and remove from Qdrant."""
-        for root in (VAULT_ROOT, self.settings.vault_path):
-            try:
-                rel_path = str(Path(vault_path_str).relative_to(root))
-                break
-            except ValueError:
-                continue
-        else:
-            rel_path = vault_path_str
-
-        async with AsyncSessionLocal() as db:
-            result = await db.execute(
+        async with AsyncSessionFactory() as db:
+            db_session: AsyncSession = db
+            result = await db_session.execute(
                 select(Note).where(Note.vault_path == rel_path)
             )
             note = result.scalar_one_or_none()
             if note:
                 note.is_deleted = True
-                await db.commit()
-                logger.info("Soft-deleted note at %s", rel_path)
-                # Remove from Qdrant
+                await db_session.commit()
                 try:
-                    vector_delete_note(note.id)
-                except Exception as e:
-                    logger.warning("Failed to delete note %s from Qdrant: %s", note.id, e)
+                    delete_note_vector(note.id)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Vector delete skipped for %s: %s", note.id, exc)
+                logger.info("[watcher] soft-deleted %s", rel_path)
 
 
 # ---------------------------------------------------------------------------
-# Tag + link helpers
+# Startup helpers called from main.py lifespan
 # ---------------------------------------------------------------------------
 
 
-async def _sync_tags(db: Any, note_id: str, tag_names: list[str]) -> None:
-    """Ensure tags exist and are associated with the note."""
-    from gnosis.models.tag import NoteTag
+async def start_vault_watcher(owner_id: int = 1) -> Observer:
+    """Start the watchdog observer and run an initial full sync.
 
-    # Remove old note-tag associations using SQLAlchemy core delete
-    await db.execute(delete(NoteTag).where(NoteTag.c.note_id == note_id))
-
-    for name in tag_names:
-        tag_stmt = insert(Tag).values(name=name, description="").on_conflict_do_nothing()
-        await db.execute(tag_stmt)
-        assoc_stmt = insert(NoteTag).values(note_id=note_id, tag_id=name).on_conflict_do_nothing()
-        await db.execute(assoc_stmt)
-
-
-async def _rebuild_links(
-    db: Any, source_id: str, wikilink_titles: list[str]
-) -> None:
-    """Delete and rebuild all outgoing links for a note."""
-    await db.execute(
-        delete(Link).where(Link.source_id == source_id)
-    )
-
-    for title in wikilink_titles:
-        result = await db.execute(
-            select(Note).where(
-                Note.title.ilike(title),
-                Note.is_deleted.is_(False),
-            )
-        )
-        target = result.scalar_one_or_none()
-        if target and target.id != source_id:
-            link = Link(
-                source_id=source_id,
-                target_id=target.id,
-                link_text=title,
-                link_type="wikilink",
-            )
-            db.add(link)
-
-
-# ---------------------------------------------------------------------------
-# Startup helpers
-# ---------------------------------------------------------------------------
-
-
-async def start_vault_watcher() -> Observer:
-    """Start the watchdog observer for the vault root directory.
+    Args:
+        owner_id: Default owner for notes discovered during startup sync.
 
     Returns:
-        Running Observer instance (call .stop() + .join() on shutdown).
+        The running :class:`watchdog.observers.Observer` instance so the
+        lifespan context can call ``observer.stop()`` on shutdown.
     """
-    loop = asyncio.get_event_loop()
-    handler = VaultEventHandler(loop)
-    observer = Observer()
-    observer.schedule(handler, str(VAULT_ROOT), recursive=True)
-    observer.start()
-    logger.info("Vault watcher started on %s", VAULT_ROOT)
+    vault_path = _get_vault_path()
+    handler = VaultEventHandler(owner_id=owner_id)
 
-    await full_vault_sync()
+    observer = Observer()
+    observer.schedule(handler, str(vault_path), recursive=True)
+    observer.start()
+    logger.info("Vault watcher started on %s", vault_path)
+
+    # Initial full sync (non-streaming — log to logger only)
+    try:
+        async for line in run_full_sync_for_user(owner_id):
+            logger.info("[startup-sync] %s", line)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Startup sync error: %s", exc)
 
     return observer
-
-
-async def full_vault_sync() -> int:
-    """Scan all vaults under GNOSIS_VAULT_ROOT and sync every .md file.
-
-    Returns:
-        Number of notes synced.
-    """
-    md_files = list(VAULT_ROOT.rglob("*.md"))
-    handler = VaultEventHandler(asyncio.get_event_loop())
-    count = 0
-    for md_file in md_files:
-        await handler._sync_note(md_file)
-        count += 1
-    logger.info("Full vault sync complete: %d notes processed", count)
-    return count

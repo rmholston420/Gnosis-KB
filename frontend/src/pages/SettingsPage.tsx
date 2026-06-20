@@ -5,12 +5,14 @@
  *   1. AI Provider   — model picker + connection status
  *   2. RAG Mode      — hybrid / local / global radio
  *   3. Export        — vault export with format picker (markdown zip / JSON)
- *   4. Security      — auth info
+ *   4. Vault Sync    — trigger full resync + streamed progress log  [Slice 15]
+ *   5. Security      — auth info
  */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Settings, Cpu, Database, Shield, Save, RefreshCw,
-  Download, Archive, FileJson,
+  Download, Archive, FileJson, FolderSync, CheckCircle2,
+  AlertCircle,
 } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import type { RagMode } from '../store/useAppStore';
@@ -41,6 +43,9 @@ interface ProviderInfo {
   models: string[];
 }
 
+// Vault sync states
+type SyncState = 'idle' | 'running' | 'done' | 'error';
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -49,16 +54,23 @@ export default function SettingsPage() {
   const { ragMode, setRagMode } = useAppStore();
 
   // AI Provider state
-  const [provider, setProvider] = useState<ProviderInfo | null>(null);
-  const [selectedModel, setSelectedModel] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState('');
+  const [provider, setProvider]             = useState<ProviderInfo | null>(null);
+  const [selectedModel, setSelectedModel]   = useState('');
+  const [saving, setSaving]                 = useState(false);
+  const [saved, setSaved]                   = useState(false);
+  const [error, setError]                   = useState('');
 
   // Export state
-  const [exportFormat, setExportFormat] = useState<ExportFormat>('markdown');
-  const [exporting, setExporting] = useState(false);
-  const [exportError, setExportError] = useState('');
+  const [exportFormat, setExportFormat]     = useState<ExportFormat>('markdown');
+  const [exporting, setExporting]           = useState(false);
+  const [exportError, setExportError]       = useState('');
+
+  // Vault sync state
+  const [syncState, setSyncState]           = useState<SyncState>('idle');
+  const [syncLines, setSyncLines]           = useState<string[]>([]);
+  const [syncError, setSyncError]           = useState('');
+  const logEndRef                           = useRef<HTMLDivElement>(null);
+  const eventSourceRef                      = useRef<EventSource | null>(null);
 
   useEffect(() => {
     api
@@ -69,7 +81,15 @@ export default function SettingsPage() {
         setSelectedModel(p.model);
       })
       .catch(() => setError('Could not load provider info'));
+
+    // Cleanup SSE on unmount
+    return () => eventSourceRef.current?.close();
   }, []);
+
+  // Auto-scroll log to bottom
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [syncLines]);
 
   async function handleModelSave() {
     if (!selectedModel || selectedModel === provider?.model) return;
@@ -101,10 +121,9 @@ export default function SettingsPage() {
         throw new Error(typeof detail.detail === 'string' ? detail.detail : res.statusText);
       }
 
-      // Determine filename from Content-Disposition or fallback
       const disposition = res.headers.get('Content-Disposition') ?? '';
       const match = disposition.match(/filename="?([^"]+)"?/);
-      const ext  = exportFormat === 'json' ? 'json' : 'zip';
+      const ext   = exportFormat === 'json' ? 'json' : 'zip';
       const filename = match?.[1] ?? `gnosis-export-${new Date().toISOString().slice(0, 10)}.${ext}`;
 
       const blob = await res.blob();
@@ -123,6 +142,76 @@ export default function SettingsPage() {
     }
   }
 
+  /** Open SSE stream to POST /vault/sync?stream=true and display log lines. */
+  const handleVaultSync = useCallback(() => {
+    if (syncState === 'running') return;
+
+    // Close any previous stream
+    eventSourceRef.current?.close();
+
+    setSyncState('running');
+    setSyncLines([]);
+    setSyncError('');
+
+    // EventSource can only do GET; we use a fetch-based SSE reader instead
+    // so we can POST with the Authorization header.
+    const token = localStorage.getItem('gnosis_token') ?? '';
+
+    fetch('/api/v1/vault/sync?stream=true', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    }).then(async (res) => {
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({ detail: res.statusText }));
+        const msg = typeof detail.detail === 'string' ? detail.detail : res.statusText;
+        setSyncError(msg);
+        setSyncState('error');
+        return;
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) {
+        setSyncError('No response body');
+        setSyncState('error');
+        return;
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      async function pump() {
+        const { done, value } = await reader!.read();
+        if (done) {
+          setSyncState('done');
+          return;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() ?? '';
+        for (const part of parts) {
+          const line = part.replace(/^data:\s*/m, '').trim();
+          if (!line) continue;
+          if (line === '[done]') {
+            setSyncState('done');
+            return;
+          }
+          if (line.startsWith('[error]')) {
+            setSyncError(line.replace('[error]', '').trim());
+            setSyncState('error');
+            return;
+          }
+          setSyncLines((prev) => [...prev, line]);
+        }
+        pump();
+      }
+
+      pump();
+    }).catch((err: unknown) => {
+      setSyncError(err instanceof Error ? err.message : 'Sync failed');
+      setSyncState('error');
+    });
+  }, [syncState]);
+
   const chatModels = provider?.models.filter(isChatModel) ?? [];
 
   return (
@@ -138,7 +227,7 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* ── AI Provider ────────────────────────────────────────────────── */}
+      {/* ── AI Provider ──────────────────────────────────────────────────────────── */}
       <section className="space-y-4">
         <div className="flex items-center gap-2 pb-2 border-b border-border">
           <Cpu size={14} className="text-text-muted" />
@@ -194,7 +283,7 @@ export default function SettingsPage() {
         )}
       </section>
 
-      {/* ── RAG Mode ───────────────────────────────────────────────────── */}
+      {/* ── RAG Mode ─────────────────────────────────────────────────────────────── */}
       <section className="space-y-4">
         <div className="flex items-center gap-2 pb-2 border-b border-border">
           <Database size={14} className="text-text-muted" />
@@ -228,7 +317,7 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      {/* ── Export ─────────────────────────────────────────────────────── */}
+      {/* ── Export ───────────────────────────────────────────────────────────────── */}
       <section className="space-y-4">
         <div className="flex items-center gap-2 pb-2 border-b border-border">
           <Archive size={14} className="text-text-muted" />
@@ -290,7 +379,88 @@ export default function SettingsPage() {
         </p>
       </section>
 
-      {/* ── Security ───────────────────────────────────────────────────── */}
+      {/* ── Vault Sync (Slice 15) ───────────────────────────────────────────── */}
+      <section className="space-y-4">
+        <div className="flex items-center gap-2 pb-2 border-b border-border">
+          <FolderSync size={14} className="text-text-muted" />
+          <h2 className="text-sm font-semibold text-text-primary">Vault Sync</h2>
+          {syncState === 'done' && (
+            <CheckCircle2 size={14} className="ml-auto text-green-400" />
+          )}
+          {syncState === 'error' && (
+            <AlertCircle size={14} className="ml-auto text-red-400" />
+          )}
+        </div>
+
+        <p className="text-xs text-text-muted">
+          Force a full resync of the vault filesystem into the database and
+          vector store. Use this after adding notes directly to the
+          <code className="text-xs bg-bg-tertiary px-1 py-0.5 rounded mx-1">vault/</code>
+          directory, or after an import.
+        </p>
+
+        {syncError && (
+          <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-xs px-3 py-2 rounded">
+            {syncError}
+          </div>
+        )}
+
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleVaultSync}
+            disabled={syncState === 'running'}
+            className="flex items-center gap-2 px-4 py-2 bg-bg-elevated hover:bg-bg-tertiary border border-border rounded text-sm text-text-primary disabled:opacity-50 transition-colors"
+          >
+            {syncState === 'running'
+              ? <RefreshCw size={13} className="animate-spin text-accent-cyan" />
+              : syncState === 'done'
+                ? <CheckCircle2 size={13} className="text-green-400" />
+                : <FolderSync size={13} className="text-text-muted" />}
+            {syncState === 'running' ? 'Syncing…' : syncState === 'done' ? 'Sync complete' : 'Sync Now'}
+          </button>
+
+          {syncState !== 'idle' && (
+            <button
+              onClick={() => { setSyncState('idle'); setSyncLines([]); setSyncError(''); }}
+              className="text-xs text-text-faint hover:text-text-muted transition-colors"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+
+        {/* Streaming log terminal */}
+        {syncLines.length > 0 && (
+          <div
+            className="rounded border border-border bg-bg-tertiary font-mono text-xs text-text-secondary overflow-y-auto"
+            style={{ maxHeight: '220px' }}
+          >
+            <div className="px-3 py-2 space-y-0.5">
+              {syncLines.map((line, i) => {
+                const isError   = line.startsWith('error:');
+                const isSynced  = line.startsWith('synced:');
+                const isSkipped = line.startsWith('skipped:') || line.startsWith('total:') || line.startsWith('done:');
+                return (
+                  <div
+                    key={i}
+                    className={`leading-5 ${
+                      isError   ? 'text-red-400'
+                      : isSynced  ? 'text-green-400'
+                      : isSkipped ? 'text-text-faint'
+                      : 'text-text-secondary'
+                    }`}
+                  >
+                    {line}
+                  </div>
+                );
+              })}
+              <div ref={logEndRef} />
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* ── Security ───────────────────────────────────────────────────────────── */}
       <section className="space-y-4">
         <div className="flex items-center gap-2 pb-2 border-b border-border">
           <Shield size={14} className="text-text-muted" />
