@@ -508,14 +508,20 @@ async def create_note(
         graph_indexed=False,
         owner_id=current_user.id,
     )
+    # Explicitly initialise the tags collection to an empty list.
+    # SQLAlchemy's lazy="selectin" relationship does NOT pre-populate the
+    # in-memory list on a brand-new (pre-flush) instance — it stays None
+    # until either the object is loaded from the DB or we set it here.
+    # Without this, note.tags.append(tag) raises:
+    #   AttributeError: 'NoneType' object has no attribute 'append'
+    note.tags = []
+
     db.add(note)
 
     # Flush the Note INSERT so the row exists in the DB before we touch the
-    # tags relationship.  Then explicitly refresh the tags collection into the
-    # session — this populates note.tags as an empty list in-memory without
-    # firing a lazy SELECT, which would raise MissingGreenlet in async context.
+    # tags relationship.  The explicit note.tags = [] above ensures append()
+    # works on the in-memory collection before the DB round-trip.
     await db.flush()
-    await db.refresh(note, ["tags"])
 
     for tag_name in (data.tags or []):
         tag_result = await db.execute(select(Tag).where(Tag.name == tag_name))
@@ -639,6 +645,7 @@ async def get_or_create_daily_note(
             graph_indexed=False,
             owner_id=current_user.id,
         )
+        note.tags = []  # initialise collection — same fix as create_note
         db.add(note)
         await db.commit()
         await db.refresh(note)

@@ -33,10 +33,22 @@ test_engine is function-scoped: each test gets a brand-new in-memory SQLite
 database with tables freshly created and dropped. This eliminates UNIQUE
 constraint failures when multiple tests create notes with timestamp-based IDs
 that collide within the same second (common in fast CI runs).
+
+_sync_app / test_client isolation
+----------------------------------
+_sync_app is a *synchronous* pytest fixture.  pytest-asyncio cannot inject
+an async fixture (test_engine) into a sync fixture — the parameter would
+arrive as an unawaited coroutine.  To avoid this, _sync_app creates its
+own in-memory SQLite engine using asyncio.run(), completely independent of
+the async test_engine fixture.  The two fixture stacks are therefore:
+
+  async tests  : test_engine (async) → test_db / async_client / client
+  sync tests   : _sync_app (sync, own engine) → test_client
 """
 
 from __future__ import annotations
 
+import asyncio
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,8 +68,6 @@ from gnosis.main import create_app
 # Test database — in-memory SQLite, function-scoped for full isolation
 # ---------------------------------------------------------------------------
 
-# Each test function gets its own :memory: database so timestamp-based note IDs
-# never collide between tests and no state leaks between test cases.
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 
 
@@ -204,9 +214,6 @@ async def _make_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, No
                 yield session
 
         app.dependency_overrides[get_db] = override_get_db
-        # Override both auth dependency entrypoints:
-        # require_user  → used by get_vault_owner_ids (read paths)
-        # get_current_user → used directly by write endpoints in notes.py
         app.dependency_overrides[require_user] = _fake_require_user
         app.dependency_overrides[get_current_user] = _fake_require_user
 
@@ -238,48 +245,89 @@ async def client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, None]:
 
 # ---------------------------------------------------------------------------
 # Synchronous TestClient — used by test_tag_autocomplete, test_vault_sync_endpoint
+#
+# IMPORTANT: _sync_app must NOT depend on test_engine (an async fixture).
+# pytest cannot inject async fixtures into sync fixtures — the parameter
+# arrives as an unawaited coroutine object, breaking the session factory
+# and leaving settings.vault_path unpatched (→ FileNotFoundError on vault).
+#
+# Solution: _sync_app creates its own in-memory engine via asyncio.run(),
+# entirely independent of the async test_engine fixture.
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
-def _sync_app(test_engine, vault_dir):
-    """Build a fully-patched FastAPI app instance for sync TestClient use."""
-    with (
-        patch(
-            "gnosis.services.vector_store.ensure_collection",
-            return_value=None,
-        ),
-        patch(
-            "gnosis.services.vault_sync.start_vault_watcher",
-            new=_mock_start_vault_watcher,
-        ),
-        patch(
-            "gnosis.services.graph_rag.graph_rag.initialize",
-            new=AsyncMock(return_value=None),
-        ),
-    ):
-        from gnosis import config
-        from gnosis.core.auth import get_current_user, require_user
+def _sync_app():
+    """Build a fully-patched FastAPI app instance for sync TestClient use.
 
-        settings = config.get_settings()
-        settings.vault_path = str(vault_dir)
+    Creates its own in-memory SQLite engine synchronously so it does not
+    depend on the async test_engine fixture (which cannot be injected into
+    a sync fixture by pytest-asyncio).
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        vault = Path(tmpdir)
+        for folder in [
+            "00-inbox", "10-zettelkasten", "20-projects", "30-areas",
+            "40-resources", "50-archive", "60-journals", "70-sources", "80-meta",
+        ]:
+            (vault / folder).mkdir()
 
-        app = create_app()
-
-        session_factory = async_sessionmaker(
-            bind=test_engine, expire_on_commit=False
+        # Build the async engine synchronously via asyncio.run().
+        sync_engine = create_async_engine(
+            TEST_DB_URL,
+            echo=False,
+            connect_args={"check_same_thread": False},
         )
 
-        async def override_get_db():
-            async with session_factory() as session:
-                yield session
+        async def _create_tables():
+            async with sync_engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
 
-        app.dependency_overrides[get_db] = override_get_db
-        app.dependency_overrides[require_user] = _fake_require_user
-        app.dependency_overrides[get_current_user] = _fake_require_user
+        asyncio.run(_create_tables())
 
-        yield app
-        app.dependency_overrides.clear()
+        with (
+            patch(
+                "gnosis.services.vector_store.ensure_collection",
+                return_value=None,
+            ),
+            patch(
+                "gnosis.services.vault_sync.start_vault_watcher",
+                new=_mock_start_vault_watcher,
+            ),
+            patch(
+                "gnosis.services.graph_rag.graph_rag.initialize",
+                new=AsyncMock(return_value=None),
+            ),
+        ):
+            from gnosis import config
+            from gnosis.core.auth import get_current_user, require_user
+
+            settings = config.get_settings()
+            settings.vault_path = str(vault)
+
+            app = create_app()
+
+            session_factory = async_sessionmaker(
+                bind=sync_engine, expire_on_commit=False
+            )
+
+            async def override_get_db():
+                async with session_factory() as session:
+                    yield session
+
+            app.dependency_overrides[get_db] = override_get_db
+            app.dependency_overrides[require_user] = _fake_require_user
+            app.dependency_overrides[get_current_user] = _fake_require_user
+
+            yield app
+            app.dependency_overrides.clear()
+
+        async def _drop_tables():
+            async with sync_engine.begin() as conn:
+                await conn.run_sync(Base.metadata.drop_all)
+            await sync_engine.dispose()
+
+        asyncio.run(_drop_tables())
 
 
 @pytest.fixture

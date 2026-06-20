@@ -7,9 +7,15 @@ Verifies that every notes endpoint enforces owner_id scoping at the DB level:
   - Legacy owner_id=0 notes are not visible to normal users
   - The wikilink by-title search is also scoped
 
-Requires a running test database (set TEST_DATABASE_URL env var) and
-pytest-asyncio.  Run with:
-    pytest backend/tests/test_notes_isolation.py -v
+Each test gets a completely fresh in-memory SQLite database via the
+function-scoped engine+session pattern below.  This prevents UNIQUE
+constraint failures that occur when:
+  1. seed users (id=1, id=2) are re-inserted across tests sharing a table, or
+  2. generate_note_id() produces the same second-precision ID in fast CI runs.
+
+The module-level engine+app.dependency_overrides pattern from the original
+version is replaced with per-test fixtures so there is zero state leakage
+between test functions.
 """
 
 import pytest
@@ -17,57 +23,78 @@ import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
-from gnosis.main import app
-from gnosis.database import get_db
+from gnosis.database import Base, get_db
+from gnosis.main import create_app
 from gnosis.models.note import Note
 from gnosis.models.user import User
 from gnosis.core.auth import create_access_token, TokenData
 
 # ---------------------------------------------------------------------------
-# Fixtures
+# Per-test engine + app — function scope eliminates all UNIQUE collisions
 # ---------------------------------------------------------------------------
 
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 
-engine = create_async_engine(TEST_DB_URL, echo=False)
-TestSession = async_sessionmaker(engine, expire_on_commit=False)
 
-
-async def override_get_db():
-    async with TestSession() as session:
-        yield session
-
-
-app.dependency_overrides[get_db] = override_get_db
-
-
-@pytest_asyncio.fixture(scope="module", autouse=True)
-async def setup_db():
-    from gnosis.database import Base
+@pytest_asyncio.fixture
+async def iso_engine():
+    """Fresh in-memory SQLite engine per test function."""
+    engine = create_async_engine(TEST_DB_URL, echo=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    yield
+    yield engine
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
 
 
 @pytest_asyncio.fixture
-async def db_session():
-    async with TestSession() as session:
+async def iso_db(iso_engine):
+    """Session bound to the per-test engine."""
+    factory = async_sessionmaker(iso_engine, expire_on_commit=False)
+    async with factory() as session:
         yield session
 
 
+@pytest_asyncio.fixture
+async def iso_app(iso_engine):
+    """FastAPI app whose get_db is overridden to use the per-test engine."""
+    app = create_app()
+    factory = async_sessionmaker(iso_engine, expire_on_commit=False)
+
+    async def override_get_db():
+        async with factory() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = override_get_db
+    yield app
+    app.dependency_overrides.clear()
+
+
 def _token(user_id: int, email: str) -> str:
-    """Generate a signed JWT for the given user — matches create_access_token signature."""
+    """Generate a signed JWT for the given user."""
     return create_access_token(TokenData(user_id=user_id, email=email))
 
 
 @pytest_asyncio.fixture
-async def two_users_and_notes(db_session: AsyncSession):
-    """Seed two users each with one note, plus one legacy owner_id=0 note."""
-    from gnosis.services.markdown_parser import generate_note_id
+async def two_users_and_notes(iso_db: AsyncSession, iso_engine):
+    """Seed two users each with one note, plus one legacy owner_id=0 note.
 
-    # User model uses email + full_name, no 'username' or 'is_superuser' field.
+    Uses session.merge() instead of add_all() so re-running the fixture
+    against the same table (e.g. in a module-shared scenario) is safe.
+    Each test uses a fresh engine, so merge() is mainly defensive.
+
+    Note IDs use microsecond precision to avoid collisions when tests run
+    within the same second.
+    """
+    import time
+    from datetime import datetime, timezone
+
+    def _uid() -> str:
+        """Microsecond-precision ID: YYYYMMDD-HHmmss-ffffff."""
+        now = datetime.now(timezone.utc)
+        return now.strftime("%Y%m%d-%H%M%S-") + f"{now.microsecond:06d}"
+
     user_a = User(
         id=1,
         email="alice@test.local",
@@ -82,31 +109,40 @@ async def two_users_and_notes(db_session: AsyncSession):
         hashed_password="x",
         is_active=True,
     )
-    db_session.add_all([user_a, user_b])
+    # merge() = INSERT OR REPLACE — safe if rows already exist
+    user_a = await iso_db.merge(user_a)
+    user_b = await iso_db.merge(user_b)
+    await iso_db.flush()
+
+    id_a = _uid()
+    time.sleep(0.001)  # ensure distinct microsecond timestamps
+    id_b = _uid()
+    time.sleep(0.001)
+    id_leg = _uid()
 
     note_a = Note(
-        id=generate_note_id(), title="Alice Note", slug="alice-note",
+        id=id_a, title="Alice Note", slug=f"alice-note-{id_a}",
         body="# Alice\n[[Bob Note]]", body_html="", note_type="permanent",
-        status="active", vault_path="00-inbox/a.md", folder="00-inbox",
+        status="active", vault_path=f"00-inbox/a-{id_a}.md", folder="00-inbox",
         word_count=2, is_deleted=False, vector_indexed=False,
         graph_indexed=False, owner_id=1,
     )
     note_b = Note(
-        id=generate_note_id(), title="Bob Note", slug="bob-note",
+        id=id_b, title="Bob Note", slug=f"bob-note-{id_b}",
         body="# Bob", body_html="", note_type="permanent",
-        status="active", vault_path="00-inbox/b.md", folder="00-inbox",
+        status="active", vault_path=f"00-inbox/b-{id_b}.md", folder="00-inbox",
         word_count=1, is_deleted=False, vector_indexed=False,
         graph_indexed=False, owner_id=2,
     )
     note_legacy = Note(
-        id=generate_note_id(), title="Legacy Note", slug="legacy-note",
+        id=id_leg, title="Legacy Note", slug=f"legacy-note-{id_leg}",
         body="# Legacy", body_html="", note_type="permanent",
-        status="active", vault_path="00-inbox/l.md", folder="00-inbox",
+        status="active", vault_path=f"00-inbox/l-{id_leg}.md", folder="00-inbox",
         word_count=1, is_deleted=False, vector_indexed=False,
         graph_indexed=False, owner_id=0,
     )
-    db_session.add_all([note_a, note_b, note_legacy])
-    await db_session.commit()
+    iso_db.add_all([note_a, note_b, note_legacy])
+    await iso_db.commit()
     return user_a, user_b, note_a, note_b, note_legacy
 
 
@@ -115,12 +151,11 @@ async def two_users_and_notes(db_session: AsyncSession):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_list_notes_scoped(two_users_and_notes):
+async def test_list_notes_scoped(two_users_and_notes, iso_app):
     user_a, user_b, note_a, note_b, _ = two_users_and_notes
-    # Use user_a.email — User model has no 'username' field
     token_a = _token(user_a.id, user_a.email)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=iso_app), base_url="http://test") as client:
         resp = await client.get(
             "/api/v1/notes/",
             headers={"Authorization": f"Bearer {token_a}"},
@@ -132,11 +167,11 @@ async def test_list_notes_scoped(two_users_and_notes):
 
 
 @pytest.mark.asyncio
-async def test_get_note_cross_user_forbidden(two_users_and_notes):
+async def test_get_note_cross_user_forbidden(two_users_and_notes, iso_app):
     user_a, user_b, note_a, note_b, _ = two_users_and_notes
     token_a = _token(user_a.id, user_a.email)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=iso_app), base_url="http://test") as client:
         resp = await client.get(
             f"/api/v1/notes/{note_b.id}",
             headers={"Authorization": f"Bearer {token_a}"},
@@ -145,11 +180,11 @@ async def test_get_note_cross_user_forbidden(two_users_and_notes):
 
 
 @pytest.mark.asyncio
-async def test_update_note_cross_user_forbidden(two_users_and_notes):
+async def test_update_note_cross_user_forbidden(two_users_and_notes, iso_app):
     user_a, user_b, note_a, note_b, _ = two_users_and_notes
     token_a = _token(user_a.id, user_a.email)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=iso_app), base_url="http://test") as client:
         resp = await client.put(
             f"/api/v1/notes/{note_b.id}",
             json={"body": "Hacked"},
@@ -159,11 +194,11 @@ async def test_update_note_cross_user_forbidden(two_users_and_notes):
 
 
 @pytest.mark.asyncio
-async def test_delete_note_cross_user_forbidden(two_users_and_notes):
+async def test_delete_note_cross_user_forbidden(two_users_and_notes, iso_app):
     user_a, user_b, note_a, note_b, _ = two_users_and_notes
     token_a = _token(user_a.id, user_a.email)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=iso_app), base_url="http://test") as client:
         resp = await client.delete(
             f"/api/v1/notes/{note_b.id}",
             headers={"Authorization": f"Bearer {token_a}"},
@@ -172,11 +207,11 @@ async def test_delete_note_cross_user_forbidden(two_users_and_notes):
 
 
 @pytest.mark.asyncio
-async def test_legacy_owner_zero_hidden(two_users_and_notes):
+async def test_legacy_owner_zero_hidden(two_users_and_notes, iso_app):
     user_a, _, _, _, note_legacy = two_users_and_notes
     token_a = _token(user_a.id, user_a.email)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=iso_app), base_url="http://test") as client:
         resp = await client.get(
             "/api/v1/notes/",
             headers={"Authorization": f"Bearer {token_a}"},
@@ -186,11 +221,11 @@ async def test_legacy_owner_zero_hidden(two_users_and_notes):
 
 
 @pytest.mark.asyncio
-async def test_wikilink_search_scoped(two_users_and_notes):
+async def test_wikilink_search_scoped(two_users_and_notes, iso_app):
     user_a, user_b, note_a, note_b, _ = two_users_and_notes
     token_a = _token(user_a.id, user_a.email)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=iso_app), base_url="http://test") as client:
         resp = await client.get(
             "/api/v1/notes/by-title?q=Bob",
             headers={"Authorization": f"Bearer {token_a}"},
