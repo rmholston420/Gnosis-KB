@@ -19,11 +19,17 @@ Auth patching
 -------------
 require_user is overridden so every request is authenticated as
 FakeUser(id=1) without needing a real JWT or database User row.
+
+Isolation
+---------
+test_engine is function-scoped: each test gets a brand-new in-memory SQLite
+database with tables freshly created and dropped. This eliminates UNIQUE
+constraint failures when multiple tests create notes with timestamp-based IDs
+that collide within the same second (common in fast CI runs).
 """
 
 from __future__ import annotations
 
-import asyncio
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,30 +45,26 @@ from gnosis.database import Base, get_db
 from gnosis.main import create_app
 
 # ---------------------------------------------------------------------------
-# Test database — in-memory SQLite (clean slate every session; no file bleed)
+# Test database — in-memory SQLite, function-scoped for full isolation
 # ---------------------------------------------------------------------------
 
-# Use :memory: so no test_gnosis.db file persists between runs and causes
-# UNIQUE-constraint collisions on timestamp-based note IDs.
+# Each test function gets its own :memory: database so timestamp-based note IDs
+# never collide between tests and no state leaks between test cases.
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create an event loop shared across the test session."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
-
-
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture
 async def test_engine():
-    """Session-scoped async engine backed by in-memory SQLite."""
+    """Function-scoped async engine backed by in-memory SQLite.
+
+    Tables are created fresh before yielding and dropped on teardown.
+    Using function scope (not session scope) guarantees every test starts
+    with a completely empty database, preventing UNIQUE constraint failures
+    on timestamp-based note IDs when tests run quickly within the same second.
+    """
     engine = create_async_engine(
         TEST_DB_URL,
         echo=False,
-        # Required for :memory: with a session-scoped engine: share the same
-        # connection across the entire session so all fixtures see the same DB.
         connect_args={"check_same_thread": False},
     )
     async with engine.begin() as conn:
@@ -75,13 +77,12 @@ async def test_engine():
 
 @pytest_asyncio.fixture
 async def test_db(test_engine) -> AsyncGenerator[AsyncSession, None]:
-    """Provide a clean, rolled-back database session per test."""
+    """Provide a clean database session per test."""
     session_factory = async_sessionmaker(
         bind=test_engine, expire_on_commit=False
     )
     async with session_factory() as session:
         yield session
-        await session.rollback()
 
 
 # ---------------------------------------------------------------------------

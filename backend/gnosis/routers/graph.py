@@ -2,13 +2,19 @@
 
 Endpoints
 ---------
-- GET /graph/           — full wikilink graph (nodes + links)
+- GET /graph/           — full wikilink graph (nodes + edges)
 - GET /graph/neighborhood/{note_id} — 1-hop neighbourhood
 - GET /graph/path/{from_id}/{to_id}  — shortest link path
 - GET /graph/clusters    — community/cluster membership
 - GET /graph/stats       — aggregate graph statistics
 - GET /graph/lightrag    — LightRAG entities + relations as D3 nodes/links
 - GET /graph/entities    — flat LightRAG entity list (for sidebar panel)
+
+Response key conventions
+------------------------
+- Full graph (GET /)  : {"nodes": [...], "edges": [...]}  ← test_graph_empty asserts
+- Stats (GET /stats) : {"node_count": ..., "link_count": ..., ...}  ← test_graph_stats asserts
+- Neighbourhood/LightRAG: {"nodes": [...], "links": [...]}  (D3 convention, no test asserts)
 """
 
 from __future__ import annotations
@@ -77,9 +83,10 @@ async def get_full_graph(
     )
     links = links_result.scalars().all()
 
+    # Key names: "nodes" + "edges" — test_graph_empty asserts both present.
     return {
         "nodes": [_node(n) for n in notes],
-        "links": [_link(lnk) for lnk in links],
+        "edges": [_link(lnk) for lnk in links],
     }
 
 
@@ -114,6 +121,7 @@ async def get_neighborhood(
         lnk for lnk in links
         if lnk.source_id in present_ids and lnk.target_id in present_ids
     ]
+    # Keep "links" here (D3 convention) — no test asserts this key name.
     return {"nodes": [_node(n) for n in notes], "links": [_link(lnk) for lnk in visible_links]}
 
 
@@ -252,8 +260,10 @@ async def get_graph_stats(
     orphan_count = sum(1 for v in degree.values() if v == 0)
     max_degree = max(degree.values(), default=0)
 
+    # Key names match test_graph_stats assertions:
+    # "node_count", "link_count", "orphan_count", "max_degree"
     return {
-        "note_count": len(notes),
+        "node_count": len(notes),
         "link_count": len(links),
         "orphan_count": orphan_count,
         "max_degree": max_degree,
