@@ -43,6 +43,7 @@ from gnosis.routers import (
     tags,
     users,
 )
+from gnosis.services.vault_sync import start_vault_watcher
 
 logging.basicConfig(
     level=logging.INFO,
@@ -53,11 +54,20 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Ensure tables exist on startup (dev convenience; production uses Alembic)."""
+    """Startup: create tables, start vault watcher. Shutdown: stop watcher."""
+    # 1. Ensure all SQLAlchemy tables exist (dev convenience; prod uses Alembic)
     async with get_engine().begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Gnosis API ready — database tables ensured")
+
+    # 2. Start vault filesystem watcher + initial full sync
+    observer = await start_vault_watcher()
+
     yield
+
+    # 3. Graceful shutdown
+    observer.stop()
+    observer.join()
     logger.info("Gnosis API shutting down")
 
 
