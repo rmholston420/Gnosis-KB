@@ -95,46 +95,61 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("Gnosis API shutting down")
 
 
-_settings = get_settings()
+def create_app() -> FastAPI:
+    """Application factory — returns a fully-configured FastAPI instance.
 
-app = FastAPI(
-    title="Gnosis Knowledge Base API",
-    version="0.6.0",
-    description=(
-        "REST + SSE backend for the Gnosis personal knowledge management system. "
-        "Features: vault sync, Zettelkasten notes, LightRAG graph-RAG, "
-        "spaced-repetition review, AI critique, multi-user vault sharing."
-    ),
-    lifespan=lifespan,
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
-    openapi_url="/api/openapi.json",
-)
+    Used by:
+    - Production / Docker: module-level ``app`` below calls this once.
+    - Tests: ``conftest.py`` calls this per-session so dependency overrides
+      (e.g. test DB, mock vault) can be applied before the first request.
+    """
+    _settings = get_settings()
 
-# Rate limiting
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    application = FastAPI(
+        title="Gnosis Knowledge Base API",
+        version="0.6.0",
+        description=(
+            "REST + SSE backend for the Gnosis personal knowledge management system. "
+            "Features: vault sync, Zettelkasten notes, LightRAG graph-RAG, "
+            "spaced-repetition review, AI critique, multi-user vault sharing."
+        ),
+        lifespan=lifespan,
+        docs_url="/api/docs",
+        redoc_url="/api/redoc",
+        openapi_url="/api/openapi.json",
+    )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_settings.cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    # Rate limiting
+    application.state.limiter = limiter
+    application.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-API_V1 = "/api/v1"
-app.include_router(health.router,        prefix=API_V1)
-app.include_router(auth.router,          prefix=API_V1)
-app.include_router(notes.router,         prefix=API_V1)
-app.include_router(search.router,        prefix=API_V1)
-app.include_router(ai.router,            prefix=API_V1)
-app.include_router(graph.router,         prefix=API_V1)
-app.include_router(query.router,         prefix=API_V1)
-app.include_router(review.router,        prefix=API_V1)
-app.include_router(export.router,        prefix=API_V1)
-app.include_router(tags.router,          prefix=API_V1)
-app.include_router(vault_router.router,  prefix=API_V1)  # Slice 15
-app.include_router(ingest.router,        prefix=API_V1)
-app.include_router(users.router,         prefix=API_V1)
-app.include_router(admin_router.router,  prefix=API_V1)  # Slice 18
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=_settings.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    API_V1 = "/api/v1"
+    application.include_router(health.router,        prefix=API_V1)
+    application.include_router(auth.router,          prefix=API_V1)
+    application.include_router(notes.router,         prefix=API_V1)
+    application.include_router(search.router,        prefix=API_V1)
+    application.include_router(ai.router,            prefix=API_V1)
+    application.include_router(graph.router,         prefix=API_V1)
+    application.include_router(query.router,         prefix=API_V1)
+    application.include_router(review.router,        prefix=API_V1)
+    application.include_router(export.router,        prefix=API_V1)
+    application.include_router(tags.router,          prefix=API_V1)
+    application.include_router(vault_router.router,  prefix=API_V1)  # Slice 15
+    application.include_router(ingest.router,        prefix=API_V1)
+    application.include_router(users.router,         prefix=API_V1)
+    application.include_router(admin_router.router,  prefix=API_V1)  # Slice 18
+
+    return application
+
+
+# Module-level app instance — used by uvicorn / gunicorn in production.
+# Tests should call create_app() directly so they get an isolated instance.
+app = create_app()
