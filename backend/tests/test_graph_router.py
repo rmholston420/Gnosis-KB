@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from gnosis.routers.graph import (
     get_full_graph,
     get_neighborhood,
-    get_shortest_path,
+    get_path,
     get_clusters,
     get_graph_stats,
 )
@@ -127,29 +127,28 @@ async def test_get_neighborhood_with_links():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_get_shortest_path_same_node():
-    result = await get_shortest_path(
+async def test_get_path_same_node():
+    result = await get_path(
         from_id="n1", to_id="n1", db=AsyncMock(), owner_ids={1}
     )
     assert result["path"] == ["n1"]
 
 
 @pytest.mark.asyncio
-async def test_get_shortest_path_no_path_raises_404():
-    # no links exist at all
+async def test_get_path_no_path_raises_404():
     r = MagicMock(); r.scalars.return_value.all.return_value = []
     sess = AsyncMock(); sess.execute = AsyncMock(return_value=r)
     with pytest.raises(HTTPException) as exc_info:
-        await get_shortest_path(from_id="n1", to_id="n2", db=sess, owner_ids={1})
+        await get_path(from_id="n1", to_id="n2", db=sess, owner_ids={1})
     assert exc_info.value.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_get_shortest_path_direct_link():
+async def test_get_path_direct_link():
     lnk = _link("n1", "n2")
     r = MagicMock(); r.scalars.return_value.all.return_value = [lnk]
     sess = AsyncMock(); sess.execute = AsyncMock(return_value=r)
-    result = await get_shortest_path(from_id="n1", to_id="n2", db=sess, owner_ids={1})
+    result = await get_path(from_id="n1", to_id="n2", db=sess, owner_ids={1})
     assert "n1" in result["path"]
     assert "n2" in result["path"]
 
