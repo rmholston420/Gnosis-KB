@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { Search, Plus, Moon } from 'lucide-react';
+import { Search, Plus } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 
 export default function TopBar() {
@@ -18,7 +18,7 @@ export default function TopBar() {
         <Search size={14} className="text-text-muted flex-shrink-0" />
         <input
           type="text"
-          placeholder="Search vault... (Enter)"
+          placeholder="Search vault… (Enter)"
           className="bg-transparent text-sm text-text-primary placeholder-text-muted outline-none flex-1 min-w-0"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
@@ -27,7 +27,8 @@ export default function TopBar() {
       </div>
       <button
         onClick={() => navigate('/notes/new')}
-        className="flex items-center gap-1.5 px-3 py-1.5 bg-accent-blue hover:bg-blue-600 text-white text-sm rounded transition-colors"
+        className="flex items-center gap-1.5 px-3 py-1.5 text-white text-sm rounded transition-opacity hover:opacity-80"
+        style={{ backgroundColor: '#1f6feb' }}
       >
         <Plus size={14} />
         <span className="hidden sm:inline">New Note</span>
