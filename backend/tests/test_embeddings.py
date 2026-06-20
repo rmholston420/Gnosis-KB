@@ -1,62 +1,125 @@
 """Tests for gnosis/services/embeddings.py.
 
-Public API:
-  embed_dense(text: str) -> list[float]
-    Uses the Qdrant-configured dense embedding model.
-    May be sync or async depending on the provider.
+Real API:
+  embed_dense(text: str) -> list[float]  (768-dim, uses fastembed TextEmbedding)
+  embed_colbert(text: str) -> list[list[float]]  (128-dim multivec)
+  get_dense_model() -> TextEmbedding  (lazy-loaded singleton)
+  get_colbert_model() -> LateInteractionTextEmbedding  (lazy-loaded singleton)
 
-All external model calls are mocked.
+All fastembed model loading is mocked via patch on the module-level getters.
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 import pytest
 
 
-@pytest.mark.asyncio
-async def test_embed_dense_returns_list():
-    """embed_dense with a mocked provider should return a float list."""
+# ---------------------------------------------------------------------------
+# embed_dense
+# ---------------------------------------------------------------------------
+
+def test_embed_dense_returns_list_of_floats():
     from gnosis.services.embeddings import embed_dense
 
-    # Patch whatever the internal implementation calls
-    with patch("gnosis.services.embeddings.get_settings") as mock_settings:
-        mock_settings.return_value.embedding_provider = "openai"
-        mock_settings.return_value.openai_api_key = "sk-test"
-        mock_settings.return_value.embedding_model = "text-embedding-3-small"
-        mock_settings.return_value.embedding_dimensions = 10
+    mock_model = MagicMock()
+    mock_model.embed.return_value = [[0.1, 0.2, 0.3] + [0.0] * 765]  # 768-dim
 
-        fake_data = MagicMock()
-        fake_data.embedding = [0.1] * 10
-        fake_response = MagicMock()
-        fake_response.data = [fake_data]
-
-        fake_client = MagicMock()
-        fake_client.embeddings.create = MagicMock(return_value=fake_response)
-
-        fake_openai = MagicMock()
-        fake_openai.OpenAI.return_value = fake_client
-
-        with patch.dict("sys.modules", {"openai": fake_openai}):
-            try:
-                result = embed_dense("hello world")
-                if hasattr(result, "__await__") or hasattr(result, "__aiter__"):
-                    import asyncio
-                    result = await result
-            except Exception:
-                # If the internal implementation fails due to mock mismatch,
-                # just verify the function is importable and callable
-                result = [0.1] * 10
+    with patch("gnosis.services.embeddings.get_dense_model", return_value=mock_model):
+        result = embed_dense("hello world")
 
     assert isinstance(result, list)
+    assert all(isinstance(x, float) for x in result)
+    assert len(result) == 768
 
 
-def test_embed_dense_is_callable():
-    """Smoke test: embed_dense can be imported and is callable."""
+def test_embed_dense_calls_model_embed_with_list():
     from gnosis.services.embeddings import embed_dense
-    assert callable(embed_dense)
+
+    mock_model = MagicMock()
+    mock_model.embed.return_value = [[float(i) for i in range(768)]]
+
+    with patch("gnosis.services.embeddings.get_dense_model", return_value=mock_model):
+        embed_dense("test input")
+
+    mock_model.embed.assert_called_once_with(["test input"])
 
 
-def test_embeddings_module_exports():
-    """Verify expected names are exported from the embeddings module."""
+def test_embed_dense_values_are_floats():
+    from gnosis.services.embeddings import embed_dense
+
+    mock_model = MagicMock()
+    mock_model.embed.return_value = [[i * 0.001 for i in range(768)]]
+
+    with patch("gnosis.services.embeddings.get_dense_model", return_value=mock_model):
+        result = embed_dense("check types")
+
+    assert result[0] == 0.0
+    assert result[1] == 0.001
+
+
+# ---------------------------------------------------------------------------
+# embed_colbert
+# ---------------------------------------------------------------------------
+
+def test_embed_colbert_returns_list_of_lists():
+    from gnosis.services.embeddings import embed_colbert
+
+    # 5 tokens x 128-dim
+    mock_tokens = [[float(i % 128) for i in range(128)] for _ in range(5)]
+    mock_model = MagicMock()
+    mock_model.embed.return_value = [mock_tokens]
+
+    with patch("gnosis.services.embeddings.get_colbert_model", return_value=mock_model):
+        result = embed_colbert("hello world")
+
+    assert isinstance(result, list)
+    assert isinstance(result[0], list)
+    assert len(result[0]) == 128
+    assert all(isinstance(x, float) for x in result[0])
+
+
+def test_embed_colbert_calls_model_embed():
+    from gnosis.services.embeddings import embed_colbert
+
+    mock_model = MagicMock()
+    mock_model.embed.return_value = [[[0.1] * 128]]
+
+    with patch("gnosis.services.embeddings.get_colbert_model", return_value=mock_model):
+        embed_colbert("text")
+
+    mock_model.embed.assert_called_once_with(["text"])
+
+
+# ---------------------------------------------------------------------------
+# get_dense_model — lazy loading and caching
+# ---------------------------------------------------------------------------
+
+def test_get_dense_model_caches_instance():
+    """Calling get_dense_model() twice returns the same object."""
     import gnosis.services.embeddings as emb
-    assert hasattr(emb, "embed_dense")
+
+    mock_model = MagicMock()
+    fake_fastembed = MagicMock()
+    fake_fastembed.TextEmbedding.return_value = mock_model
+
+    orig = emb._dense_model
+    emb._dense_model = None
+    try:
+        with patch.dict("sys.modules", {"fastembed": fake_fastembed}):
+            m1 = emb.get_dense_model()
+            m2 = emb.get_dense_model()
+        assert m1 is m2
+    finally:
+        emb._dense_model = orig
+
+
+# ---------------------------------------------------------------------------
+# Module exports
+# ---------------------------------------------------------------------------
+
+def test_embeddings_module_exports_expected_names():
+    import gnosis.services.embeddings as emb
+    assert callable(emb.embed_dense)
+    assert callable(emb.embed_colbert)
+    assert callable(emb.get_dense_model)
+    assert callable(emb.get_colbert_model)

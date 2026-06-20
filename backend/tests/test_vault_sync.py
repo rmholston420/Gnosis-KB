@@ -6,12 +6,14 @@ Public API:
   start_vault_watcher(owner_id: int = 1) -> Observer
   VaultEventHandler (class)
 
-All DB I/O goes through AsyncSessionFactory which we mock.
+_sync_file imports python_frontmatter and slugify at call time;
+we patch them via sys.modules when we want the file-level sync to run.
+For structural tests we just mock _get_vault_path to an empty/minimal dir.
 """
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch, call
+from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
@@ -24,15 +26,27 @@ def _make_db_session():
     db.execute = AsyncMock(return_value=result)
     db.commit = AsyncMock()
     db.flush = AsyncMock()
-    # Context manager support for `async with AsyncSessionFactory() as db:`
     db.__aenter__ = AsyncMock(return_value=db)
     db.__aexit__ = AsyncMock(return_value=False)
     return db
 
 
+def _make_pf_post(title="Test Note", body="Body text.", tags=None):
+    """Fake python_frontmatter Post returned by python_frontmatter.load()."""
+    post = MagicMock()
+    post.metadata = {
+        "title": title,
+        "type": "permanent",
+        "status": "active",
+        "tags": tags or [],
+    }
+    post.content = body
+    return post
+
+
 @pytest.mark.asyncio
 async def test_run_full_sync_yields_strings(tmp_path):
-    """run_full_sync_for_user must yield at least one string log line."""
+    """run_full_sync_for_user must yield string log lines."""
     from gnosis.services.vault_sync import run_full_sync_for_user
 
     db = _make_db_session()
@@ -48,7 +62,7 @@ async def test_run_full_sync_yields_strings(tmp_path):
 
 @pytest.mark.asyncio
 async def test_run_full_sync_empty_vault(tmp_path):
-    """An empty vault directory produces no file-sync lines but completes."""
+    """An empty vault directory completes without exception."""
     from gnosis.services.vault_sync import run_full_sync_for_user
 
     db = _make_db_session()
@@ -68,16 +82,26 @@ async def test_run_full_sync_with_markdown_file(tmp_path):
     from gnosis.services.vault_sync import run_full_sync_for_user
 
     md = tmp_path / "test-note.md"
-    md.write_text("---\ntitle: Test\ntags: [x]\n---\nContent.")
+    md.write_text("---\ntitle: Test\ntags:\n  - x\n---\nContent.")
 
     db = _make_db_session()
     fake_factory = MagicMock(return_value=db)
+
+    # _sync_file does: import python_frontmatter; import slugify
+    fake_pf = MagicMock()
+    fake_pf.load.return_value = _make_pf_post()
+    fake_slugify_mod = MagicMock()
+    fake_slugify_mod.slugify.return_value = "test-note"
 
     with patch("gnosis.services.vault_sync.AsyncSessionFactory", fake_factory), \
          patch("gnosis.services.vault_sync._get_vault_path", return_value=tmp_path), \
          patch("gnosis.services.vault_sync._resolve_owner_id", new_callable=AsyncMock, return_value=1), \
          patch("gnosis.services.vault_sync.upsert_note"), \
-         patch("gnosis.services.vault_sync.delete_note"):
+         patch("gnosis.services.vault_sync.delete_note"), \
+         patch.dict("sys.modules", {
+             "python_frontmatter": fake_pf,
+             "slugify": fake_slugify_mod,
+         }):
         lines = [line async for line in run_full_sync_for_user(1)]
 
     assert isinstance(lines, list)
@@ -100,7 +124,6 @@ async def test_run_full_sync_skips_dot_dirs(tmp_path):
          patch("gnosis.services.vault_sync._resolve_owner_id", new_callable=AsyncMock, return_value=1):
         lines = [line async for line in run_full_sync_for_user(1)]
 
-    # The hidden config.md should NOT appear in sync lines as a processed file
     assert isinstance(lines, list)
 
 
