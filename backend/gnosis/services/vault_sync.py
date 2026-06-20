@@ -23,7 +23,7 @@ from watchdog.observers import Observer
 
 from gnosis.config import get_settings
 from gnosis.database import AsyncSessionFactory
-from gnosis.services.markdown_parser import parse_markdown_file
+from gnosis.services.markdown_parser import parse_markdown_file  # noqa: F401 (alias)
 from gnosis.services.vector_store import upsert_note, delete_note_vector
 
 logger = logging.getLogger(__name__)
@@ -176,9 +176,18 @@ async def _sync_file(path: Path, owner_id: int, db_session: object) -> str:
 
     await db.commit()
 
-    # Vector upsert (non-fatal)
+    # Vector upsert (non-fatal) — pass all required positional args
     try:
-        upsert_note(note_id, title, body, folder, note_type, owner_id)
+        upsert_note(
+            note_id,
+            title,
+            body,
+            folder,
+            note_type,
+            status,
+            tags_raw,
+            owner_id,
+        )
     except Exception as vec_exc:  # noqa: BLE001
         logger.warning("Vector upsert skipped for %s: %s", note_id, vec_exc)
 

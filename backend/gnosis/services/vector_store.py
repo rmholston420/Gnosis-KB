@@ -244,3 +244,8 @@ def delete_note(note_id: str) -> None:
         points_selector=models.PointIdsList(points=[point_uuid]),
     )
     logger.debug("Deleted note %s (uuid=%s) from Qdrant", note_id, point_uuid)
+
+
+# Backward-compat alias — vault_sync.py and other callers written during
+# earlier build slices import `delete_note_vector`. Both names are identical.
+delete_note_vector = delete_note
