@@ -7,7 +7,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from bs4 import BeautifulSoup  # real bs4 -- used inside our fake module
 
 import gnosis.services.document_parser as dp
 from gnosis.services.document_parser import ParsedDocument, detect_format
@@ -31,10 +30,34 @@ def _make_fake_httpx(html: str):
     return fake
 
 
-def _make_fake_bs4():
-    """Fake bs4 module that delegates to the real BeautifulSoup."""
+def _make_fake_bs4(title_text: str, body_text: str):
+    """
+    Fake bs4 module. BeautifulSoup(html, parser) returns a mock soup whose
+    .find('title').get_text() == title_text and .find('main').get_text()
+    returns body_text.
+    """
+    mock_title_tag = MagicMock()
+    mock_title_tag.get_text.return_value = title_text
+
+    mock_main = MagicMock()
+    mock_main.get_text.return_value = body_text
+
+    mock_soup = MagicMock()
+    mock_soup.find_all.return_value = []
+
+    def _soup_find(tag=None, **kwargs):
+        if tag == "title":
+            return mock_title_tag
+        if tag == "main":
+            return mock_main
+        return None
+    mock_soup.find.side_effect = _soup_find
+    mock_soup.get_text.return_value = body_text
+
+    mock_bs_class = MagicMock(return_value=mock_soup)
+
     fake = types.ModuleType("bs4")
-    fake.BeautifulSoup = BeautifulSoup  # type: ignore
+    fake.BeautifulSoup = mock_bs_class  # type: ignore
     return fake
 
 
@@ -80,7 +103,10 @@ def test_parse_pdf_no_meta_derives_title_from_stem():
 async def test_parse_url_returns_parsed_document():
     html = "<html><head><title>Hello</title></head><body><main><p>World</p></main></body></html>"
 
-    with patch.dict(sys.modules, {"httpx": _make_fake_httpx(html), "bs4": _make_fake_bs4()}):
+    with patch.dict(sys.modules, {
+        "httpx": _make_fake_httpx(html),
+        "bs4": _make_fake_bs4("Hello", "World"),
+    }):
         result = await dp.parse_url("http://example.com")
 
     assert isinstance(result, ParsedDocument)
@@ -93,7 +119,10 @@ async def test_parse_url_returns_parsed_document():
 async def test_parse_url_sets_title():
     html = "<html><head><title>Stripped Title</title></head><body><p>content</p></body></html>"
 
-    with patch.dict(sys.modules, {"httpx": _make_fake_httpx(html), "bs4": _make_fake_bs4()}):
+    with patch.dict(sys.modules, {
+        "httpx": _make_fake_httpx(html),
+        "bs4": _make_fake_bs4("Stripped Title", "content"),
+    }):
         result = await dp.parse_url("http://example.com/page")
 
     assert result.title == "Stripped Title"

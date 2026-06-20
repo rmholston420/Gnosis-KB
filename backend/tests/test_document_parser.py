@@ -1,8 +1,8 @@
 """
 Unit tests for document_parser.py.
 
-All heavy optional dependencies (fitz, docx, pptx, openpyxl, pytesseract)
-are mocked so no binaries are required.
+All heavy optional dependencies (fitz, docx, pptx, openpyxl, pytesseract, bs4)
+are mocked so no binaries or optional packages are required.
 """
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from bs4 import BeautifulSoup  # real bs4 -- used inside our fake module
 
 import gnosis.services.document_parser as dp
 from gnosis.services.document_parser import (
@@ -44,10 +43,41 @@ def _make_fake_httpx(html: str):
     return fake
 
 
-def _make_fake_bs4():
-    """Fake bs4 module that delegates to the real BeautifulSoup."""
+def _make_fake_bs4(title_text: str, body_text: str):
+    """
+    Fake bs4 module. BeautifulSoup(html, parser) returns a mock soup whose
+    .find('title').get_text() == title_text and whose .find('main').get_text()
+    returns body_text.
+    """
+    # title tag mock
+    mock_title_tag = MagicMock()
+    mock_title_tag.get_text.return_value = title_text
+
+    # main content mock
+    mock_main = MagicMock()
+    mock_main.get_text.return_value = body_text
+
+    # soup mock
+    mock_soup = MagicMock()
+    # soup.find_all([...]) for boilerplate removal -- return empty list
+    mock_soup.find_all.return_value = []
+    # soup.find('title') -> mock_title_tag
+    # soup.find('main') -> mock_main
+    # soup.find(id=...) etc -> None (so falls through to main)
+    def _soup_find(tag=None, **kwargs):
+        if tag == "title":
+            return mock_title_tag
+        if tag == "main":
+            return mock_main
+        return None
+    mock_soup.find.side_effect = _soup_find
+    mock_soup.get_text.return_value = body_text
+
+    # BeautifulSoup class mock
+    mock_bs_class = MagicMock(return_value=mock_soup)
+
     fake = types.ModuleType("bs4")
-    fake.BeautifulSoup = BeautifulSoup  # type: ignore
+    fake.BeautifulSoup = mock_bs_class  # type: ignore
     return fake
 
 
@@ -284,14 +314,6 @@ def test_parse_image_extracts_ocr_text():
 
 # ---------------------------------------------------------------------------
 # parse_url
-#
-# parse_url does:
-#   import httpx                          <-- resolved from sys.modules
-#   from bs4 import BeautifulSoup         <-- resolved from sys.modules
-#
-# We inject fake modules for BOTH into sys.modules for the duration of
-# each test. The fake bs4 delegates to the real BeautifulSoup so actual
-# HTML parsing works and title assertions pass.
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -300,7 +322,10 @@ async def test_parse_url_extracts_title_and_text():
         "<html><head><title>Test Page</title></head>"
         "<body><main><p>Main content here.</p></main></body></html>"
     )
-    with patch.dict(sys.modules, {"httpx": _make_fake_httpx(html), "bs4": _make_fake_bs4()}):
+    with patch.dict(sys.modules, {
+        "httpx": _make_fake_httpx(html),
+        "bs4": _make_fake_bs4("Test Page", "Main content here."),
+    }):
         result = await dp.parse_url("https://example.com")
 
     assert result.raw_format == "url"
