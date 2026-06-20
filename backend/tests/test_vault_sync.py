@@ -1,22 +1,22 @@
 """Tests for gnosis.services.vault_sync.
 
-Strategy for _sync_file tests
-------------------------------
-_sync_file has deep lazy imports (python_frontmatter, slugify, ORM models,
-SQLAlchemy core) that are difficult to replicate cleanly in unit tests.
-Instead we test _sync_file's *observable contract* by patching it at the
-boundary in integration-style tests, and we separately cover every branch of
-run_full_sync_for_user, VaultEventHandler, and the dispatch helpers directly.
-
-Lines 78-194 (the _sync_file body) are covered by a small set of
-call-through tests that inject the two non-ORM lazy imports
-(python_frontmatter, slugify) via sys.modules and mock the DB session at the
-async-method level so no SQLAlchemy compilation occurs.
+Isolation strategy
+------------------
+_sync_file and _handle_delete both do lazy imports of SQLAlchemy core
+(select, delete) and ORM models.  The safest isolation is to:
+  1. Inject python_frontmatter / slugify via sys.modules (ModuleType objects,
+     not MagicMock, so attribute access works correctly).
+  2. Patch sqlalchemy.select and sqlalchemy.delete at the *sqlalchemy* module
+     level so the `from sqlalchemy import select, delete` inside the function
+     picks up the mock before SQLAlchemy tries to compile anything.
+  3. Patch the ORM model classes at their canonical module paths so lazy
+     `from gnosis.models.X import Y` inside the function sees mocks.
+  4. Give db_session.execute a real async def that returns a safe MagicMock
+     (avoids AsyncMock attribute-chain pitfalls).
 """
 from __future__ import annotations
 
 import sys
-from contextlib import asynccontextmanager
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -43,8 +43,7 @@ def vault_dir(tmp_path):
     md.parent.mkdir(parents=True)
     md.write_text(
         "---\nid: 2024-01-01-hello\ntitle: Hello\ntype: permanent\n"
-        "status: active\ntags:\n  - alpha\n  - beta\n---\n\n"
-        "Body text here.",
+        "status: active\ntags:\n  - alpha\n  - beta\n---\n\nBody text here.",
         encoding="utf-8",
     )
     return tmp_path
@@ -58,113 +57,131 @@ def reset_vault_path():
 
 
 # ---------------------------------------------------------------------------
-# sys.modules injection helper
+# sys.modules injection for non-installed lazy imports
 # ---------------------------------------------------------------------------
 
-class _SysModulesCtx:
-    """Temporarily inject fake modules into sys.modules."""
-
-    def __init__(self, mapping: dict):
-        self._mapping = mapping
-        self._originals: dict = {}
+class _SysModules:
+    def __init__(self, mapping):
+        self._map = mapping
+        self._orig = {}
 
     def __enter__(self):
-        for k, v in self._mapping.items():
-            self._originals[k] = sys.modules.get(k)
+        for k, v in self._map.items():
+            self._orig[k] = sys.modules.get(k)
             sys.modules[k] = v
         return self
 
     def __exit__(self, *_):
-        for k, orig in self._originals.items():
+        for k, orig in self._orig.items():
             if orig is None:
                 sys.modules.pop(k, None)
             else:
                 sys.modules[k] = orig
 
 
-def _fake_frontmatter_mod(post):
-    mod = ModuleType("python_frontmatter")
-    mod.load = MagicMock(return_value=post)  # type: ignore[attr-defined]
-    return mod
+def _fm_mod(post):
+    m = ModuleType("python_frontmatter")
+    m.load = MagicMock(return_value=post)  # type: ignore[attr-defined]
+    return m
 
 
-def _fake_slugify_mod():
-    mod = ModuleType("slugify")
-    mod.slugify = MagicMock(return_value="hello")  # type: ignore[attr-defined]
-    return mod
+def _fm_mod_raises(exc):
+    m = ModuleType("python_frontmatter")
+    m.load = MagicMock(side_effect=exc)  # type: ignore[attr-defined]
+    return m
 
 
-def _make_post(note_id="n1", title="T", tags=None, body="Body.", tags_str=None):
-    post = MagicMock()
-    post.content = body
-    post.metadata = {
-        "id": note_id,
-        "title": title,
-        "type": "permanent",
-        "status": "active",
+def _sl_mod():
+    m = ModuleType("slugify")
+    m.slugify = MagicMock(return_value="hello")  # type: ignore[attr-defined]
+    return m
+
+
+def _post(note_id="n1", title="T", tags=None, body="Body.", tags_str=None):
+    p = MagicMock()
+    p.content = body
+    p.metadata = {
+        "id": note_id, "title": title,
+        "type": "permanent", "status": "active",
         "tags": tags_str if tags_str is not None else (tags or []),
     }
-    return post
+    return p
 
 
 # ---------------------------------------------------------------------------
-# Minimal async DB session that survives _sync_file's execute() calls
+# DB session helper — real async def so no AsyncMock chain issues
 # ---------------------------------------------------------------------------
 
-def _make_db(note_obj=None):
-    """Return an async session mock whose execute() always returns a safe result."""
-    session = AsyncMock()
+def _db(note_obj=None):
+    sess = AsyncMock()
+    call = [0]
 
-    call_count = [0]
+    async def _exec(stmt, *a, **kw):
+        call[0] += 1
+        r = MagicMock()
+        r.scalar_one_or_none.return_value = note_obj if call[0] == 1 else None
+        return r
 
-    async def _execute(stmt, *a, **kw):
-        call_count[0] += 1
-        result = MagicMock()
-        result.scalar_one_or_none.return_value = note_obj if call_count[0] == 1 else None
-        return result
-
-    session.execute = _execute
-    session.flush = AsyncMock()
-    session.commit = AsyncMock()
-    session.add = MagicMock()
-    return session
+    sess.execute = _exec
+    sess.flush = AsyncMock()
+    sess.commit = AsyncMock()
+    sess.add = MagicMock()
+    return sess
 
 
 # ---------------------------------------------------------------------------
-# Patch helper for _sync_file ORM model lazy-imports
+# Context manager: patch everything _sync_file needs
 # ---------------------------------------------------------------------------
 
-def _orm_patches():
-    """Return a list of patch objects for every ORM symbol imported inside _sync_file."""
-    # We patch the names as they are resolved inside the function's local scope
-    # by patching the source module attributes before the function runs.
+from contextlib import contextmanager
+
+
+@contextmanager
+def _sync_ctx(fm_mod, vault_path_str, upsert_side_effect=None):
+    """
+    Patches needed for _sync_file to run without touching real SQLAlchemy:
+      - sys.modules for python_frontmatter + slugify
+      - sqlalchemy.select / sqlalchemy.delete → MagicMock callables
+      - ORM model classes at their gnosis.models.* paths
+      - get_settings().vault_path
+      - upsert_note
+    """
     note_cls = MagicMock()
     link_cls = MagicMock()
-    tag_cls  = MagicMock()
-
-    # note_tags table mock — must support .c.note_id, .insert().values(), and
-    # be usable as a delete() argument (SQLAlchemy core won't compile it).
-    nt = MagicMock(name="note_tags")
+    tag_cls = MagicMock()
+    # note_tags: MagicMock with enough spec for .c.note_id and .insert().values()
+    nt = MagicMock()
+    nt.c = MagicMock()
     nt.c.note_id = MagicMock()
     nt.insert.return_value.values.return_value = MagicMock()
 
-    return [
-        patch("gnosis.models.note.Note", note_cls),
-        patch("gnosis.models.link.Link", link_cls),
-        patch("gnosis.models.tag.Tag",  tag_cls),
-        patch("gnosis.models.tag.note_tags", nt),
-        # Also patch the sqlalchemy.delete / select that _sync_file imports
-        # lazily so they return mock-friendly callables.
-        patch("sqlalchemy.delete", return_value=MagicMock()),
-        patch("sqlalchemy.select", return_value=MagicMock()),
-    ]
+    sa_select = MagicMock(return_value=MagicMock())  # select(Model) → mock stmt
+    sa_delete = MagicMock(return_value=MagicMock())  # delete(table) → mock stmt
+
+    settings_mock = MagicMock()
+    settings_mock.vault_path = vault_path_str
+
+    upsert_kwargs = {}
+    if upsert_side_effect is not None:
+        upsert_kwargs["side_effect"] = upsert_side_effect
+
+    with _SysModules({"python_frontmatter": fm_mod, "slugify": _sl_mod()}):
+        with patch("sqlalchemy.select", sa_select), \
+             patch("sqlalchemy.delete", sa_delete), \
+             patch("gnosis.models.note.Note", note_cls), \
+             patch("gnosis.models.link.Link", link_cls), \
+             patch("gnosis.models.tag.Tag", tag_cls), \
+             patch("gnosis.models.tag.note_tags", nt), \
+             patch("gnosis.services.vault_sync.get_settings", return_value=settings_mock), \
+             patch("gnosis.services.vault_sync.upsert_note", **upsert_kwargs) as upsert:
+            yield upsert
 
 
 # ---------------------------------------------------------------------------
 # _get_vault_path()
 # ---------------------------------------------------------------------------
 
-def test_get_vault_path_returns_cached(tmp_path):
+def test_get_vault_path_cached(tmp_path):
     vs._VAULT_PATH = tmp_path
     with patch("gnosis.services.vault_sync.get_settings") as s:
         result = _get_vault_path()
@@ -172,7 +189,7 @@ def test_get_vault_path_returns_cached(tmp_path):
     assert result == tmp_path
 
 
-def test_get_vault_path_lazy_loads(tmp_path):
+def test_get_vault_path_lazy(tmp_path):
     vs._VAULT_PATH = None
     with patch("gnosis.services.vault_sync.get_settings") as s:
         s.return_value.vault_path = str(tmp_path)
@@ -184,9 +201,9 @@ def test_get_vault_path_lazy_loads(tmp_path):
 # _resolve_owner_id()
 # ---------------------------------------------------------------------------
 
-def _cm(return_val):
+def _cm_factory(ret):
     r = MagicMock()
-    r.scalar_one_or_none.return_value = return_val
+    r.scalar_one_or_none.return_value = ret
     sess = AsyncMock()
     sess.execute = AsyncMock(return_value=r)
     cm = AsyncMock()
@@ -198,89 +215,51 @@ def _cm(return_val):
 @pytest.mark.asyncio
 async def test_resolve_owner_id_found():
     with patch("gnosis.services.vault_sync.AsyncSessionFactory",
-               return_value=_cm(MagicMock(id=42))):
+               return_value=_cm_factory(MagicMock(id=42))):
         assert await _resolve_owner_id(42) == 42
 
 
 @pytest.mark.asyncio
 async def test_resolve_owner_id_not_found():
-    with patch("gnosis.services.vault_sync.AsyncSessionFactory", return_value=_cm(None)):
+    with patch("gnosis.services.vault_sync.AsyncSessionFactory",
+               return_value=_cm_factory(None)):
         assert await _resolve_owner_id(99) == 99
 
 
 # ---------------------------------------------------------------------------
-# _sync_file() — call-through tests with full mock isolation
+# _sync_file()
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_sync_file_new_note_returns_synced(vault_dir):
     md = vault_dir / "00-inbox" / "2024-01-01-hello.md"
-    post = _make_post(note_id="2024-01-01-hello", title="Hello",
-                     tags=["alpha", "beta"], body="Body text here.")
-    db = _make_db(note_obj=None)
-
-    patches = _orm_patches()
-    with _SysModulesCtx({"python_frontmatter": _fake_frontmatter_mod(post),
-                         "slugify": _fake_slugify_mod()}):
-        with patch("gnosis.services.vault_sync.get_settings") as s, \
-             patch("gnosis.services.vault_sync.upsert_note"):
-            s.return_value.vault_path = str(vault_dir)
-            for p in patches:
-                p.start()
-            try:
-                result = await _sync_file(md, owner_id=1, db_session=db)
-            finally:
-                for p in patches:
-                    p.stop()
-
+    post = _post(note_id="2024-01-01-hello", title="Hello", tags=["alpha", "beta"])
+    with _sync_ctx(_fm_mod(post), str(vault_dir)):
+        result = await _sync_file(md, owner_id=1, db_session=_db())
     assert result.startswith("synced:")
 
 
 @pytest.mark.asyncio
 async def test_sync_file_existing_note_updates(vault_dir):
     md = vault_dir / "00-inbox" / "2024-01-01-hello.md"
-    existing_note = MagicMock(
+    existing = MagicMock(
         id="2024-01-01-hello", title="Old", body="old",
         note_type="permanent", status="draft",
         vault_path="00-inbox/2024-01-01-hello.md",
-        folder="00-inbox", source_url=None,
-        word_count=1, owner_id=1, frontmatter={}, is_deleted=False,
+        folder="00-inbox", source_url=None, word_count=1,
+        owner_id=1, frontmatter={}, is_deleted=False,
     )
-    post = _make_post(note_id="2024-01-01-hello", title="Hello")
-    db = _make_db(note_obj=existing_note)
-
-    patches = _orm_patches()
-    with _SysModulesCtx({"python_frontmatter": _fake_frontmatter_mod(post),
-                         "slugify": _fake_slugify_mod()}):
-        with patch("gnosis.services.vault_sync.get_settings") as s, \
-             patch("gnosis.services.vault_sync.upsert_note"):
-            s.return_value.vault_path = str(vault_dir)
-            for p in patches:
-                p.start()
-            try:
-                result = await _sync_file(md, owner_id=1, db_session=db)
-            finally:
-                for p in patches:
-                    p.stop()
-
+    post = _post(note_id="2024-01-01-hello", title="Hello")
+    with _sync_ctx(_fm_mod(post), str(vault_dir)):
+        result = await _sync_file(md, owner_id=1, db_session=_db(note_obj=existing))
     assert result.startswith("synced:")
 
 
 @pytest.mark.asyncio
 async def test_sync_file_parse_error_returns_error(vault_dir):
     md = vault_dir / "00-inbox" / "2024-01-01-hello.md"
-    db = _make_db()
-
-    bad_fm = ModuleType("python_frontmatter")
-    bad_fm.load = MagicMock(side_effect=Exception("yaml error"))  # type: ignore
-
-    with _SysModulesCtx({"python_frontmatter": bad_fm,
-                         "slugify": _fake_slugify_mod()}):
-        with patch("gnosis.services.vault_sync.get_settings") as s, \
-             patch("gnosis.services.vault_sync.upsert_note"):
-            s.return_value.vault_path = str(vault_dir)
-            result = await _sync_file(md, owner_id=1, db_session=db)
-
+    with _sync_ctx(_fm_mod_raises(Exception("yaml error")), str(vault_dir)):
+        result = await _sync_file(md, owner_id=1, db_session=_db())
     assert result.startswith("error:")
     assert "yaml error" in result
 
@@ -288,49 +267,20 @@ async def test_sync_file_parse_error_returns_error(vault_dir):
 @pytest.mark.asyncio
 async def test_sync_file_vector_upsert_failure_nonfatal(vault_dir):
     md = vault_dir / "00-inbox" / "2024-01-01-hello.md"
-    post = _make_post(note_id="2024-01-01-hello", title="Hello", tags=[])
-    db = _make_db()
-
-    patches = _orm_patches()
-    with _SysModulesCtx({"python_frontmatter": _fake_frontmatter_mod(post),
-                         "slugify": _fake_slugify_mod()}):
-        with patch("gnosis.services.vault_sync.get_settings") as s, \
-             patch("gnosis.services.vault_sync.upsert_note",
-                   side_effect=RuntimeError("qdrant down")):
-            s.return_value.vault_path = str(vault_dir)
-            for p in patches:
-                p.start()
-            try:
-                result = await _sync_file(md, owner_id=1, db_session=db)
-            finally:
-                for p in patches:
-                    p.stop()
-
+    post = _post(note_id="2024-01-01-hello", title="Hello", tags=[])
+    with _sync_ctx(_fm_mod(post), str(vault_dir),
+                   upsert_side_effect=RuntimeError("qdrant down")):
+        result = await _sync_file(md, owner_id=1, db_session=_db())
     assert result.startswith("synced:")
 
 
 @pytest.mark.asyncio
 async def test_sync_file_tags_as_comma_string(tmp_path):
-    """tags frontmatter value as a comma string must be split."""
     md = tmp_path / "note.md"
     md.write_text("---\nid: n1\ntitle: T\n---\nBody.", encoding="utf-8")
-    post = _make_post(note_id="n1", title="T", tags_str="foo, bar", body="Body.")
-    db = _make_db()
-
-    patches = _orm_patches()
-    with _SysModulesCtx({"python_frontmatter": _fake_frontmatter_mod(post),
-                         "slugify": _fake_slugify_mod()}):
-        with patch("gnosis.services.vault_sync.get_settings") as s, \
-             patch("gnosis.services.vault_sync.upsert_note") as upsert:
-            s.return_value.vault_path = str(tmp_path)
-            for p in patches:
-                p.start()
-            try:
-                await _sync_file(md, owner_id=1, db_session=db)
-            finally:
-                for p in patches:
-                    p.stop()
-
+    post = _post(note_id="n1", title="T", tags_str="foo, bar")
+    with _sync_ctx(_fm_mod(post), str(tmp_path)) as upsert:
+        await _sync_file(md, owner_id=1, db_session=_db())
     tags_arg = upsert.call_args.args[6]
     assert isinstance(tags_arg, list)
     assert "foo" in tags_arg and "bar" in tags_arg
@@ -338,28 +288,13 @@ async def test_sync_file_tags_as_comma_string(tmp_path):
 
 @pytest.mark.asyncio
 async def test_sync_file_path_outside_vault_fallback(tmp_path):
-    """A path that can't be relativised to vault_root falls back to str(path)."""
     md = tmp_path / "outside.md"
     md.write_text("---\nid: o1\ntitle: O\n---\nBody.", encoding="utf-8")
-    different_root = tmp_path / "other"
-    different_root.mkdir()
-    post = _make_post(note_id="o1", title="O", tags=[])
-    db = _make_db()
-
-    patches = _orm_patches()
-    with _SysModulesCtx({"python_frontmatter": _fake_frontmatter_mod(post),
-                         "slugify": _fake_slugify_mod()}):
-        with patch("gnosis.services.vault_sync.get_settings") as s, \
-             patch("gnosis.services.vault_sync.upsert_note"):
-            s.return_value.vault_path = str(different_root)
-            for p in patches:
-                p.start()
-            try:
-                result = await _sync_file(md, owner_id=1, db_session=db)
-            finally:
-                for p in patches:
-                    p.stop()
-
+    other = tmp_path / "other"
+    other.mkdir()
+    post = _post(note_id="o1", title="O", tags=[])
+    with _sync_ctx(_fm_mod(post), str(other)):
+        result = await _sync_file(md, owner_id=1, db_session=_db())
     assert result.startswith("synced:") or result.startswith("error:")
 
 
@@ -418,26 +353,27 @@ async def test_full_sync_exception_per_file_yields_error(vault_dir):
     with patch("gnosis.services.vault_sync.get_settings",
                return_value=MagicMock(vault_path=str(vault_dir))), \
          patch("gnosis.services.vault_sync._resolve_owner_id", new=AsyncMock(return_value=1)), \
-         patch("gnosis.services.vault_sync._sync_file", new=AsyncMock(side_effect=Exception("boom"))):
+         patch("gnosis.services.vault_sync._sync_file",
+               new=AsyncMock(side_effect=Exception("boom"))):
         lines = [l async for l in run_full_sync_for_user(1)]
     assert any("error:" in l for l in lines)
     assert any(l.startswith("done:") for l in lines)
 
 
 # ---------------------------------------------------------------------------
-# VaultEventHandler — on_created / on_modified / on_deleted
+# VaultEventHandler events
 # ---------------------------------------------------------------------------
 
-def _evt(src_path, is_directory=False):
-    ev = MagicMock()
-    ev.src_path = src_path
-    ev.is_directory = is_directory
-    return ev
+def _evt(src, is_dir=False):
+    e = MagicMock()
+    e.src_path = src
+    e.is_directory = is_dir
+    return e
 
 
 def test_on_created_ignores_directory():
     h = VaultEventHandler(1); h._dispatch_coroutine = MagicMock()
-    h.on_created(_evt("/v/d", is_directory=True))
+    h.on_created(_evt("/v/d", is_dir=True))
     h._dispatch_coroutine.assert_not_called()
 
 
@@ -461,7 +397,7 @@ def test_on_modified_dispatches_md():
 
 def test_on_modified_ignores_directory():
     h = VaultEventHandler(1); h._dispatch_coroutine = MagicMock()
-    h.on_modified(_evt("/v/d", is_directory=True))
+    h.on_modified(_evt("/v/d", is_dir=True))
     h._dispatch_coroutine.assert_not_called()
 
 
@@ -473,7 +409,7 @@ def test_on_deleted_dispatches_md():
 
 def test_on_deleted_ignores_directory():
     h = VaultEventHandler(1); h._dispatch_coroutine = MagicMock()
-    h.on_deleted(_evt("/v/d", is_directory=True))
+    h.on_deleted(_evt("/v/d", is_dir=True))
     h._dispatch_coroutine.assert_not_called()
 
 
@@ -489,21 +425,21 @@ def test_on_deleted_ignores_non_md():
 
 def test_dispatch_loop_running():
     h = VaultEventHandler(1)
-    coro, loop = AsyncMock(), MagicMock()
+    loop = MagicMock()
     loop.is_running.return_value = True
     with patch("asyncio.get_event_loop", return_value=loop), \
          patch("asyncio.run_coroutine_threadsafe") as rcts:
-        h._dispatch_coroutine(coro)
-    rcts.assert_called_once_with(coro, loop)
+        h._dispatch_coroutine(AsyncMock())
+    rcts.assert_called_once()
 
 
 def test_dispatch_loop_not_running():
     h = VaultEventHandler(1)
-    coro, loop = AsyncMock(), MagicMock()
+    loop = MagicMock()
     loop.is_running.return_value = False
     with patch("asyncio.get_event_loop", return_value=loop):
-        h._dispatch_coroutine(coro)
-    loop.run_until_complete.assert_called_once_with(coro)
+        h._dispatch_coroutine(AsyncMock())
+    loop.run_until_complete.assert_called_once()
 
 
 def test_dispatch_swallows_exception():
@@ -542,57 +478,60 @@ async def test_handle_upsert_swallows_exception():
 
 
 # ---------------------------------------------------------------------------
-# _handle_delete
+# _handle_delete  — patch sqlalchemy.select here too
 # ---------------------------------------------------------------------------
 
-@pytest.mark.asyncio
-async def test_handle_delete_soft_deletes_note(tmp_path):
-    h = VaultEventHandler(1)
-    md = tmp_path / "note.md"
-    mock_note = MagicMock(id="n1", is_deleted=False)
-    r = MagicMock(); r.scalar_one_or_none.return_value = mock_note
-    sess = AsyncMock(); sess.execute = AsyncMock(return_value=r)
+@contextmanager
+def _delete_ctx(note_obj, vault_root_str, vec_side_effect=None):
+    r = MagicMock()
+    r.scalar_one_or_none.return_value = note_obj
+    sess = AsyncMock()
+    sess.execute = AsyncMock(return_value=r)
+    sess.commit = AsyncMock()
     cm = AsyncMock()
     cm.__aenter__ = AsyncMock(return_value=sess)
     cm.__aexit__ = AsyncMock(return_value=False)
+
+    vec_kwargs = {}
+    if vec_side_effect is not None:
+        vec_kwargs["side_effect"] = vec_side_effect
+
+    with patch("sqlalchemy.select", MagicMock(return_value=MagicMock())), \
+         patch("gnosis.models.note.Note", MagicMock()), \
+         patch("gnosis.services.vault_sync.AsyncSessionFactory", return_value=cm), \
+         patch("gnosis.services.vault_sync.delete_note_vector", **vec_kwargs), \
+         patch("gnosis.services.vault_sync.get_settings",
+               return_value=MagicMock(vault_path=vault_root_str)):
+        yield sess
+
+
+@pytest.mark.asyncio
+async def test_handle_delete_soft_deletes_note(tmp_path):
+    md = tmp_path / "note.md"
+    note = MagicMock(id="n1", is_deleted=False)
     vs._VAULT_PATH = tmp_path.resolve()
-    with patch("gnosis.services.vault_sync.AsyncSessionFactory", return_value=cm), \
-         patch("gnosis.services.vault_sync.delete_note_vector"):
-        await h._handle_delete(md)
-    assert mock_note.is_deleted is True
+    with _delete_ctx(note, str(tmp_path)) as sess:
+        await VaultEventHandler(1)._handle_delete(md)
+    assert note.is_deleted is True
     sess.commit.assert_awaited()
 
 
 @pytest.mark.asyncio
 async def test_handle_delete_noop_when_missing(tmp_path):
-    h = VaultEventHandler(1)
     md = tmp_path / "ghost.md"
-    r = MagicMock(); r.scalar_one_or_none.return_value = None
-    sess = AsyncMock(); sess.execute = AsyncMock(return_value=r)
-    cm = AsyncMock()
-    cm.__aenter__ = AsyncMock(return_value=sess)
-    cm.__aexit__ = AsyncMock(return_value=False)
     vs._VAULT_PATH = tmp_path.resolve()
-    with patch("gnosis.services.vault_sync.AsyncSessionFactory", return_value=cm), \
+    with _delete_ctx(None, str(tmp_path)) as sess, \
          patch("gnosis.services.vault_sync.delete_note_vector") as dvec:
-        await h._handle_delete(md)
+        await VaultEventHandler(1)._handle_delete(md)
     dvec.assert_not_called()
     sess.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_handle_delete_vector_failure_nonfatal(tmp_path):
-    h = VaultEventHandler(1)
     md = tmp_path / "note.md"
-    mock_note = MagicMock(id="n1", is_deleted=False)
-    r = MagicMock(); r.scalar_one_or_none.return_value = mock_note
-    sess = AsyncMock(); sess.execute = AsyncMock(return_value=r)
-    cm = AsyncMock()
-    cm.__aenter__ = AsyncMock(return_value=sess)
-    cm.__aexit__ = AsyncMock(return_value=False)
+    note = MagicMock(id="n1", is_deleted=False)
     vs._VAULT_PATH = tmp_path.resolve()
-    with patch("gnosis.services.vault_sync.AsyncSessionFactory", return_value=cm), \
-         patch("gnosis.services.vault_sync.delete_note_vector",
-               side_effect=RuntimeError("qdrant down")):
-        await h._handle_delete(md)  # must not raise
-    assert mock_note.is_deleted is True
+    with _delete_ctx(note, str(tmp_path), vec_side_effect=RuntimeError("qdrant down")):
+        await VaultEventHandler(1)._handle_delete(md)  # must not raise
+    assert note.is_deleted is True
