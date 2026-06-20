@@ -262,56 +262,67 @@ def test_parse_image_extracts_ocr_text():
 
 # ---------------------------------------------------------------------------
 # parse_url
-# httpx is imported *inside* parse_url, so we patch httpx.AsyncClient.
-# AsyncClient is used as `async with httpx.AsyncClient(...) as client`:
-#   1. httpx.AsyncClient(...) -> calls __init__, returns the instance
-#   2. async with <instance> -> calls instance.__aenter__() -> client
-# So: patch the class so its *instance* (return_value) is a proper async CM.
+#
+# The source does:
+#   async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+#       resp = await client.get(url, headers={...})
+#       html = resp.text
+#
+# Mock chain:
+#   httpx.AsyncClient(...)  --> mock_instance  (MagicMock)
+#   async with mock_instance --> __aenter__ --> mock_client  (AsyncMock)
+#   await mock_client.get(...)  --> mock_resp  (MagicMock with .text = html)
+#
+# bs4 IS installed in the venv, so BeautifulSoup actually runs on the
+# HTML string we provide -- no need to patch it out.
 # ---------------------------------------------------------------------------
 
 def _make_httpx_mock(html: str):
-    """Return a patch-ready mock for httpx.AsyncClient used as async CM."""
+    """Build a properly wired httpx.AsyncClient mock for async-with usage."""
+    # What resp.text returns
     mock_resp = MagicMock()
     mock_resp.text = html
     mock_resp.raise_for_status = MagicMock()
 
-    # This is the object that `async with httpx.AsyncClient(...) as client` yields
-    mock_session = AsyncMock()
-    mock_session.get = AsyncMock(return_value=mock_resp)
+    # The session yielded by `async with client` -- get() must be awaitable
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_resp)
 
-    # AsyncClient() -> mock_instance; `async with mock_instance` -> mock_session
+    # The object returned by httpx.AsyncClient(...)
     mock_instance = MagicMock()
-    mock_instance.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_instance.__aenter__ = AsyncMock(return_value=mock_client)
     mock_instance.__aexit__ = AsyncMock(return_value=False)
 
-    # httpx.AsyncClient(...) returns mock_instance
-    mock_cls = MagicMock(return_value=mock_instance)
-    return mock_cls
+    # The class itself
+    return MagicMock(return_value=mock_instance)
 
 
 async def test_parse_url_extracts_title_and_text():
-    html = """<html><head><title>Test Page</title></head>
-    <body><main><p>Main content here.</p></main></body></html>"""
-
+    html = (
+        "<html><head><title>Test Page</title></head>"
+        "<body><main><p>Main content here.</p></main></body></html>"
+    )
     with patch("httpx.AsyncClient", _make_httpx_mock(html)):
         from gnosis.services import document_parser as dp
         result = await dp.parse_url("https://example.com")
 
     assert result.raw_format == "url"
+    assert result.source == "https://example.com"
+    # bs4 runs for real -- title tag text should be extracted
     assert result.title == "Test Page"
     assert "content" in result.text.lower()
 
 
 async def test_parse_url_fallback_without_bs4():
+    """When bs4 is unavailable, title falls back to the URL."""
     html = "<html><body>raw html</body></html>"
-
     with patch("httpx.AsyncClient", _make_httpx_mock(html)), \
-         patch.dict(sys.modules, {"bs4": None}):
+         patch.dict(sys.modules, {"bs4": None, "bs4.BeautifulSoup": None}):
         from gnosis.services import document_parser as dp
-        result = await dp.parse_url("https://example.com")
+        result = await dp.parse_url("https://example.com/fallback")
 
     assert result.raw_format == "url"
-    assert result.source == "https://example.com"
+    assert result.source == "https://example.com/fallback"
 
 
 # ---------------------------------------------------------------------------

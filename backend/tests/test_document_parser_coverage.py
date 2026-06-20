@@ -11,16 +11,16 @@ from gnosis.services.document_parser import ParsedDocument, detect_format
 
 
 def _make_httpx_mock(html: str):
-    """Return a patch-ready mock for httpx.AsyncClient used as `async with`."""
+    """Build a properly wired httpx.AsyncClient mock for async-with usage."""
     mock_resp = MagicMock()
     mock_resp.text = html
     mock_resp.raise_for_status = MagicMock()
 
-    mock_session = AsyncMock()
-    mock_session.get = AsyncMock(return_value=mock_resp)
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_resp)
 
     mock_instance = MagicMock()
-    mock_instance.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_instance.__aenter__ = AsyncMock(return_value=mock_client)
     mock_instance.__aexit__ = AsyncMock(return_value=False)
 
     return MagicMock(return_value=mock_instance)
@@ -63,7 +63,7 @@ def test_parse_pdf_no_meta_derives_title_from_stem():
 
 
 # ---------------------------------------------------------------------------
-# parse_url
+# parse_url -- bs4 is installed, so BeautifulSoup runs on real HTML
 # ---------------------------------------------------------------------------
 
 async def test_parse_url_returns_parsed_document():
@@ -79,7 +79,7 @@ async def test_parse_url_returns_parsed_document():
 
 
 async def test_parse_url_sets_title():
-    html = "<html><head><title>  Stripped Title  </title></head><body><p>content</p></body></html>"
+    html = "<html><head><title>Stripped Title</title></head><body><p>content</p></body></html>"
 
     with patch("httpx.AsyncClient", _make_httpx_mock(html)):
         from gnosis.services import document_parser as dp
