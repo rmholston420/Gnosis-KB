@@ -28,7 +28,8 @@ from gnosis.schemas.review import (
     ReviewSubmit,
 )
 
-router = APIRouter(prefix="/api/v1/review", tags=["review"])
+# prefix is /review only — main.py prepends /api/v1 when including this router
+router = APIRouter(prefix="/review", tags=["review"])
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +115,7 @@ async def get_stats(db: AsyncSession = Depends(get_db)) -> ReviewStats:
         due_today=due_today_count or 0,
         due_this_week=due_week_count or 0,
         total_enrolled=total_count or 0,
-        new_today=0,           # TODO: track first-review timestamps
+        new_today=0,
         reviewed_today=reviewed_today_count or 0,
     )
 
@@ -129,18 +130,13 @@ async def enroll_note(
     payload: ReviewEnroll,
     db: AsyncSession = Depends(get_db),
 ) -> ReviewCardRead:
-    """Enroll a note into the SM-2 review queue.
-
-    Idempotent: if the note is already enrolled, returns the existing card.
-    """
-    # Verify note exists
+    """Enroll a note into the SM-2 review queue."""
     note_result = await db.execute(
         select(Note).where(Note.id == note_id, Note.is_deleted.is_(False))
     )
     if note_result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail=f"Note {note_id!r} not found.")
 
-    # Check for existing card
     existing = await db.execute(
         select(ReviewCard).where(ReviewCard.note_id == note_id)
     )
@@ -187,7 +183,6 @@ async def submit_review(
     card.due_date = next_due
     card.last_quality = payload.quality
 
-    # Also stamp last_reviewed on the Note itself
     note_result = await db.execute(select(Note).where(Note.id == note_id))
     if note := note_result.scalar_one_or_none():
         from datetime import date as _date

@@ -33,7 +33,8 @@ from gnosis.services.hybrid_search import hybrid_search
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1/search", tags=["search"])
+# prefix is /search only — main.py prepends /api/v1 when including this router
+router = APIRouter(prefix="/search", tags=["search"])
 
 
 @router.get("/", response_model=SearchResponse, summary="Search notes")
@@ -47,14 +48,7 @@ async def search(
     db: AsyncSession = Depends(get_db),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> SearchResponse:
-    """Search the vault (scoped to the caller's accessible vaults).
-
-    - **hybrid** (default): Qdrant BM25 + dense vector RRF fusion. Falls back
-      to PostgreSQL FTS automatically if Qdrant is unavailable.
-    - **semantic**: Dense-only vector search via Qdrant.
-    - **fulltext**: PostgreSQL tsvector search. Always available; no Qdrant
-      required. Best for exact phrase and keyword searches.
-    """
+    """Search the vault (scoped to the caller's accessible vaults)."""
     if mode == "fulltext":
         raw = await fulltext_search(
             db, q, owner_ids=owner_ids,
@@ -66,7 +60,6 @@ async def search(
             total=len(results), elapsed_ms=raw["elapsed_ms"],
         )
 
-    # hybrid / semantic — delegate to Qdrant service
     try:
         raw = hybrid_search(
             q, owner_ids=owner_ids,
@@ -78,7 +71,6 @@ async def search(
             total=len(results), elapsed_ms=raw["elapsed_ms"],
         )
     except Exception as exc:
-        # Qdrant unavailable — transparent fallback to FTS
         logger.warning(
             "Qdrant search failed (%s); falling back to PostgreSQL FTS", exc
         )
@@ -89,7 +81,7 @@ async def search(
         results = _map_results(raw["results"])
         return SearchResponse(
             query=q,
-            mode="fulltext",  # report actual mode used
+            mode="fulltext",
             results=results,
             total=len(results),
             elapsed_ms=raw["elapsed_ms"],
@@ -103,10 +95,7 @@ async def suggest(
     db: AsyncSession = Depends(get_db),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> list[str]:
-    """Return note titles that start with *q* for search-bar autocomplete.
-
-    Scoped to the caller's accessible vaults.
-    """
+    """Return note titles that start with *q* for search-bar autocomplete."""
     return await suggest_completions(db, q, owner_ids=owner_ids, limit=limit)
 
 

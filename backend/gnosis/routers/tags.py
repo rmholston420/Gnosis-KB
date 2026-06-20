@@ -7,16 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from gnosis.database import get_db
 from gnosis.models.tag import NoteTag, Tag
 
-router = APIRouter(prefix="/api/v1/tags", tags=["tags"])
+# prefix is /tags only — main.py prepends /api/v1 when including this router
+router = APIRouter(prefix="/tags", tags=["tags"])
 
 
 @router.get("/", summary="List all tags with note counts")
 async def list_tags(db: AsyncSession = Depends(get_db)) -> list[dict[str, object]]:
-    """Return all tags with their associated note counts.
-
-    Returns:
-        List of dicts: {name, description, note_count}.
-    """
+    """Return all tags with their associated note counts."""
     result = await db.execute(
         select(Tag.name, Tag.description, func.count(NoteTag.c.note_id).label("note_count"))
         .outerjoin(NoteTag, Tag.name == NoteTag.c.tag_id)
