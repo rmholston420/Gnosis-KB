@@ -40,10 +40,17 @@ class ReviewCard(Base):
     due_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     last_quality: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
+    # lazy='select': do not auto-JOIN back to Note when loading a ReviewCard.
+    # Note.review_card is also lazy='select'.  No query path needs to traverse
+    # ReviewCard -> Note eagerly; doing so caused the selectinload(Note.tags)
+    # sub-SELECT to produce multiple rows (one per tag), triggering:
+    #   SAWarning: Multiple rows returned with uselist=False for
+    #   eagerly-loaded attribute 'Note.tags'
+    # which collapsed Note.tags to a scalar and broke the tags API response.
     note: Mapped["Note"] = relationship(  # type: ignore[name-defined]
         "Note",
         back_populates="review_card",
-        lazy="joined",
+        lazy="select",          # was 'joined' — caused SAWarning + tags=[] bug
     )
 
     def __repr__(self) -> str:
