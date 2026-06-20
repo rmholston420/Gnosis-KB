@@ -26,8 +26,6 @@ import pytest
 def _make_db_session():
     """Return a fully-mocked AsyncSession that supports all patterns used by _sync_file."""
     db = AsyncMock()
-
-    # scalar_one_or_none() returns None by default (note not found = create path)
     result = MagicMock()
     result.scalar_one_or_none = MagicMock(return_value=None)
     db.execute = AsyncMock(return_value=result)
@@ -58,7 +56,6 @@ def test_get_vault_path_caches_second_call(tmp_path):
     with patch("gnosis.services.vault_sync.get_settings", return_value=fake_settings) as m:
         vs_mod._get_vault_path()
         vs_mod._get_vault_path()
-    # Settings should only be read once (cache hit on second call)
     assert m.call_count <= 2
     vs_mod._VAULT_PATH = None
 
@@ -117,7 +114,7 @@ async def test_sync_file_creates_new_note(tmp_path):
         line = await _sync_file(md, owner_id=1, db_session=db)
 
     assert line.startswith("synced:")
-    db.add.assert_called()  # Note object was added
+    db.add.assert_called()
     db.commit.assert_awaited_once()
 
 
@@ -185,8 +182,7 @@ async def test_sync_file_handles_string_tags(tmp_path):
          patch("gnosis.services.vault_sync.upsert_note") as mock_upsert:
         await _sync_file(md, owner_id=1, db_session=db)
 
-    # upsert_note receives the split tag list as 7th positional arg
-    call_tags = mock_upsert.call_args[0][6]
+    call_tags = mock_upsert.call_args[0][6]  # 7th positional arg
     assert "eeg" in call_tags
     assert "bci" in call_tags
 
@@ -203,10 +199,11 @@ async def test_sync_file_returns_error_on_parse_failure(tmp_path):
     md.write_text("some content")
 
     db = _make_db_session()
+    # Patch at the correct module path — vault_sync does `import frontmatter`
     with patch("gnosis.services.vault_sync.get_settings",
                return_value=MagicMock(vault_path=str(tmp_path))), \
          patch("gnosis.services.vault_sync.upsert_note"), \
-         patch("python_frontmatter.load", side_effect=Exception("bad yaml")):
+         patch("frontmatter.load", side_effect=Exception("bad yaml")):
         line = await _sync_file(md, owner_id=1, db_session=db)
 
     assert line.startswith("error:")
@@ -232,7 +229,6 @@ async def test_sync_file_handles_path_outside_vault(tmp_path):
              patch("gnosis.services.vault_sync.upsert_note"):
             line = await _sync_file(md, owner_id=1, db_session=db)
 
-    # Should still sync without crashing (falls back to str(path))
     assert line.startswith("synced:")
 
 
@@ -254,7 +250,6 @@ async def test_sync_file_vector_failure_is_nonfatal(tmp_path):
                side_effect=Exception("qdrant down")):
         line = await _sync_file(md, owner_id=1, db_session=db)
 
-    # Should still return synced despite vector failure
     assert line.startswith("synced:")
 
 
@@ -399,7 +394,7 @@ async def test_run_full_sync_file_exception_yields_error_line(tmp_path):
         lines = [line async for line in vs_mod.run_full_sync_for_user(1)]
 
     assert any("error" in l for l in lines)
-    assert any("done" in l for l in lines)  # generator completes despite error
+    assert any("done" in l for l in lines)
     vs_mod._VAULT_PATH = None
 
 
@@ -483,7 +478,6 @@ def test_on_deleted_ignores_directory_event():
 # ---------------------------------------------------------------------------
 
 def test_dispatch_coroutine_uses_run_coroutine_threadsafe_when_loop_running():
-    """When the event loop IS running, asyncio.run_coroutine_threadsafe is used."""
     from gnosis.services.vault_sync import VaultEventHandler
     handler = VaultEventHandler(owner_id=1)
 
@@ -499,7 +493,6 @@ def test_dispatch_coroutine_uses_run_coroutine_threadsafe_when_loop_running():
 
 
 def test_dispatch_coroutine_falls_back_to_run_until_complete():
-    """When the event loop is NOT running, loop.run_until_complete is used."""
     from gnosis.services.vault_sync import VaultEventHandler
     handler = VaultEventHandler(owner_id=1)
 
@@ -514,13 +507,11 @@ def test_dispatch_coroutine_falls_back_to_run_until_complete():
 
 
 def test_dispatch_coroutine_swallows_exception():
-    """If the dispatch raises, _dispatch_coroutine logs and does not propagate."""
     from gnosis.services.vault_sync import VaultEventHandler
     handler = VaultEventHandler(owner_id=1)
 
     with patch("asyncio.get_event_loop", side_effect=RuntimeError("no loop")):
-        # Should not raise
-        handler._dispatch_coroutine(MagicMock())
+        handler._dispatch_coroutine(MagicMock())  # must not raise
 
 
 # ---------------------------------------------------------------------------
@@ -556,8 +547,7 @@ async def test_handle_upsert_swallows_exception():
     with patch("gnosis.services.vault_sync.AsyncSessionFactory", return_value=fake_db), \
          patch("gnosis.services.vault_sync._sync_file",
                AsyncMock(side_effect=Exception("boom"))):
-        # Must not raise
-        await handler._handle_upsert(Path("/vault/bad.md"))
+        await handler._handle_upsert(Path("/vault/bad.md"))  # must not raise
 
 
 @pytest.mark.asyncio
@@ -612,7 +602,6 @@ async def test_handle_delete_no_note_does_nothing(tmp_path):
                return_value=MagicMock(vault_path=str(tmp_path))):
         await handler._handle_delete(tmp_path / "ghost.md")
 
-    # No commit — nothing to delete
     fake_db.commit.assert_not_awaited()
     vs_mod._VAULT_PATH = None
 
@@ -638,8 +627,7 @@ async def test_handle_delete_vector_failure_is_nonfatal(tmp_path):
                return_value=MagicMock(vault_path=str(tmp_path))), \
          patch("gnosis.services.vault_sync.delete_note_vector",
                side_effect=Exception("qdrant down")):
-        # Must not raise
-        await handler._handle_delete(tmp_path / "note.md")
+        await handler._handle_delete(tmp_path / "note.md")  # must not raise
 
     fake_db.commit.assert_awaited_once()
     vs_mod._VAULT_PATH = None
@@ -651,14 +639,12 @@ async def test_handle_delete_vector_failure_is_nonfatal(tmp_path):
 
 def test_vault_event_handler_stores_owner_id():
     from gnosis.services.vault_sync import VaultEventHandler
-    handler = VaultEventHandler(owner_id=7)
-    assert handler._owner_id == 7
+    assert VaultEventHandler(owner_id=7)._owner_id == 7
 
 
 def test_vault_event_handler_default_owner_id():
     from gnosis.services.vault_sync import VaultEventHandler
-    handler = VaultEventHandler()
-    assert handler._owner_id == 1
+    assert VaultEventHandler()._owner_id == 1
 
 
 # ---------------------------------------------------------------------------
@@ -671,8 +657,6 @@ async def test_start_vault_watcher_returns_observer(tmp_path):
     vs_mod._VAULT_PATH = None
 
     fake_observer = MagicMock()
-    fake_observer.start = MagicMock()
-    fake_observer.schedule = MagicMock()
 
     async def _fake_full_sync(owner_id):
         yield "total: 0"
@@ -706,6 +690,5 @@ async def test_start_vault_watcher_swallows_sync_error(tmp_path):
          patch("gnosis.services.vault_sync.run_full_sync_for_user", _bad_sync):
         obs = await vs_mod.start_vault_watcher(owner_id=1)
 
-    # Should return the observer even when startup sync fails
     assert obs is fake_observer
     vs_mod._VAULT_PATH = None

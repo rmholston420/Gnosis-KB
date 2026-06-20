@@ -77,8 +77,8 @@ async def _sync_file(path: Path, owner_id: int, db_session: object) -> str:
     from gnosis.models.tag import Tag, NoteTag
     from sqlalchemy import select, delete
     from sqlalchemy.ext.asyncio import AsyncSession
-    import python_frontmatter  # type: ignore[import]
-    import slugify  # type: ignore[import]
+    import frontmatter  # python-frontmatter
+    from slugify import slugify as _slugify  # python-slugify
 
     db: AsyncSession = db_session  # type: ignore[assignment]
     settings = get_settings()
@@ -90,7 +90,7 @@ async def _sync_file(path: Path, owner_id: int, db_session: object) -> str:
         rel_path = str(path)
 
     try:
-        post = python_frontmatter.load(str(path))
+        post = frontmatter.load(str(path))
     except Exception as exc:  # noqa: BLE001
         return f"error: {rel_path} — {exc}"
 
@@ -106,7 +106,7 @@ async def _sync_file(path: Path, owner_id: int, db_session: object) -> str:
     if isinstance(tags_raw, str):
         tags_raw = [t.strip() for t in tags_raw.split(",") if t.strip()]
 
-    slug_val = slugify.slugify(title)[:490] if title else note_id
+    slug_val = _slugify(title)[:490] if title else note_id
 
     # Upsert note row
     result = await db.execute(select(Note).where(Note.id == note_id))
