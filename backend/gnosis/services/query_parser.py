@@ -112,8 +112,15 @@ def _tokenise(query: str) -> list[str]:
 def parse_query(raw: str) -> ParsedQuery:  # noqa: C901
     """Parse a GQL string into a ParsedQuery AST.
 
+    An empty or whitespace-only string is valid and returns a ParsedQuery
+    with all defaults (equivalent to: SORT modified_at DESC LIMIT 50).
+
     Raises GQLParseError on invalid syntax.
     """
+    # Empty query → return defaults rather than raising.
+    if not raw.strip():
+        return ParsedQuery()
+
     if len(raw) > 2000:
         raise GQLParseError("Query exceeds maximum length of 2000 characters.")
 

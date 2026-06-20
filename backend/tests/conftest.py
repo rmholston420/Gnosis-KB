@@ -13,12 +13,18 @@ cleanly on a dev machine with no Postgres, Qdrant, Ollama, or LightRAG:
   1. ensure_collection()         — Qdrant collection setup  → no-op
   2. start_vault_watcher()       — watchdog + initial sync  → mock Observer
   3. graph_rag.initialize()      — LightRAG warm-up         → async no-op
+
+Auth patching
+-------------
+require_user is overridden in async_client so every test request is
+authenticated as a fixed FakeUser(id=1) without needing a real JWT.
 """
 
 from __future__ import annotations
 
 import asyncio
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -86,7 +92,7 @@ def vault_dir():
 
 
 # ---------------------------------------------------------------------------
-# Service patches — applied session-wide so lifespan doesn’t hit real services
+# Service patches — applied session-wide so lifespan doesn't hit real services
 # ---------------------------------------------------------------------------
 
 
@@ -101,7 +107,32 @@ async def _mock_start_vault_watcher(owner_id: int = 1) -> _MockObserver:  # noqa
 
 
 # ---------------------------------------------------------------------------
-# Test client — wired to SQLite DB, patched services, temp vault
+# Fake authenticated user — returned by the require_user dependency override
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _FakeUser:
+    """Lightweight stand-in for gnosis.models.user.User in tests.
+
+    Uses a plain dataclass so SQLAlchemy's _sa_instance_state guard is never
+    triggered.  All fields that routers access are present.
+    """
+    id: int = 1
+    email: str = "test@gnosis.local"
+    full_name: str | None = "Test User"
+    vault_slug: str | None = "test"
+    vault_path: str | None = None
+    is_active: bool = True
+
+
+async def _fake_require_user() -> _FakeUser:
+    """Dependency override: always returns the canonical test user."""
+    return _FakeUser()
+
+
+# ---------------------------------------------------------------------------
+# Test client — wired to SQLite DB, patched services, temp vault, fake auth
 # ---------------------------------------------------------------------------
 
 
@@ -111,9 +142,8 @@ async def async_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, No
     - SQLite test DB (no Postgres)
     - temp vault directory
     - Qdrant / watchdog / LightRAG stubbed out
+    - require_user dependency overridden to return FakeUser(id=1)
     """
-    # Patch all three external-service calls before the app is constructed
-    # and before the lifespan context runs.
     with (
         patch(
             "gnosis.services.vector_store.ensure_collection",
@@ -129,6 +159,8 @@ async def async_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, No
         ),
     ):
         from gnosis import config
+        from gnosis.core.auth import require_user
+
         settings = config.get_settings()
         settings.vault_path = str(vault_dir)
 
@@ -143,8 +175,14 @@ async def async_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, No
 
         app.dependency_overrides[get_db] = override_get_db
 
+        # Override the auth dependency so every request is authenticated
+        # as FakeUser(id=1) without needing a real JWT or User DB row.
+        app.dependency_overrides[require_user] = _fake_require_user
+
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test",
         ) as client:
             yield client
+
+        app.dependency_overrides.clear()

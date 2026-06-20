@@ -1,22 +1,30 @@
 """Unit tests for multi-user namespace helpers."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gnosis.core.namespace import resolve_vault_path, scoped_note_stmt
-from gnosis.models.user import User
 
 
-def _make_user(**kwargs) -> User:
-    u = User.__new__(User)
-    defaults = dict(id=1, email="test@example.com", vault_slug=None, vault_path=None)
-    defaults.update(kwargs)
-    for k, v in defaults.items():
-        object.__setattr__(u, k, v)
-    return u
+@dataclass
+class FakeUser:
+    """Minimal User stand-in that avoids SQLAlchemy _sa_instance_state guard.
+
+    Using a dataclass here means object construction never touches SQLAlchemy's
+    instrumented __init__, so object.__setattr__ calls work without error.
+    """
+    id: int = 1
+    email: str = "test@example.com"
+    vault_slug: str | None = None
+    vault_path: str | None = None
+
+
+def _make_user(**kwargs) -> FakeUser:
+    return FakeUser(**kwargs)
 
 
 # ---------------------------------------------------------------------------
