@@ -87,6 +87,16 @@ export const api = {
 
   getOrphanNotes: () => request('GET', '/notes/orphans'),
 
+  /**
+   * Wikilink title resolution — returns notes whose title contains `q`,
+   * scoped to the caller's accessible vaults.
+   */
+  searchNoteByTitle: (q: string) =>
+    request('GET', `/notes/by-title?${new URLSearchParams({ q }).toString()}`),
+
+  /** Fetch built-in note template gallery. */
+  listTemplates: () => request('GET', '/notes/templates'),
+
   // --- Search ---
   search: (q: string, params: Record<string, string | number> = {}) =>
     request('GET', `/search/?q=${encodeURIComponent(q)}&${new URLSearchParams(
@@ -107,6 +117,9 @@ export const api = {
   getClusters: () => request('GET', '/graph/clusters'),
 
   getGraphStats: () => request('GET', '/graph/stats'),
+
+  /** Fetch LightRAG entity/relation graph for D3 visualisation. */
+  getLightRagGraph: () => request('GET', '/graph/lightrag'),
 
   // --- AI ---
   chat: (message: string, mode = 'hybrid', sessionId?: string) =>

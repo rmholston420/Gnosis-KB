@@ -5,7 +5,8 @@ Handles all note lifecycle operations:
 - Read (single note with backlinks, list with filters)
 - Update (writes .md to vault → triggers vault sync)
 - Delete (soft delete in DB; vault file preserved)
-- Special endpoints: backlinks, outlinks, orphans, daily note, templates
+- Special endpoints: backlinks, outlinks, orphans, daily note, templates,
+  wikilink title search
 
 Isolation contract
 ------------------
@@ -14,6 +15,12 @@ cross-vault reads are impossible at the router layer.  The only exception
 is the internal ``_get_note_or_404`` helper, which applies the scope itself
 and additionally raises HTTP 403 when the authenticated user does not own
 (or share) the requested note.
+
+Legacy owner_id=0 sentinel
+---------------------------
+Notes written before multi-user support carry owner_id=0.  These are
+treated as unowned and raise HTTP 403 for all normal users.  Run
+``scripts/fix_owner_ids.py`` to reassign them to a real owner.
 
 Dependency pattern
 ------------------
@@ -79,7 +86,13 @@ async def _get_note_or_404(
     db: AsyncSession,
     owner_ids: set[int],
 ) -> Note:
-    """Fetch a note by ID within the caller's accessible vaults."""
+    """Fetch a note by ID within the caller's accessible vaults.
+
+    Raises HTTP 403 for:
+    - Cross-vault access (note.owner_id not in owner_ids)
+    - Legacy owner_id=0 sentinel (unowned notes) unless caller explicitly
+      has 0 in their owner_ids set (admin use only).
+    """
     raw = await db.execute(
         select(Note)
         .options(
@@ -92,6 +105,13 @@ async def _get_note_or_404(
     note = raw.scalars().unique().one_or_none()
     if note is None:
         raise NoteNotFoundError(note_id)
+
+    # Guard legacy owner_id=0 sentinel — treat as unowned/admin-only
+    if note.owner_id == 0 and 0 not in owner_ids:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This note has no owner assigned. Run scripts/fix_owner_ids.py to reassign.",
+        )
 
     if note.owner_id is not None and note.owner_id not in owner_ids:
         raise HTTPException(
@@ -215,6 +235,203 @@ async def list_notes(
         page_size=page_size,
         pages=math.ceil(total / page_size) if total else 1,
     )
+
+
+# ---------------------------------------------------------------------------
+# Wikilink title search  (GET /notes/by-title)
+# IMPORTANT: Must be declared BEFORE /{note_id} routes to avoid FastAPI
+# treating "by-title" as a note_id path parameter.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/by-title", response_model=NoteListResponse, summary="Search notes by title (wikilink resolution)")
+async def notes_by_title(
+    q: str = Query(..., description="Title text to search (case-insensitive contains)"),
+    page_size: int = Query(10, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+    owner_ids: set[int] = Depends(get_vault_owner_ids),
+) -> NoteListResponse:
+    """Wikilink resolution endpoint.
+
+    Returns notes whose title contains ``q`` (case-insensitive), scoped to the
+    caller's accessible vaults.  Used by the NoteDetailPanel wikilink chips
+    and the NoteEditor [[autocomplete]] dropdown.
+    """
+    query = scoped_note_stmt(
+        select(Note)
+        .options(selectinload(Note.tags))
+        .where(Note.is_deleted.is_(False), Note.title.ilike(f"%{q}%")),
+        owner_ids,
+    )
+    count_result = await db.execute(select(func.count()).select_from(query.subquery()))
+    total = count_result.scalar_one()
+    query = query.order_by(Note.title).limit(page_size)
+    result = await db.execute(query)
+    notes = result.scalars().unique().all()
+    return NoteListResponse(
+        items=[
+            NoteListItem(
+                id=n.id,
+                title=n.title,
+                slug=n.slug,
+                note_type=n.note_type,
+                status=n.status,
+                folder=n.folder,
+                word_count=n.word_count,
+                created_at=n.created_at,
+                modified_at=n.modified_at,
+                tags=[t.name for t in (n.tags if isinstance(n.tags, list) else ([n.tags] if n.tags else []))],
+            )
+            for n in notes
+        ],
+        total=total,
+        page=1,
+        page_size=page_size,
+        pages=math.ceil(total / page_size) if total else 1,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Note templates  (GET /notes/templates)
+# IMPORTANT: Also before /{note_id}.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/templates", summary="List available note templates")
+async def list_templates() -> list[dict]:
+    """Return the built-in note template gallery.
+
+    Each entry contains:
+    - id: machine key used by the frontend
+    - name: display name
+    - description: one-line purpose description
+    - note_type: default note_type for notes created from this template
+    - folder: suggested vault folder
+    - body: Markdown body with placeholder tokens ({{ TITLE }}, {{ DATE }}, ...)
+    """
+    return [
+        {
+            "id": "blank",
+            "name": "Blank Note",
+            "description": "Start with an empty canvas.",
+            "note_type": "permanent",
+            "folder": "10-zettelkasten",
+            "body": "",
+            "icon": "file",
+        },
+        {
+            "id": "zettel",
+            "name": "Zettelkasten Slip",
+            "description": "Atomic concept note with one clear idea.",
+            "note_type": "permanent",
+            "folder": "10-zettelkasten",
+            "body": (
+                "## Main Idea\n\n"
+                "<!-- State the single idea this note captures. -->\n\n"
+                "## Elaboration\n\n"
+                "## References\n\n"
+                "## Links\n\n"
+                "- [[Related Note]]"
+            ),
+            "icon": "zap",
+        },
+        {
+            "id": "literature",
+            "name": "Literature Note",
+            "description": "Capture and process a source (book, paper, article).",
+            "note_type": "literature",
+            "folder": "30-literature",
+            "body": (
+                "## Source\n\n"
+                "- **Title:** \n"
+                "- **Author:** \n"
+                "- **Year:** \n"
+                "- **URL:** \n\n"
+                "## Key Points\n\n"
+                "1. \n\n"
+                "## My Take\n\n"
+                "## Fleeting Quotes\n\n"
+                "> Quote here\n\n"
+                "## Links\n\n"
+            ),
+            "icon": "book-open",
+        },
+        {
+            "id": "project",
+            "name": "Project Note",
+            "description": "Track a bounded project with goals and tasks.",
+            "note_type": "project",
+            "folder": "20-projects",
+            "body": (
+                "## Goal\n\n"
+                "## Why This Matters\n\n"
+                "## Tasks\n\n"
+                "- [ ] \n"
+                "- [ ] \n\n"
+                "## Notes\n\n"
+                "## Resources\n\n"
+                "## Status\n\n"
+                "- **Started:** {{ DATE }}\n"
+                "- **Target:** \n"
+            ),
+            "icon": "layout",
+        },
+        {
+            "id": "moc",
+            "name": "Map of Content",
+            "description": "Index and navigate a topic cluster.",
+            "note_type": "moc",
+            "folder": "00-mocs",
+            "body": (
+                "## Overview\n\n"
+                "<!-- What territory does this MOC cover? -->\n\n"
+                "## Core Notes\n\n"
+                "- [[Note A]]"
+                "- [[Note B]]\n\n"
+                "## Sub-Topics\n\n"
+                "## Entry Points\n\n"
+            ),
+            "icon": "map",
+        },
+        {
+            "id": "meeting",
+            "name": "Meeting Note",
+            "description": "Capture decisions and action items from a meeting.",
+            "note_type": "fleeting",
+            "folder": "00-inbox",
+            "body": (
+                "## Date & Attendees\n\n"
+                "- **Date:** {{ DATE }}\n"
+                "- **Attendees:** \n\n"
+                "## Agenda\n\n"
+                "1. \n\n"
+                "## Decisions\n\n"
+                "## Action Items\n\n"
+                "- [ ] (owner) \n\n"
+                "## Follow-Up Notes\n\n"
+            ),
+            "icon": "users",
+        },
+        {
+            "id": "dharma",
+            "name": "Dharma Teaching",
+            "description": "Record a teaching, practice instruction, or reflection.",
+            "note_type": "permanent",
+            "folder": "40-teachings",
+            "body": (
+                "## Teaching / Source\n\n"
+                "- **Teacher:** \n"
+                "- **Lineage:** \n"
+                "- **Date received:** {{ DATE }}\n\n"
+                "## Core Teaching\n\n"
+                "## Practice Instructions\n\n"
+                "## Personal Reflection\n\n"
+                "## Links to Other Teachings\n\n"
+                "- [[Related Teaching]]"
+            ),
+            "icon": "sun",
+        },
+    ]
 
 
 # ---------------------------------------------------------------------------
