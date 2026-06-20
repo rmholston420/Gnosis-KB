@@ -5,6 +5,7 @@ Provides:
   - get_engine(): lazy async engine
   - get_session_factory(): lazy async_sessionmaker
   - AsyncSessionLocal: the async_sessionmaker instance (use as async context manager directly)
+  - AsyncSessionFactory: alias for AsyncSessionLocal (backward-compat with vault_sync et al.)
   - get_db: FastAPI dependency for database sessions
   - get_session: alias for get_db (backward-compat)
   - init_db: create schema and vault directories
@@ -88,6 +89,10 @@ class _AsyncSessionLocalProxy:
 # Correct alias: calling AsyncSessionLocal() returns an AsyncSession
 # context manager, matching the pattern used throughout the codebase.
 AsyncSessionLocal = _AsyncSessionLocalProxy()
+
+# Backward-compat alias — vault_sync.py and other services written during
+# earlier build slices import `AsyncSessionFactory`.  Both names are identical.
+AsyncSessionFactory = AsyncSessionLocal
 
 
 async def get_db():
