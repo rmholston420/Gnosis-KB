@@ -8,13 +8,14 @@ Endpoints
 - GET /graph/clusters    — community/cluster membership
 - GET /graph/stats       — aggregate graph statistics
 - GET /graph/lightrag    — LightRAG entities + relations as D3 nodes/links
+- GET /graph/entities    — flat LightRAG entity list (for sidebar panel)
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -271,7 +272,7 @@ async def get_lightrag_graph(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """
-    Export LightRAG’s entity/relation graph for the frontend D3 Knowledge
+    Export LightRAG's entity/relation graph for the frontend D3 Knowledge
     Graph tab.  Entities are coloured by concept cluster.
 
     Falls back gracefully when LightRAG is not initialised: returns an empty
@@ -299,3 +300,49 @@ async def get_lightrag_graph(
         "links": data.get("links", []),
         "source": "lightrag",
     }
+
+
+# ---------------------------------------------------------------------------
+# LightRAG entity list  (Slice 16)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/entities", summary="Flat LightRAG entity list for the sidebar panel")
+async def get_graph_entities(
+    limit: int = Query(default=100, ge=1, le=500, description="Max entities to return"),
+    owner_ids: set[int] = Depends(get_vault_owner_ids),
+    db: AsyncSession = Depends(get_db),  # noqa: ARG001  kept for consistent dep injection
+) -> dict[str, Any]:
+    """
+    Return a flat list of LightRAG entities for the GraphPage sidebar.
+
+    Each entity has:
+      id, label, description, cluster, source_note_ids
+
+    Falls back gracefully when LightRAG is not initialised — returns an empty
+    list so the frontend panel renders a friendly empty state.
+    """
+    try:
+        from gnosis.services.graph_rag import graph_rag  # lazy import
+    except ImportError:
+        return {"entities": [], "total": 0, "error": "LightRAG not installed"}
+
+    try:
+        data = await graph_rag.export_graph(list(owner_ids))
+    except Exception as exc:  # noqa: BLE001
+        return {"entities": [], "total": 0, "error": str(exc)}
+
+    nodes: list[dict[str, Any]] = data.get("nodes", [])
+
+    entities = [
+        {
+            "id": n.get("id", ""),
+            "label": n.get("label", ""),
+            "description": n.get("description"),
+            "cluster": n.get("cluster"),
+            "source_note_ids": n.get("source_note_ids", []),
+        }
+        for n in nodes[:limit]
+    ]
+
+    return {"entities": entities, "total": len(nodes)}
