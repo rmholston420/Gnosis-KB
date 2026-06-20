@@ -27,14 +27,22 @@ class Note(Base):
 
     Relationship loading strategy
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    ``Note.tags`` and ``Note.outgoing_links`` / ``Note.incoming_links`` use
-    ``lazy='select'`` (explicit load only).  All router query sites that need
-    tags call ``.options(selectinload(Note.tags))`` explicitly.  Using
-    ``lazy='selectin'`` here caused a double-load collision: the model-level
-    background load fired first, then the explicit selectinload() fired again
-    on an already-populated collection, collapsing it to a scalar Tag object
-    instead of a list (SQLAlchemy SAWarning: 'Multiple rows returned with
-    uselist=False').  ``lazy='select'`` suppresses the background load.
+    All relationships use ``lazy='select'`` (explicit load only).  Every
+    router query site that needs a relationship calls
+    ``.options(selectinload(...))`` explicitly.
+
+    Using ``lazy='selectin'`` on *any* relationship caused a double-load
+    collision: when selectinload(Note.tags) fired, SQLAlchemy also
+    auto-fired every ``lazy='selectin'`` relationship on the same Note
+    instance.  ``review_card`` (uselist=False) received multiple rows from
+    the tag JOIN and raised:
+
+        SAWarning: Multiple rows returned with uselist=False for
+        eagerly-loaded attribute 'Note.tags'
+
+    That collision also collapsed Note.tags to a scalar, making the
+    create/update endpoints return ``tags: []``.  Setting all relationships
+    to ``lazy='select'`` suppresses the automatic sub-SELECTs.
     """
 
     __tablename__ = "notes"
@@ -76,16 +84,15 @@ class Note(Base):
     )
 
     # Relationships
+    # All lazy='select': never auto-load in the background.
+    # Routers that need a relationship add .options(selectinload(...)) explicitly.
+    # See class docstring for why lazy='selectin' caused tag-list corruption.
     owner: Mapped[Optional["User"]] = relationship(
         "User",
         back_populates="notes",
         foreign_keys=[owner_id],
         lazy="noload",
     )
-    # lazy='select': do NOT auto-load in background.  All query sites that
-    # need tags use .options(selectinload(Note.tags)) explicitly.  A
-    # lazy='selectin' here caused a double-load collision with those explicit
-    # options, collapsing the list to a scalar on the second pass.
     tags: Mapped[list] = relationship(
         "Tag",
         secondary="note_tags",
@@ -110,11 +117,11 @@ class Note(Base):
         back_populates="note",
         uselist=False,
         cascade="all, delete-orphan",
-        lazy="selectin",
+        lazy="select",          # was 'selectin' — caused SAWarning + tags=[] bug
     )
     attachments: Mapped[list["Attachment"]] = relationship(
         "Attachment",
         back_populates="note",
         cascade="all, delete-orphan",
-        lazy="selectin",
+        lazy="select",          # was 'selectin' — fired automatically alongside review_card
     )
