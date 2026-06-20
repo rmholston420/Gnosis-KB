@@ -4,7 +4,7 @@ Provides:
   - Base: SQLAlchemy declarative base
   - get_engine(): lazy async engine
   - get_session_factory(): lazy async_sessionmaker
-  - AsyncSessionLocal: alias for get_session_factory (callable → session)
+  - AsyncSessionLocal: the async_sessionmaker instance (use as async context manager directly)
   - get_db: FastAPI dependency for database sessions
   - get_session: alias for get_db (backward-compat)
   - init_db: create schema and vault directories
@@ -27,7 +27,7 @@ class Base(DeclarativeBase):
 
 # Engine and session factory (initialized lazily on first access)
 _engine = None
-_session_factory = None
+_session_factory: async_sessionmaker | None = None
 
 
 def get_engine():
@@ -55,9 +55,39 @@ def get_session_factory() -> async_sessionmaker:
     return _session_factory
 
 
-# Convenience alias — vault_sync.py and others import this and call it as:
-#   async with AsyncSessionLocal() as session: ...
-AsyncSessionLocal = get_session_factory
+def _get_async_session_local() -> async_sessionmaker:
+    """Lazy proxy so AsyncSessionLocal works as an async context manager.
+
+    Usage::
+        async with AsyncSessionLocal() as session:
+            ...
+    """
+    return get_session_factory()
+
+
+class _AsyncSessionLocalProxy:
+    """Proxy that delegates __call__ and async CM to the real factory.
+
+    This lets vault_sync (and any other module) write::
+
+        async with AsyncSessionLocal() as db: ...
+
+    without caring whether the factory has been initialised yet.
+    """
+
+    def __call__(self) -> AsyncSession:  # type: ignore[override]
+        return get_session_factory()()
+
+    def __aenter__(self):
+        return get_session_factory().__aenter__()
+
+    def __aexit__(self, *args):
+        return get_session_factory().__aexit__(*args)
+
+
+# Correct alias: calling AsyncSessionLocal() returns an AsyncSession
+# context manager, matching the pattern used throughout the codebase.
+AsyncSessionLocal = _AsyncSessionLocalProxy()
 
 
 async def get_db():
@@ -83,17 +113,15 @@ async def init_db() -> None:
     """
     settings = get_settings()
 
-    # Create vault folders
+    vault = Path(settings.vault_path)
     for folder in [
         "00-inbox", "10-zettelkasten", "20-projects",
         "30-areas", "40-resources", "50-archive",
         "60-journals", "70-sources", "80-meta",
     ]:
-        (settings.vault_path / folder).mkdir(parents=True, exist_ok=True)
-    logger.info("Vault directory structure ensured at %s", settings.vault_path)
+        (vault / folder).mkdir(parents=True, exist_ok=True)
+    logger.info("Vault directory structure ensured at %s", vault)
 
-    # Tables are created via Alembic migrations in production.
-    # For dev/test, create directly.
     async with get_engine().begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database tables initialized")
