@@ -13,11 +13,17 @@ from gnosis.models.review import ReviewCard
 # Helpers
 # ---------------------------------------------------------------------------
 
-async def _make_note(db, note_id: str = "note-1", title: str = "Test Note") -> Note:
+async def _make_note(
+    db,
+    note_id: str = "note-1",
+    title: str = "Test Note",
+) -> Note:
     note = Note(
         id=note_id,
         title=title,
+        slug=note_id,          # unique non-null
         body="body text",
+        body_html="<p>body text</p>",
         folder="10-zettelkasten",
         owner_id=1,
     )
@@ -80,7 +86,7 @@ async def test_review_queue_excludes_future_card(client, test_db):
 @pytest.mark.asyncio
 async def test_review_queue_limit(client, test_db):
     for i in range(5):
-        note_id = f"note-{i}"
+        note_id = f"note-q{i}"
         await _make_note(test_db, note_id=note_id, title=f"Note {i}")
         await _make_card(test_db, note_id=note_id)
     r = await client.get("/api/v1/review/queue?limit=3")
@@ -129,9 +135,9 @@ async def test_enroll_note_creates_card(client, test_db):
 @pytest.mark.asyncio
 async def test_enroll_note_idempotent(client, test_db):
     """Enrolling an already-enrolled note returns existing card without error."""
-    await _make_note(test_db)
-    r1 = await client.post("/api/v1/review/note-1/enroll", json={"due_today": True})
-    r2 = await client.post("/api/v1/review/note-1/enroll", json={"due_today": True})
+    await _make_note(test_db, note_id="note-idem")
+    r1 = await client.post("/api/v1/review/note-idem/enroll", json={"due_today": True})
+    r2 = await client.post("/api/v1/review/note-idem/enroll", json={"due_today": True})
     assert r1.status_code == 201
     assert r2.status_code in (200, 201)
 
@@ -155,24 +161,23 @@ async def test_submit_review_advances_schedule(client, test_db):
     data = r.json()
     assert data["note_id"] == "note-1"
     assert data["last_quality"] == 4
-    # interval must advance from 1
     assert data["interval"] >= 1
 
 
 @pytest.mark.asyncio
 async def test_submit_review_perfect_quality(client, test_db):
-    await _make_note(test_db)
-    await _make_card(test_db)
-    r = await client.post("/api/v1/review/note-1", json={"quality": 5})
+    await _make_note(test_db, note_id="note-perf")
+    await _make_card(test_db, note_id="note-perf")
+    r = await client.post("/api/v1/review/note-perf", json={"quality": 5})
     assert r.status_code == 200
     assert r.json()["last_quality"] == 5
 
 
 @pytest.mark.asyncio
 async def test_submit_review_failure_resets(client, test_db):
-    await _make_note(test_db)
-    await _make_card(test_db)
-    r = await client.post("/api/v1/review/note-1", json={"quality": 1})
+    await _make_note(test_db, note_id="note-fail")
+    await _make_card(test_db, note_id="note-fail")
+    r = await client.post("/api/v1/review/note-fail", json={"quality": 1})
     assert r.status_code == 200
     data = r.json()
     assert data["repetitions"] == 0  # SM-2 resets repetitions on failure
@@ -190,12 +195,12 @@ async def test_submit_review_card_not_found(client):
 
 @pytest.mark.asyncio
 async def test_unenroll_note_removes_card(client, test_db):
-    await _make_note(test_db)
-    await _make_card(test_db)
-    r = await client.delete("/api/v1/review/note-1")
+    await _make_note(test_db, note_id="note-del")
+    await _make_card(test_db, note_id="note-del")
+    r = await client.delete("/api/v1/review/note-del")
     assert r.status_code == 204
-    # Should be gone
-    r2 = await client.delete("/api/v1/review/note-1")
+    # Card is gone
+    r2 = await client.delete("/api/v1/review/note-del")
     assert r2.status_code == 404
 
 

@@ -37,7 +37,9 @@ async def _make_note(
     note = Note(
         id=note_id,
         title=title,
+        slug=note_id,                  # unique non-null
         body="legacy body",
+        body_html="<p>legacy body</p>",
         folder="00-inbox",
         owner_id=owner_id,
         created_at=datetime.now(timezone.utc),
@@ -70,10 +72,7 @@ async def test_reindex_fixes_legacy_notes(client, test_db):
     await _make_note(test_db, note_id="legacy-1", owner_id=0)
     await _make_note(test_db, note_id="legacy-2", owner_id=0)
 
-    with patch(
-        "gnosis.routers.admin.graph_rag",
-        autospec=True,
-    ) as mock_rag:
+    with patch("gnosis.routers.admin.graph_rag") as mock_rag:
         mock_rag.ingest_note = AsyncMock(return_value=None)
         r = await client.post("/api/v1/admin/reindex")
 
@@ -143,7 +142,7 @@ async def test_reindex_unauthenticated(unauthenticated_client):
 
 @pytest.mark.asyncio
 async def test_reindex_lightrag_error_is_non_fatal(client, test_db):
-    """Even if LightRAG ingest raises, the note is still fixed and status is ok/partial."""
+    """Even if LightRAG ingest raises, the note is still fixed and status is ok."""
     await _make_user(test_db)
     await _make_note(test_db, note_id="legacy-err", owner_id=0)
 
@@ -153,5 +152,4 @@ async def test_reindex_lightrag_error_is_non_fatal(client, test_db):
 
     assert r.status_code == 200
     data = r.json()
-    # The DB update still succeeded — note is counted
     assert data["fixed"] >= 1

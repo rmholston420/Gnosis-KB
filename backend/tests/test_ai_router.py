@@ -1,8 +1,7 @@
 """Tests for routers/ai.py — AI endpoints."""
 from __future__ import annotations
 
-from datetime import date
-from unittest.mock import AsyncMock, MagicMock, patch, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -23,7 +22,9 @@ async def _make_note(
     note = Note(
         id=note_id,
         title=title,
+        slug=note_id,                  # unique non-null
         body=body,
+        body_html=f"<p>{body}</p>",
         folder=folder,
         owner_id=1,
     )
@@ -85,10 +86,10 @@ async def test_get_providers_available(client):
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"models": [{"name": "llama3"}]}
-        mock_client_ctx = AsyncMock()
-        mock_client_ctx.__aenter__ = AsyncMock(return_value=AsyncMock(get=AsyncMock(return_value=mock_resp)))
-        mock_client_ctx.__aexit__ = AsyncMock(return_value=False)
-        mock_http.return_value = mock_client_ctx
+        mock_async_client = AsyncMock()
+        mock_async_client.get = AsyncMock(return_value=mock_resp)
+        mock_http.return_value.__aenter__ = AsyncMock(return_value=mock_async_client)
+        mock_http.return_value.__aexit__ = AsyncMock(return_value=False)
         r = await client.get("/api/v1/ai/providers")
     assert r.status_code == 200
     assert r.json()["available"] is True
@@ -133,9 +134,9 @@ async def test_chat_503_when_no_provider(client):
 
 @pytest.mark.asyncio
 async def test_summarize_returns_summary(client, test_db):
-    await _make_note(test_db)
+    await _make_note(test_db, note_id="sum-1")
     with patch(_LLM_PATCH, _mock_llm("A concise summary.")):
-        r = await client.post("/api/v1/ai/summarize/ai-note-1")
+        r = await client.post("/api/v1/ai/summarize/sum-1")
     assert r.status_code == 200
     assert r.json()["summary"] == "A concise summary."
 
@@ -149,11 +150,11 @@ async def test_summarize_404_missing_note(client):
 
 @pytest.mark.asyncio
 async def test_summarize_503_no_llm(client, test_db):
-    await _make_note(test_db, note_id="ai-note-503")
+    await _make_note(test_db, note_id="sum-503")
     mock_llm = MagicMock()
     mock_llm.is_available = False
     with patch(_LLM_PATCH, mock_llm):
-        r = await client.post("/api/v1/ai/summarize/ai-note-503")
+        r = await client.post("/api/v1/ai/summarize/sum-503")
     assert r.status_code == 503
 
 
