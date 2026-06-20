@@ -1,13 +1,14 @@
 """Pytest fixtures for Gnosis test suite.
 
 Provides:
-  - async_client  : HTTPX async test client with in-memory SQLite DB
-  - test_db       : isolated async session for direct DB operations
-  - vault_dir     : temporary directory acting as the vault
+  - async_client / client  : HTTPX async test clients (same instance, two names)
+  - auth_headers           : dummy Authorization header for endpoints that need it
+  - test_db                : isolated async session for direct DB operations
+  - vault_dir              : temporary directory acting as the vault
 
 External service patching
 -------------------------
-Three lifespan calls are patched at *session* scope so that pytest runs
+Three lifespan calls are patched at *fixture* scope so that pytest runs
 cleanly on a dev machine with no Postgres, Qdrant, Ollama, or LightRAG:
 
   1. ensure_collection()         — Qdrant collection setup  → no-op
@@ -16,8 +17,8 @@ cleanly on a dev machine with no Postgres, Qdrant, Ollama, or LightRAG:
 
 Auth patching
 -------------
-require_user is overridden in async_client so every test request is
-authenticated as a fixed FakeUser(id=1) without needing a real JWT.
+require_user is overridden so every request is authenticated as
+FakeUser(id=1) without needing a real JWT or database User row.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import AsyncGenerator
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
@@ -92,7 +93,7 @@ def vault_dir():
 
 
 # ---------------------------------------------------------------------------
-# Service patches — applied session-wide so lifespan doesn't hit real services
+# Service patches — applied per-fixture so lifespan doesn't hit real services
 # ---------------------------------------------------------------------------
 
 
@@ -124,6 +125,7 @@ class _FakeUser:
     vault_slug: str | None = "test"
     vault_path: str | None = None
     is_active: bool = True
+    is_superuser: bool = False
 
 
 async def _fake_require_user() -> _FakeUser:
@@ -132,17 +134,15 @@ async def _fake_require_user() -> _FakeUser:
 
 
 # ---------------------------------------------------------------------------
-# Test client — wired to SQLite DB, patched services, temp vault, fake auth
+# Test client factory — shared implementation
 # ---------------------------------------------------------------------------
 
 
-@pytest_asyncio.fixture
-async def async_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, None]:
-    """HTTPX async client wired to the FastAPI app with:
-    - SQLite test DB (no Postgres)
-    - temp vault directory
-    - Qdrant / watchdog / LightRAG stubbed out
-    - require_user dependency overridden to return FakeUser(id=1)
+async def _make_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, None]:
+    """Build a patched HTTPX async client.
+
+    Extracted so both 'async_client' and 'client' fixtures can share the
+    same implementation without code duplication.
     """
     with (
         patch(
@@ -166,7 +166,6 @@ async def async_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, No
 
         app = create_app()
 
-        # Override the DB dependency so every request uses the SQLite session
         session_factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
 
         async def override_get_db():
@@ -174,15 +173,44 @@ async def async_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, No
                 yield session
 
         app.dependency_overrides[get_db] = override_get_db
-
-        # Override the auth dependency so every request is authenticated
-        # as FakeUser(id=1) without needing a real JWT or User DB row.
         app.dependency_overrides[require_user] = _fake_require_user
 
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test",
-        ) as client:
-            yield client
+        ) as c:
+            yield c
 
         app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture
+async def async_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, None]:
+    """HTTPX async client — primary name used by test_notes, test_export, etc."""
+    async for c in _make_client(test_engine, vault_dir):
+        yield c
+
+
+@pytest_asyncio.fixture
+async def client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, None]:
+    """Alias for async_client — used by test_ai, test_auth, test_health,
+    test_ingest, test_graph, test_moc, test_query, test_tag_autocomplete,
+    test_vault_sync_endpoint.
+    """
+    async for c in _make_client(test_engine, vault_dir):
+        yield c
+
+
+# ---------------------------------------------------------------------------
+# Auth headers — dummy Bearer token accepted by patched require_user
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def auth_headers() -> dict:
+    """Return Authorization headers for tests that pass headers explicitly.
+
+    The require_user dependency is already overridden to return FakeUser(id=1)
+    regardless of the token value, so any non-empty Bearer string works.
+    """
+    return {"Authorization": "Bearer test-token-gnosis"}

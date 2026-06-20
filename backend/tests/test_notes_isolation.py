@@ -21,7 +21,7 @@ from gnosis.main import app
 from gnosis.database import get_db
 from gnosis.models.note import Note
 from gnosis.models.user import User
-from gnosis.core.auth import create_access_token
+from gnosis.core.auth import create_access_token, TokenData
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -57,8 +57,9 @@ async def db_session():
         yield session
 
 
-def _token(user_id: int, username: str) -> str:
-    return create_access_token({"sub": username, "user_id": user_id})
+def _token(user_id: int, email: str) -> str:
+    """Generate a signed JWT for the given user — matches create_access_token signature."""
+    return create_access_token(TokenData(user_id=user_id, email=email))
 
 
 @pytest_asyncio.fixture
@@ -66,27 +67,44 @@ async def two_users_and_notes(db_session: AsyncSession):
     """Seed two users each with one note, plus one legacy owner_id=0 note."""
     from gnosis.services.markdown_parser import generate_note_id
 
-    user_a = User(id=1, username="alice", email="alice@test.local",
-                  hashed_password="x", is_active=True, is_superuser=False)
-    user_b = User(id=2, username="bob", email="bob@test.local",
-                  hashed_password="x", is_active=True, is_superuser=False)
+    # User model uses email + full_name, no 'username' or 'is_superuser' field.
+    user_a = User(
+        id=1,
+        email="alice@test.local",
+        full_name="Alice",
+        hashed_password="x",
+        is_active=True,
+    )
+    user_b = User(
+        id=2,
+        email="bob@test.local",
+        full_name="Bob",
+        hashed_password="x",
+        is_active=True,
+    )
     db_session.add_all([user_a, user_b])
 
-    note_a = Note(id=generate_note_id(), title="Alice Note", slug="alice-note",
-                  body="# Alice\n[[Bob Note]]", body_html="", note_type="permanent",
-                  status="active", vault_path="00-inbox/a.md", folder="00-inbox",
-                  word_count=2, is_deleted=False, vector_indexed=False,
-                  graph_indexed=False, owner_id=1)
-    note_b = Note(id=generate_note_id(), title="Bob Note", slug="bob-note",
-                  body="# Bob", body_html="", note_type="permanent",
-                  status="active", vault_path="00-inbox/b.md", folder="00-inbox",
-                  word_count=1, is_deleted=False, vector_indexed=False,
-                  graph_indexed=False, owner_id=2)
-    note_legacy = Note(id=generate_note_id(), title="Legacy Note", slug="legacy-note",
-                       body="# Legacy", body_html="", note_type="permanent",
-                       status="active", vault_path="00-inbox/l.md", folder="00-inbox",
-                       word_count=1, is_deleted=False, vector_indexed=False,
-                       graph_indexed=False, owner_id=0)
+    note_a = Note(
+        id=generate_note_id(), title="Alice Note", slug="alice-note",
+        body="# Alice\n[[Bob Note]]", body_html="", note_type="permanent",
+        status="active", vault_path="00-inbox/a.md", folder="00-inbox",
+        word_count=2, is_deleted=False, vector_indexed=False,
+        graph_indexed=False, owner_id=1,
+    )
+    note_b = Note(
+        id=generate_note_id(), title="Bob Note", slug="bob-note",
+        body="# Bob", body_html="", note_type="permanent",
+        status="active", vault_path="00-inbox/b.md", folder="00-inbox",
+        word_count=1, is_deleted=False, vector_indexed=False,
+        graph_indexed=False, owner_id=2,
+    )
+    note_legacy = Note(
+        id=generate_note_id(), title="Legacy Note", slug="legacy-note",
+        body="# Legacy", body_html="", note_type="permanent",
+        status="active", vault_path="00-inbox/l.md", folder="00-inbox",
+        word_count=1, is_deleted=False, vector_indexed=False,
+        graph_indexed=False, owner_id=0,
+    )
     db_session.add_all([note_a, note_b, note_legacy])
     await db_session.commit()
     return user_a, user_b, note_a, note_b, note_legacy
@@ -99,7 +117,8 @@ async def two_users_and_notes(db_session: AsyncSession):
 @pytest.mark.asyncio
 async def test_list_notes_scoped(two_users_and_notes):
     user_a, user_b, note_a, note_b, _ = two_users_and_notes
-    token_a = _token(user_a.id, user_a.username)
+    # Use user_a.email — User model has no 'username' field
+    token_a = _token(user_a.id, user_a.email)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(
@@ -115,7 +134,7 @@ async def test_list_notes_scoped(two_users_and_notes):
 @pytest.mark.asyncio
 async def test_get_note_cross_user_forbidden(two_users_and_notes):
     user_a, user_b, note_a, note_b, _ = two_users_and_notes
-    token_a = _token(user_a.id, user_a.username)
+    token_a = _token(user_a.id, user_a.email)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(
@@ -128,7 +147,7 @@ async def test_get_note_cross_user_forbidden(two_users_and_notes):
 @pytest.mark.asyncio
 async def test_update_note_cross_user_forbidden(two_users_and_notes):
     user_a, user_b, note_a, note_b, _ = two_users_and_notes
-    token_a = _token(user_a.id, user_a.username)
+    token_a = _token(user_a.id, user_a.email)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.put(
@@ -142,7 +161,7 @@ async def test_update_note_cross_user_forbidden(two_users_and_notes):
 @pytest.mark.asyncio
 async def test_delete_note_cross_user_forbidden(two_users_and_notes):
     user_a, user_b, note_a, note_b, _ = two_users_and_notes
-    token_a = _token(user_a.id, user_a.username)
+    token_a = _token(user_a.id, user_a.email)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.delete(
@@ -155,7 +174,7 @@ async def test_delete_note_cross_user_forbidden(two_users_and_notes):
 @pytest.mark.asyncio
 async def test_legacy_owner_zero_hidden(two_users_and_notes):
     user_a, _, _, _, note_legacy = two_users_and_notes
-    token_a = _token(user_a.id, user_a.username)
+    token_a = _token(user_a.id, user_a.email)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(
@@ -169,7 +188,7 @@ async def test_legacy_owner_zero_hidden(two_users_and_notes):
 @pytest.mark.asyncio
 async def test_wikilink_search_scoped(two_users_and_notes):
     user_a, user_b, note_a, note_b, _ = two_users_and_notes
-    token_a = _token(user_a.id, user_a.username)
+    token_a = _token(user_a.id, user_a.email)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(

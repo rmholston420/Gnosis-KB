@@ -5,11 +5,13 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_health_check(async_client):
-    """Health endpoint returns 200 and status ok."""
+    """Health endpoint returns 200 and a valid status value."""
     response = await async_client.get("/api/v1/health/")
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "ok"
+    # Health router returns 'healthy' when all checks pass, 'degraded' otherwise.
+    # In the test environment Qdrant is not running so status may be 'degraded'.
+    assert data["status"] in ("healthy", "degraded")
 
 
 @pytest.mark.asyncio
@@ -49,13 +51,11 @@ async def test_create_note(async_client, vault_dir):
 @pytest.mark.asyncio
 async def test_get_note(async_client):
     """Fetching a note by ID returns the correct note."""
-    # First create one
     payload = {"title": "Fetch Me", "body": "Body text.", "folder": "10-zettelkasten"}
     create_resp = await async_client.post("/api/v1/notes/", json=payload)
     assert create_resp.status_code == 201
     note_id = create_resp.json()["id"]
 
-    # Now fetch
     get_resp = await async_client.get(f"/api/v1/notes/{note_id}")
     assert get_resp.status_code == 200
     assert get_resp.json()["id"] == note_id
