@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     # Vector store
     qdrant_url: str = "http://localhost:6333"
     qdrant_collection: str = "gnosis_notes"
+    qdrant_api_key: Optional[str] = None
+    qdrant_collection_name: str = "gnosis_notes"
 
     # Vault
     vault_path: str = "./vault"
