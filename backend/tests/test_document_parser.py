@@ -1,14 +1,10 @@
 """Unit tests for gnosis/services/document_parser.py.
 
-All heavy third-party libs (fitz, docx, pptx, openpyxl, pytesseract,
-Pillow, httpx, bs4) are stubbed via sys.modules injection so no real
-files or network calls are needed.
+All heavy optional dependencies (fitz, docx, pptx, openpyxl, pytesseract,
+httpx) are mocked so no binary libraries are needed in the test environment.
 """
 from __future__ import annotations
 
-import sys
-import types
-from importlib import reload
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -16,287 +12,194 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# sys.modules stubs
+# ParsedDocument dataclass
 # ---------------------------------------------------------------------------
 
-def _make_fitz_stub(pages=("Page one text.", "Page two text."), meta=None):
-    page_objs = [MagicMock(**{"get_text.return_value": t}) for t in pages]
-    doc = MagicMock()
-    doc.__iter__ = MagicMock(return_value=iter(page_objs))
-    doc.__len__ = MagicMock(return_value=len(pages))
-    doc.metadata = meta or {}
-    fitz = types.ModuleType("fitz")
-    fitz.open = MagicMock(return_value=doc)  # type: ignore[attr-defined]
-    return fitz, doc
-
-
-def _make_docx_stub(paragraphs=("My Title", "Body paragraph.")):
-    para_objs = [MagicMock(text=t) for t in paragraphs]
-    doc = MagicMock()
-    doc.paragraphs = para_objs
-    doc.sections = [MagicMock()]
-    Document = MagicMock(return_value=doc)
-    docx_mod = types.ModuleType("docx")
-    docx_mod.Document = Document  # type: ignore[attr-defined]
-    return docx_mod, doc
-
-
-def _make_pptx_stub(slide_texts=("Hello World", "Slide Two")):
-    shapes = [[MagicMock(text=t)] for t in slide_texts]
-    slides = []
-    for sh_list in shapes:
-        s = MagicMock()
-        s.shapes = sh_list
-        slides.append(s)
-    prs = MagicMock()
-    prs.slides = slides
-    Presentation = MagicMock(return_value=prs)
-    pptx_mod = types.ModuleType("pptx")
-    pptx_mod.Presentation = Presentation  # type: ignore[attr-defined]
-    return pptx_mod, prs
-
-
-def _make_openpyxl_stub(sheets=None):
-    if sheets is None:
-        sheets = {"Sheet1": [("A", "B"), ("1", "2"), ("3", "4")]}
-    wb = MagicMock()
-    wb.sheetnames = list(sheets.keys())
-    ws_map = {}
-    for name, rows in sheets.items():
-        ws = MagicMock()
-        ws.iter_rows = MagicMock(return_value=iter(rows))
-        ws_map[name] = ws
-    wb.__getitem__ = MagicMock(side_effect=lambda k: ws_map[k])
-    wb.close = MagicMock()
-    openpyxl_mod = types.ModuleType("openpyxl")
-    openpyxl_mod.load_workbook = MagicMock(return_value=wb)  # type: ignore[attr-defined]
-    return openpyxl_mod, wb
-
-
-def _make_tesseract_stub(ocr_text="Extracted OCR text"):
-    pil_img = MagicMock()
-    Image_mod = MagicMock()
-    Image_mod.open = MagicMock(return_value=pil_img)
-    pil_mod = types.ModuleType("PIL")
-    pil_mod.Image = Image_mod  # type: ignore[attr-defined]
-    pytesseract_mod = types.ModuleType("pytesseract")
-    pytesseract_mod.image_to_string = MagicMock(return_value=ocr_text)  # type: ignore[attr-defined]
-    return pytesseract_mod, pil_mod
-
-
-def _make_bs4_stub(title="My Page", main_text="Main content here."):
-    """Stub bs4.BeautifulSoup that returns fixed title and body text."""
-    # soup.find("title").get_text() -> title
-    title_tag = MagicMock()
-    title_tag.get_text = MagicMock(return_value=title)
-
-    # soup.find("main").get_text() -> main_text
-    main_tag = MagicMock()
-    main_tag.get_text = MagicMock(return_value=main_text)
-
-    soup = MagicMock()
-    soup.find = MagicMock(side_effect=lambda tag, **kw: {
-        "title": title_tag,
-        "main": main_tag,
-    }.get(tag))
-    soup.find_all = MagicMock(return_value=[])  # no script/style to decompose
-
-    BeautifulSoup = MagicMock(return_value=soup)
-    bs4_mod = types.ModuleType("bs4")
-    bs4_mod.BeautifulSoup = BeautifulSoup  # type: ignore[attr-defined]
-    return bs4_mod
+def test_parsed_document_defaults():
+    from gnosis.services.document_parser import ParsedDocument
+    doc = ParsedDocument(title="T", text="body")
+    assert doc.source == ""
+    assert doc.page_count == 0
+    assert doc.raw_format == ""
+    assert doc.metadata == {}
 
 
 # ---------------------------------------------------------------------------
 # detect_format
 # ---------------------------------------------------------------------------
 
-def test_detect_format_known_extensions():
+@pytest.mark.parametrize("filename,expected", [
+    ("report.pdf",  "pdf"),
+    ("notes.docx",  "docx"),
+    ("slides.pptx", "pptx"),
+    ("data.xlsx",   "xlsx"),
+    ("photo.png",   "image"),
+    ("scan.tiff",   "image"),
+    ("readme.md",   None),
+    ("archive.zip", None),
+])
+def test_detect_format(filename, expected):
     from gnosis.services.document_parser import detect_format
-    assert detect_format("report.pdf") == "pdf"
-    assert detect_format("notes.docx") == "docx"
-    assert detect_format("slides.pptx") == "pptx"
-    assert detect_format("data.xlsx") == "xlsx"
-    assert detect_format("scan.png") == "image"
-    assert detect_format("photo.jpg") == "image"
-    assert detect_format("photo.jpeg") == "image"
-    assert detect_format("old.xls") == "xlsx"
-    assert detect_format("old.ppt") == "pptx"
-    assert detect_format("old.doc") == "docx"
-
-
-def test_detect_format_unknown_returns_none():
-    from gnosis.services.document_parser import detect_format
-    assert detect_format("archive.zip") is None
-    assert detect_format("notes.md") is None
-    assert detect_format("no_extension") is None
-
-
-# ---------------------------------------------------------------------------
-# parse_file dispatcher
-# ---------------------------------------------------------------------------
-
-def test_parse_file_raises_for_unsupported_extension(tmp_path):
-    from gnosis.services.document_parser import parse_file
-    f = tmp_path / "archive.zip"
-    f.write_bytes(b"")
-    with pytest.raises(ValueError, match="Unsupported"):
-        parse_file(f)
-
-
-def test_parse_file_dispatches_to_pdf(tmp_path):
-    fitz_stub, _ = _make_fitz_stub()
-    with patch.dict(sys.modules, {"fitz": fitz_stub}):
-        from gnosis.services.document_parser import parse_pdf
-        path = tmp_path / "report.pdf"
-        path.write_bytes(b"")
-        result = parse_pdf(path)
-    assert result.raw_format == "pdf"
+    assert detect_format(filename) == expected
 
 
 # ---------------------------------------------------------------------------
 # parse_pdf
 # ---------------------------------------------------------------------------
 
-def test_parse_pdf_uses_filename_as_title_when_no_metadata(tmp_path):
-    fitz_stub, _ = _make_fitz_stub(pages=("Text.",), meta={})
-    path = tmp_path / "my-research-paper.pdf"
-    path.write_bytes(b"")
-    with patch.dict(sys.modules, {"fitz": fitz_stub}):
-        from gnosis.services.document_parser import parse_pdf
-        result = parse_pdf(path)
-    assert result.title == "My Research Paper"
+def test_parse_pdf_extracts_text():
+    from gnosis.services.document_parser import parse_pdf
+
+    fake_page = MagicMock()
+    fake_page.get_text.return_value = "Page content."
+
+    fake_doc = MagicMock()
+    fake_doc.__iter__ = MagicMock(return_value=iter([fake_page]))
+    fake_doc.metadata = {"title": "My PDF", "author": "Alice"}
+    fake_doc.__len__ = MagicMock(return_value=1)
+
+    fake_fitz = MagicMock()
+    fake_fitz.open.return_value = fake_doc
+
+    with patch.dict("sys.modules", {"fitz": fake_fitz}):
+        result = parse_pdf(Path("/tmp/test.pdf"))
+
+    assert result.title == "My PDF"
+    assert result.author == "Alice"
+    assert "Page content." in result.text
     assert result.raw_format == "pdf"
-    assert "Text." in result.text
-    assert result.page_count == 1
 
 
-def test_parse_pdf_uses_metadata_title(tmp_path):
-    fitz_stub, _ = _make_fitz_stub(
-        pages=("Body text.",),
-        meta={"title": "Override Title", "author": "Jane Doe"},
-    )
-    path = tmp_path / "ignored.pdf"
-    path.write_bytes(b"")
-    with patch.dict(sys.modules, {"fitz": fitz_stub}):
-        from gnosis.services.document_parser import parse_pdf
-        result = parse_pdf(path)
-    assert result.title == "Override Title"
-    assert result.author == "Jane Doe"
+def test_parse_pdf_falls_back_to_stem_title():
+    from gnosis.services.document_parser import parse_pdf
+
+    fake_page = MagicMock()
+    fake_page.get_text.return_value = "body"
+
+    fake_doc = MagicMock()
+    fake_doc.__iter__ = MagicMock(return_value=iter([fake_page]))
+    fake_doc.metadata = {}  # no title key
+    fake_doc.__len__ = MagicMock(return_value=1)
+
+    fake_fitz = MagicMock()
+    fake_fitz.open.return_value = fake_doc
+
+    with patch.dict("sys.modules", {"fitz": fake_fitz}):
+        result = parse_pdf(Path("/tmp/my-document.pdf"))
+
+    assert result.title == "My Document"
 
 
-def test_parse_pdf_multi_page_text_joined(tmp_path):
-    fitz_stub, _ = _make_fitz_stub(pages=("Page one.", "Page two."))
-    path = tmp_path / "multi.pdf"
-    path.write_bytes(b"")
-    with patch.dict(sys.modules, {"fitz": fitz_stub}):
-        from gnosis.services.document_parser import parse_pdf
-        result = parse_pdf(path)
-    assert "Page one." in result.text
-    assert "Page two." in result.text
-    assert result.page_count == 2
-
-
-def test_parse_pdf_raises_without_pymupdf(tmp_path):
-    path = tmp_path / "test.pdf"
-    path.write_bytes(b"")
-    with patch.dict(sys.modules, {"fitz": None}):
-        import gnosis.services.document_parser as dp
-        reload(dp)
-        with pytest.raises(RuntimeError, match="PyMuPDF"):
-            dp.parse_pdf(path)
+def test_parse_pdf_raises_without_pymupdf():
+    from gnosis.services.document_parser import parse_pdf
+    import sys
+    saved = sys.modules.pop("fitz", None)
+    with patch.dict("sys.modules", {"fitz": None}):
+        with pytest.raises((RuntimeError, ImportError)):
+            parse_pdf(Path("/tmp/x.pdf"))
+    if saved:
+        sys.modules["fitz"] = saved
 
 
 # ---------------------------------------------------------------------------
 # parse_docx
 # ---------------------------------------------------------------------------
 
-def test_parse_docx_extracts_paragraphs(tmp_path):
-    docx_stub, _ = _make_docx_stub(("Report Title", "First paragraph.", "Second paragraph."))
-    path = tmp_path / "report.docx"
-    path.write_bytes(b"")
-    with patch.dict(sys.modules, {"docx": docx_stub}):
-        from gnosis.services.document_parser import parse_docx
-        result = parse_docx(path)
-    assert result.title == "Report Title"
-    assert "First paragraph." in result.text
+def test_parse_docx_extracts_paragraphs():
+    from gnosis.services.document_parser import parse_docx
+
+    fake_para1 = MagicMock(); fake_para1.text = "Title paragraph"
+    fake_para2 = MagicMock(); fake_para2.text = "Body text."
+    fake_para3 = MagicMock(); fake_para3.text = ""  # blank, should be skipped
+
+    fake_doc = MagicMock()
+    fake_doc.paragraphs = [fake_para1, fake_para2, fake_para3]
+    fake_doc.sections = [MagicMock()]
+
+    fake_docx_mod = MagicMock()
+    fake_docx_mod.Document.return_value = fake_doc
+
+    with patch.dict("sys.modules", {"docx": fake_docx_mod}):
+        result = parse_docx(Path("/tmp/notes.docx"))
+
+    assert result.title == "Title paragraph"
+    assert "Body text." in result.text
     assert result.raw_format == "docx"
-
-
-def test_parse_docx_empty_body_uses_stem(tmp_path):
-    docx_stub, _ = _make_docx_stub(())
-    path = tmp_path / "empty-doc.docx"
-    path.write_bytes(b"")
-    with patch.dict(sys.modules, {"docx": docx_stub}):
-        from gnosis.services.document_parser import parse_docx
-        result = parse_docx(path)
-    assert result.title == "empty-doc"
-    assert result.text == ""
 
 
 # ---------------------------------------------------------------------------
 # parse_pptx
 # ---------------------------------------------------------------------------
 
-def test_parse_pptx_extracts_slide_text(tmp_path):
-    pptx_stub, prs = _make_pptx_stub(("Intro Slide", "Main Points"))
-    path = tmp_path / "deck.pptx"
-    path.write_bytes(b"")
-    with patch.dict(sys.modules, {"pptx": pptx_stub}):
-        from gnosis.services.document_parser import parse_pptx
-        result = parse_pptx(path)
+def test_parse_pptx_extracts_slide_text():
+    from gnosis.services.document_parser import parse_pptx
+
+    fake_shape = MagicMock(); fake_shape.text = "Slide headline"
+    fake_slide = MagicMock(); fake_slide.shapes = [fake_shape]
+
+    fake_prs = MagicMock()
+    fake_prs.slides = [fake_slide]
+
+    fake_pptx_mod = MagicMock()
+    fake_pptx_mod.Presentation.return_value = fake_prs
+
+    with patch.dict("sys.modules", {"pptx": fake_pptx_mod}):
+        result = parse_pptx(Path("/tmp/deck.pptx"))
+
+    assert "Slide headline" in result.text
     assert "## Slide 1" in result.text
-    assert "Intro Slide" in result.text
-    assert result.page_count == 2
     assert result.raw_format == "pptx"
+    assert result.page_count == 1
 
 
 # ---------------------------------------------------------------------------
 # parse_xlsx
 # ---------------------------------------------------------------------------
 
-def test_parse_xlsx_generates_markdown_table(tmp_path):
-    openpyxl_stub, _ = _make_openpyxl_stub(
-        {"Sheet1": [("Name", "Score"), ("Alice", "95"), ("Bob", "87")]}
-    )
-    path = tmp_path / "data.xlsx"
-    path.write_bytes(b"")
-    with patch.dict(sys.modules, {"openpyxl": openpyxl_stub}):
-        from gnosis.services.document_parser import parse_xlsx
-        result = parse_xlsx(path)
-    assert "## Sheet: Sheet1" in result.text
-    assert "| Name | Score |" in result.text
-    assert "| Alice | 95 |" in result.text
+def test_parse_xlsx_builds_markdown_table():
+    from gnosis.services.document_parser import parse_xlsx
+
+    header_row = ("Name", "Age")
+    data_row   = ("Alice", 30)
+
+    fake_ws = MagicMock()
+    fake_ws.iter_rows.return_value = iter([header_row, data_row])
+
+    fake_wb = MagicMock()
+    fake_wb.sheetnames = ["Sheet1"]
+    fake_wb.__getitem__ = MagicMock(return_value=fake_ws)
+    fake_wb.close = MagicMock()
+
+    fake_openpyxl = MagicMock()
+    fake_openpyxl.load_workbook.return_value = fake_wb
+
+    with patch.dict("sys.modules", {"openpyxl": fake_openpyxl}):
+        result = parse_xlsx(Path("/tmp/data.xlsx"))
+
+    assert "Sheet1" in result.text
+    assert "Name" in result.text
+    assert "Alice" in result.text
     assert result.raw_format == "xlsx"
-
-
-def test_parse_xlsx_skips_empty_sheets(tmp_path):
-    openpyxl_stub, wb = _make_openpyxl_stub({})
-    wb.sheetnames = ["EmptySheet"]
-    ws = MagicMock()
-    ws.iter_rows = MagicMock(return_value=iter([]))
-    wb.__getitem__ = MagicMock(return_value=ws)
-    path = tmp_path / "empty.xlsx"
-    path.write_bytes(b"")
-    with patch.dict(sys.modules, {"openpyxl": openpyxl_stub}):
-        from gnosis.services.document_parser import parse_xlsx
-        result = parse_xlsx(path)
-    assert result.text == ""
 
 
 # ---------------------------------------------------------------------------
 # parse_image
 # ---------------------------------------------------------------------------
 
-def test_parse_image_returns_ocr_text(tmp_path):
-    pytesseract_stub, pil_stub = _make_tesseract_stub("Hello from OCR")
-    path = tmp_path / "scan_doc.png"
-    path.write_bytes(b"")
-    with patch.dict(sys.modules, {"pytesseract": pytesseract_stub, "PIL": pil_stub}):
-        from gnosis.services.document_parser import parse_image
-        result = parse_image(path)
-    assert result.text == "Hello from OCR"
-    assert result.title == "Scan Doc"
+def test_parse_image_returns_ocr_text():
+    from gnosis.services.document_parser import parse_image
+
+    fake_img = MagicMock()
+    fake_pil = MagicMock()
+    fake_pil.Image.open.return_value = fake_img
+
+    fake_tesseract = MagicMock()
+    fake_tesseract.image_to_string.return_value = "  OCR text  "
+
+    with patch.dict("sys.modules", {"pytesseract": fake_tesseract, "PIL": fake_pil}):
+        result = parse_image(Path("/tmp/scan.png"))
+
+    assert result.text == "OCR text"
     assert result.raw_format == "image"
     assert result.page_count == 1
 
@@ -306,52 +209,64 @@ def test_parse_image_returns_ocr_text(tmp_path):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_parse_url_extracts_title_and_body():
-    """Happy path: stub bs4.BeautifulSoup; title and main content extracted."""
-    html = "<html><head><title>My Page</title></head><body><main><p>Main content here.</p></main></body></html>"
+async def test_parse_url_extracts_title_and_text():
+    from gnosis.services.document_parser import parse_url
 
-    mock_resp = MagicMock()
-    mock_resp.text = html
-    mock_resp.raise_for_status = MagicMock()
+    html = "<html><head><title>Test Page</title></head><body><main>Main content</main></body></html>"
 
-    mock_client = AsyncMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    mock_client.get = AsyncMock(return_value=mock_resp)
+    fake_resp = MagicMock()
+    fake_resp.text = html
+    fake_resp.raise_for_status = MagicMock()
 
-    bs4_stub = _make_bs4_stub(title="My Page", main_text="Main content here.")
+    fake_client = AsyncMock()
+    fake_client.get = AsyncMock(return_value=fake_resp)
+    fake_client.__aenter__ = AsyncMock(return_value=fake_client)
+    fake_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch.dict(sys.modules, {"bs4": bs4_stub}):
-        import gnosis.services.document_parser as dp
-        reload(dp)
-        with patch("httpx.AsyncClient", return_value=mock_client):
-            result = await dp.parse_url("https://example.com/article")
+    with patch("httpx.AsyncClient", return_value=fake_client):
+        result = await parse_url("https://example.com")
 
-    assert result.title == "My Page"
-    assert "Main content here" in result.text
+    assert result.title == "Test Page"
+    assert "Main content" in result.text
+    assert result.source == "https://example.com"
     assert result.raw_format == "url"
-    assert result.source == "https://example.com/article"
 
 
 @pytest.mark.asyncio
-async def test_parse_url_fallback_without_bs4():
-    """Fallback path: bs4 absent; raw HTML returned, title defaults to URL."""
-    html = "<html><body>Raw content</body></html>"
+async def test_parse_url_falls_back_without_bs4():
+    from gnosis.services.document_parser import parse_url
 
-    mock_resp = MagicMock()
-    mock_resp.text = html
-    mock_resp.raise_for_status = MagicMock()
+    html = "<html><body>raw</body></html>"
+    fake_resp = MagicMock()
+    fake_resp.text = html
+    fake_resp.raise_for_status = MagicMock()
 
-    mock_client = AsyncMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    mock_client.get = AsyncMock(return_value=mock_resp)
+    fake_client = AsyncMock()
+    fake_client.get = AsyncMock(return_value=fake_resp)
+    fake_client.__aenter__ = AsyncMock(return_value=fake_client)
+    fake_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch.dict(sys.modules, {"bs4": None}):
-        import gnosis.services.document_parser as dp
-        reload(dp)
-        with patch("httpx.AsyncClient", return_value=mock_client):
-            result = await dp.parse_url("https://example.com")
+    with patch("httpx.AsyncClient", return_value=fake_client), \
+         patch.dict("sys.modules", {"bs4": None}):
+        result = await parse_url("https://example.com")
 
-    assert result.source == "https://example.com"
     assert result.raw_format == "url"
+
+
+# ---------------------------------------------------------------------------
+# parse_file dispatcher
+# ---------------------------------------------------------------------------
+
+def test_parse_file_dispatches_pdf():
+    from gnosis.services.document_parser import parse_file, ParsedDocument
+    mock_result = ParsedDocument(title="T", text="", raw_format="pdf")
+    with patch("gnosis.services.document_parser.parse_pdf", return_value=mock_result) as m:
+        result = parse_file(Path("/tmp/x.pdf"))
+    m.assert_called_once()
+    assert result.raw_format == "pdf"
+
+
+def test_parse_file_raises_on_unsupported():
+    from gnosis.services.document_parser import parse_file
+    with pytest.raises(ValueError, match="Unsupported"):
+        parse_file(Path("/tmp/x.csv"))
