@@ -8,6 +8,7 @@ are mocked so no binaries are required.
 from __future__ import annotations
 
 import sys
+import types
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -136,7 +137,7 @@ def test_parse_docx_extracts_paragraphs():
 
     mock_doc = MagicMock()
     mock_doc.paragraphs = [p1, p2]
-    mock_doc.sections = [MagicMock()]  # 1 section
+    mock_doc.sections = [MagicMock()]
 
     fake_docx_module = MagicMock()
     fake_docx_module.Document.return_value = mock_doc
@@ -217,7 +218,7 @@ def test_parse_xlsx_builds_markdown_table():
 
 def test_parse_xlsx_skips_empty_sheet():
     ws = MagicMock()
-    ws.iter_rows.return_value = []  # empty
+    ws.iter_rows.return_value = []
 
     wb = MagicMock()
     wb.sheetnames = ["Empty"]
@@ -255,24 +256,14 @@ def test_parse_image_extracts_ocr_text():
 # ---------------------------------------------------------------------------
 # parse_url
 #
-# parse_url does: `import httpx` inside the function body, then:
-#   async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-#       resp = await client.get(url, headers={...})
-#       html = resp.text
-#
-# Since `import httpx` resolves from sys.modules at call time, patching
-# `httpx.AsyncClient` directly replaces the class on the already-imported
-# httpx module object, which is what the function will find.
-#
-# Mock chain required:
-#   httpx.AsyncClient(...)       --> mock_instance  (return_value of the class mock)
-#   async with mock_instance     --> mock_client    (via __aenter__)
-#   await mock_client.get(...)   --> mock_resp      (AsyncMock return_value)
-#   mock_resp.text               --> html string
+# parse_url executes `import httpx` inside the function body at call time.
+# Python resolves this to sys.modules['httpx'].
+# We replace sys.modules['httpx'] entirely with a fake module whose
+# AsyncClient attribute is our mock -- guaranteed to be found.
 # ---------------------------------------------------------------------------
 
-def _make_httpx_mock(html: str):
-    """Return a mock suitable for patching httpx.AsyncClient."""
+def _make_fake_httpx(html: str):
+    """Return a fake httpx module with a mocked AsyncClient."""
     mock_resp = MagicMock()
     mock_resp.text = html
     mock_resp.raise_for_status = MagicMock()
@@ -284,7 +275,9 @@ def _make_httpx_mock(html: str):
     mock_instance.__aenter__ = AsyncMock(return_value=mock_client)
     mock_instance.__aexit__ = AsyncMock(return_value=False)
 
-    return MagicMock(return_value=mock_instance)
+    fake_httpx = types.ModuleType("httpx")
+    fake_httpx.AsyncClient = MagicMock(return_value=mock_instance)  # type: ignore
+    return fake_httpx
 
 
 async def test_parse_url_extracts_title_and_text():
@@ -292,7 +285,7 @@ async def test_parse_url_extracts_title_and_text():
         "<html><head><title>Test Page</title></head>"
         "<body><main><p>Main content here.</p></main></body></html>"
     )
-    with patch("httpx.AsyncClient", _make_httpx_mock(html)):
+    with patch.dict(sys.modules, {"httpx": _make_fake_httpx(html)}):
         result = await dp.parse_url("https://example.com")
 
     assert result.raw_format == "url"
@@ -302,10 +295,9 @@ async def test_parse_url_extracts_title_and_text():
 
 
 async def test_parse_url_fallback_without_bs4():
-    """When bs4 is removed from sys.modules, title falls back to the URL."""
+    """When bs4 is absent, title falls back to the URL string."""
     html = "<html><body>raw html</body></html>"
-    with patch("httpx.AsyncClient", _make_httpx_mock(html)), \
-         patch.dict(sys.modules, {"bs4": None}):
+    with patch.dict(sys.modules, {"httpx": _make_fake_httpx(html), "bs4": None}):
         result = await dp.parse_url("https://example.com/fallback")
 
     assert result.raw_format == "url"
@@ -313,7 +305,7 @@ async def test_parse_url_fallback_without_bs4():
 
 
 # ---------------------------------------------------------------------------
-# parse_file dispatcher — routes to correct sub-parser
+# parse_file dispatcher
 # ---------------------------------------------------------------------------
 
 def test_parse_file_routes_pdf():
@@ -327,7 +319,7 @@ def test_parse_file_routes_pdf():
 def test_parse_file_routes_docx():
     with patch("gnosis.services.document_parser.parse_docx") as mock_docx:
         mock_docx.return_value = ParsedDocument(title="T", text="t", raw_format="docx")
-        result = parse_file(Path("/vault/file.docx"))
+        parse_file(Path("/vault/file.docx"))
     mock_docx.assert_called_once()
 
 
