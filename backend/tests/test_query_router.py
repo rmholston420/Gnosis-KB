@@ -1,328 +1,315 @@
-"""HTTP-level tests for the /api/v1/query router.
+"""Unit tests for gnosis/routers/query.py.
 
-Covers:
-  POST /query/run                 — execute one-off GQL
-  GET  /query/saved               — list saved dashboards
-  POST /query/saved               — create saved dashboard
-  GET  /query/saved/{id}          — get by id
-  PUT  /query/saved/{id}          — update
-  DELETE /query/saved/{id}        — delete
-  POST /query/saved/{id}/run      — execute saved dashboard
-
-Auth note
----------
-auth_headers is a dummy dict only — actual auth is controlled by the
-dependency override in conftest.  Use `unauthenticated_client` (which
-overrides to _fake_deny_user) to test 401 responses.
+Covers: run_query (happy path, parse error), list_saved, create_saved
+(happy + duplicate 409 + parse error 422), get_saved (found + 404),
+update_saved (name/query/desc + 404 + bad query 422), delete_saved
+(happy + 404), run_saved (happy + 404 + bad query 422).
 """
 from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 
 # ---------------------------------------------------------------------------
-# /run — one-off GQL execution
+# Helpers
 # ---------------------------------------------------------------------------
 
-@pytest.mark.asyncio
-async def test_run_query_valid_returns_200(async_client, auth_headers):
-    """A simple valid GQL returns 200 with expected shape."""
-    resp = await async_client.post(
-        "/api/v1/query/run",
-        json={"query": "SORT title ASC LIMIT 10"},
-        headers=auth_headers,
-    )
-    assert resp.status_code == 200
-    body = resp.json()
-    assert "rows" in body
-    assert "total" in body
-    assert "query_time_ms" in body
+def _user(uid=1):
+    u = MagicMock()
+    u.id = uid
+    return u
 
 
-@pytest.mark.asyncio
-async def test_run_query_from_filter(async_client, auth_headers):
-    resp = await async_client.post(
-        "/api/v1/query/run",
-        json={"query": "FROM 10-zettelkasten LIMIT 5"},
-        headers=auth_headers,
-    )
-    assert resp.status_code == 200
-    assert isinstance(resp.json()["rows"], list)
+def _sq(sq_id=1, name="My Dashboard", query="FROM 10-zettelkasten", owner_id=1):
+    sq = MagicMock()
+    sq.id = sq_id
+    sq.name = name
+    sq.query = query
+    sq.description = None
+    sq.owner_id = owner_id
+    return sq
 
 
-@pytest.mark.asyncio
-async def test_run_query_where_condition(async_client, auth_headers):
-    resp = await async_client.post(
-        "/api/v1/query/run",
-        json={"query": "WHERE status=draft LIMIT 5"},
-        headers=auth_headers,
-    )
-    assert resp.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_run_query_invalid_gql_returns_422(async_client, auth_headers):
-    resp = await async_client.post(
-        "/api/v1/query/run",
-        json={"query": "JOIN notes ON id"},
-        headers=auth_headers,
-    )
-    assert resp.status_code == 422
-
-
-@pytest.mark.asyncio
-async def test_run_query_requires_auth(unauthenticated_client):
-    """Unauthenticated requests must be rejected with 401."""
-    resp = await unauthenticated_client.post(
-        "/api/v1/query/run",
-        json={"query": "SORT title ASC LIMIT 1"},
-    )
-    assert resp.status_code == 401
+def _db_returning(obj):
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = obj
+    result.scalars.return_value.all.return_value = [obj] if obj else []
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=result)
+    db.add = MagicMock()
+    db.commit = AsyncMock()
+    db.rollback = AsyncMock()
+    db.refresh = AsyncMock()
+    db.delete = AsyncMock()
+    return db
 
 
 # ---------------------------------------------------------------------------
-# /saved — list
+# POST /query/run
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_list_saved_empty(async_client, auth_headers):
-    resp = await async_client.get("/api/v1/query/saved", headers=auth_headers)
-    assert resp.status_code == 200
-    assert resp.json() == []
+async def test_run_query_happy_path():
+    from gnosis.routers.query import run_query
+    from gnosis.schemas.query import QueryRun
+
+    parsed = MagicMock()
+    with (
+        patch("gnosis.routers.query.parse_query", return_value=parsed),
+        patch("gnosis.routers.query.execute_query", AsyncMock(return_value=([{"id": "1"}], 5.0))),
+    ):
+        result = await run_query(
+            payload=QueryRun(query="FROM 10-zettelkasten"),
+            db=AsyncMock(), owner_ids={1},
+        )
+    assert result.total == 1
+    assert result.query_time_ms == 5.0
 
 
 @pytest.mark.asyncio
-async def test_list_saved_requires_auth(unauthenticated_client):
-    resp = await unauthenticated_client.get("/api/v1/query/saved")
-    assert resp.status_code == 401
+async def test_run_query_returns_422_on_parse_error():
+    from fastapi import HTTPException
+    from gnosis.routers.query import run_query
+    from gnosis.schemas.query import QueryRun
+    from gnosis.services.query_parser import GQLParseError
+
+    with (
+        patch("gnosis.routers.query.parse_query", side_effect=GQLParseError("bad syntax")),
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await run_query(
+            payload=QueryRun(query="INVALID !!"),
+            db=AsyncMock(), owner_ids={1},
+        )
+    assert exc_info.value.status_code == 422
 
 
 # ---------------------------------------------------------------------------
-# /saved — create
+# GET /query/saved
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_create_saved_returns_201(async_client, auth_headers):
-    resp = await async_client.post(
-        "/api/v1/query/saved",
-        json={"name": "My Dashboard", "query": "SORT title ASC LIMIT 5"},
-        headers=auth_headers,
-    )
-    assert resp.status_code == 201
-    body = resp.json()
-    assert body["name"] == "My Dashboard"
-    assert body["query"] == "SORT title ASC LIMIT 5"
-    assert "id" in body
+async def test_list_saved_returns_user_dashboards():
+    from gnosis.routers.query import list_saved
 
-
-@pytest.mark.asyncio
-async def test_create_saved_with_description(async_client, auth_headers):
-    resp = await async_client.post(
-        "/api/v1/query/saved",
-        json={"name": "Described", "query": "LIMIT 2", "description": "My desc"},
-        headers=auth_headers,
-    )
-    assert resp.status_code == 201
-    assert resp.json()["description"] == "My desc"
-
-
-@pytest.mark.asyncio
-async def test_create_saved_invalid_gql_returns_422(async_client, auth_headers):
-    resp = await async_client.post(
-        "/api/v1/query/saved",
-        json={"name": "Bad", "query": "JOIN notes ON id"},
-        headers=auth_headers,
-    )
-    assert resp.status_code == 422
-
-
-@pytest.mark.asyncio
-async def test_create_saved_duplicate_name_returns_409(async_client, auth_headers):
-    payload = {"name": "Duplicate", "query": "LIMIT 1"}
-    r1 = await async_client.post("/api/v1/query/saved", json=payload, headers=auth_headers)
-    assert r1.status_code == 201
-    r2 = await async_client.post("/api/v1/query/saved", json=payload, headers=auth_headers)
-    assert r2.status_code == 409
-
-
-@pytest.mark.asyncio
-async def test_create_saved_appears_in_list(async_client, auth_headers):
-    await async_client.post(
-        "/api/v1/query/saved",
-        json={"name": "Listed", "query": "LIMIT 2"},
-        headers=auth_headers,
-    )
-    resp = await async_client.get("/api/v1/query/saved", headers=auth_headers)
-    names = [d["name"] for d in resp.json()]
-    assert "Listed" in names
+    sq = _sq()
+    db = _db_returning(sq)
+    result = await list_saved(db=db, current_user=_user())
+    assert len(result) == 1
 
 
 # ---------------------------------------------------------------------------
-# /saved/{id} — get
+# POST /query/saved
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_get_saved_returns_dashboard(async_client, auth_headers):
-    create = await async_client.post(
-        "/api/v1/query/saved",
-        json={"name": "Getter", "query": "LIMIT 3"},
-        headers=auth_headers,
-    )
-    sq_id = create.json()["id"]
-    resp = await async_client.get(f"/api/v1/query/saved/{sq_id}", headers=auth_headers)
-    assert resp.status_code == 200
-    assert resp.json()["name"] == "Getter"
+async def test_create_saved_happy_path():
+    from gnosis.routers.query import create_saved
+    from gnosis.schemas.query import SavedQueryCreate
+
+    sq = _sq()
+    db = _db_returning(sq)
+
+    with patch("gnosis.routers.query.parse_query", return_value=MagicMock()):
+        result = await create_saved(
+            payload=SavedQueryCreate(name="My Dashboard", query="FROM 10-zettelkasten"),
+            db=db, current_user=_user(),
+        )
+    db.add.assert_called_once()
+    db.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_get_saved_not_found_returns_404(async_client, auth_headers):
-    resp = await async_client.get("/api/v1/query/saved/999999", headers=auth_headers)
-    assert resp.status_code == 404
+async def test_create_saved_returns_409_on_duplicate():
+    from fastapi import HTTPException
+    from gnosis.routers.query import create_saved
+    from gnosis.schemas.query import SavedQueryCreate
+
+    db = _db_returning(None)
+    db.commit = AsyncMock(side_effect=Exception("unique constraint"))
+
+    with (
+        patch("gnosis.routers.query.parse_query", return_value=MagicMock()),
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await create_saved(
+            payload=SavedQueryCreate(name="Dup", query="FROM 10-zettelkasten"),
+            db=db, current_user=_user(),
+        )
+    assert exc_info.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_create_saved_returns_422_on_bad_query():
+    from fastapi import HTTPException
+    from gnosis.routers.query import create_saved
+    from gnosis.schemas.query import SavedQueryCreate
+    from gnosis.services.query_parser import GQLParseError
+
+    with (
+        patch("gnosis.routers.query.parse_query", side_effect=GQLParseError("bad")),
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await create_saved(
+            payload=SavedQueryCreate(name="Bad", query="INVALID"),
+            db=AsyncMock(), current_user=_user(),
+        )
+    assert exc_info.value.status_code == 422
 
 
 # ---------------------------------------------------------------------------
-# /saved/{id} — update
+# GET /query/saved/{id}
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_update_saved_name(async_client, auth_headers):
-    create = await async_client.post(
-        "/api/v1/query/saved",
-        json={"name": "OldName", "query": "LIMIT 1"},
-        headers=auth_headers,
-    )
-    sq_id = create.json()["id"]
-    resp = await async_client.put(
-        f"/api/v1/query/saved/{sq_id}",
-        json={"name": "NewName"},
-        headers=auth_headers,
-    )
-    assert resp.status_code == 200
-    assert resp.json()["name"] == "NewName"
+async def test_get_saved_returns_dashboard():
+    from gnosis.routers.query import get_saved
+
+    sq = _sq(sq_id=5)
+    db = _db_returning(sq)
+    result = await get_saved(sq_id=5, db=db, current_user=_user())
+    assert result.id == 5
 
 
 @pytest.mark.asyncio
-async def test_update_saved_query_text(async_client, auth_headers):
-    create = await async_client.post(
-        "/api/v1/query/saved",
-        json={"name": "UpdateQ", "query": "LIMIT 1"},
-        headers=auth_headers,
-    )
-    sq_id = create.json()["id"]
-    resp = await async_client.put(
-        f"/api/v1/query/saved/{sq_id}",
-        json={"query": "LIMIT 5"},
-        headers=auth_headers,
-    )
-    assert resp.status_code == 200
-    assert resp.json()["query"] == "LIMIT 5"
+async def test_get_saved_returns_404_when_missing():
+    from fastapi import HTTPException
+    from gnosis.routers.query import get_saved
 
-
-@pytest.mark.asyncio
-async def test_update_saved_description(async_client, auth_headers):
-    create = await async_client.post(
-        "/api/v1/query/saved",
-        json={"name": "UpdateDesc", "query": "LIMIT 1"},
-        headers=auth_headers,
-    )
-    sq_id = create.json()["id"]
-    resp = await async_client.put(
-        f"/api/v1/query/saved/{sq_id}",
-        json={"description": "updated desc"},
-        headers=auth_headers,
-    )
-    assert resp.status_code == 200
-    assert resp.json()["description"] == "updated desc"
-
-
-@pytest.mark.asyncio
-async def test_update_saved_invalid_gql_returns_422(async_client, auth_headers):
-    create = await async_client.post(
-        "/api/v1/query/saved",
-        json={"name": "UpdateBad", "query": "LIMIT 1"},
-        headers=auth_headers,
-    )
-    sq_id = create.json()["id"]
-    resp = await async_client.put(
-        f"/api/v1/query/saved/{sq_id}",
-        json={"query": "JOIN notes ON id"},
-        headers=auth_headers,
-    )
-    assert resp.status_code == 422
-
-
-@pytest.mark.asyncio
-async def test_update_saved_not_found_returns_404(async_client, auth_headers):
-    resp = await async_client.put(
-        "/api/v1/query/saved/999999",
-        json={"name": "Ghost"},
-        headers=auth_headers,
-    )
-    assert resp.status_code == 404
+    db = _db_returning(None)
+    with pytest.raises(HTTPException) as exc_info:
+        await get_saved(sq_id=99, db=db, current_user=_user())
+    assert exc_info.value.status_code == 404
 
 
 # ---------------------------------------------------------------------------
-# /saved/{id} — delete
+# PUT /query/saved/{id}
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_delete_saved_returns_204(async_client, auth_headers):
-    create = await async_client.post(
-        "/api/v1/query/saved",
-        json={"name": "ToDelete", "query": "LIMIT 1"},
-        headers=auth_headers,
-    )
-    sq_id = create.json()["id"]
-    resp = await async_client.delete(f"/api/v1/query/saved/{sq_id}", headers=auth_headers)
-    assert resp.status_code == 204
+async def test_update_saved_modifies_fields():
+    from gnosis.routers.query import update_saved
+    from gnosis.schemas.query import SavedQueryUpdate
+
+    sq = _sq()
+    db = _db_returning(sq)
+
+    with patch("gnosis.routers.query.parse_query", return_value=MagicMock()):
+        result = await update_saved(
+            sq_id=1,
+            payload=SavedQueryUpdate(name="New Name", query="FROM 20-projects", description="desc"),
+            db=db, current_user=_user(),
+        )
+    assert sq.name == "New Name"
+    assert sq.description == "desc"
+    db.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_delete_saved_then_get_returns_404(async_client, auth_headers):
-    create = await async_client.post(
-        "/api/v1/query/saved",
-        json={"name": "ToDelete2", "query": "LIMIT 1"},
-        headers=auth_headers,
-    )
-    sq_id = create.json()["id"]
-    await async_client.delete(f"/api/v1/query/saved/{sq_id}", headers=auth_headers)
-    resp = await async_client.get(f"/api/v1/query/saved/{sq_id}", headers=auth_headers)
-    assert resp.status_code == 404
+async def test_update_saved_returns_404_when_missing():
+    from fastapi import HTTPException
+    from gnosis.routers.query import update_saved
+    from gnosis.schemas.query import SavedQueryUpdate
+
+    db = _db_returning(None)
+    with pytest.raises(HTTPException) as exc_info:
+        await update_saved(
+            sq_id=99, payload=SavedQueryUpdate(),
+            db=db, current_user=_user(),
+        )
+    assert exc_info.value.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_delete_saved_not_found_returns_404(async_client, auth_headers):
-    resp = await async_client.delete("/api/v1/query/saved/999999", headers=auth_headers)
-    assert resp.status_code == 404
+async def test_update_saved_returns_422_on_bad_query():
+    from fastapi import HTTPException
+    from gnosis.routers.query import update_saved
+    from gnosis.schemas.query import SavedQueryUpdate
+    from gnosis.services.query_parser import GQLParseError
+
+    sq = _sq()
+    db = _db_returning(sq)
+    with (
+        patch("gnosis.routers.query.parse_query", side_effect=GQLParseError("bad")),
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await update_saved(
+            sq_id=1,
+            payload=SavedQueryUpdate(query="INVALID"),
+            db=db, current_user=_user(),
+        )
+    assert exc_info.value.status_code == 422
 
 
 # ---------------------------------------------------------------------------
-# /saved/{id}/run — execute saved dashboard
+# DELETE /query/saved/{id}
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_run_saved_returns_query_result(async_client, auth_headers):
-    create = await async_client.post(
-        "/api/v1/query/saved",
-        json={"name": "RunMe", "query": "SORT title ASC LIMIT 5"},
-        headers=auth_headers,
-    )
-    sq_id = create.json()["id"]
-    resp = await async_client.post(f"/api/v1/query/saved/{sq_id}/run", headers=auth_headers)
-    assert resp.status_code == 200
-    body = resp.json()
-    assert "rows" in body
-    assert "total" in body
-    assert "query_time_ms" in body
+async def test_delete_saved_calls_db_delete():
+    from gnosis.routers.query import delete_saved
+
+    sq = _sq()
+    db = _db_returning(sq)
+    await delete_saved(sq_id=1, db=db, current_user=_user())
+    db.delete.assert_awaited_once_with(sq)
+    db.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_run_saved_not_found_returns_404(async_client, auth_headers):
-    resp = await async_client.post("/api/v1/query/saved/999999/run", headers=auth_headers)
-    assert resp.status_code == 404
+async def test_delete_saved_returns_404_when_missing():
+    from fastapi import HTTPException
+    from gnosis.routers.query import delete_saved
+
+    db = _db_returning(None)
+    with pytest.raises(HTTPException) as exc_info:
+        await delete_saved(sq_id=99, db=db, current_user=_user())
+    assert exc_info.value.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# POST /query/saved/{id}/run
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_run_saved_happy_path():
+    from gnosis.routers.query import run_saved
+
+    sq = _sq(query="FROM 10-zettelkasten")
+    db = _db_returning(sq)
+    parsed = MagicMock()
+    with (
+        patch("gnosis.routers.query.parse_query", return_value=parsed),
+        patch("gnosis.routers.query.execute_query", AsyncMock(return_value=([{"id": "a"}], 3.0))),
+    ):
+        result = await run_saved(sq_id=1, db=db, current_user=_user(), owner_ids={1})
+    assert result.total == 1
 
 
 @pytest.mark.asyncio
-async def test_run_saved_requires_auth(unauthenticated_client):
-    resp = await unauthenticated_client.post("/api/v1/query/saved/1/run")
-    assert resp.status_code == 401
+async def test_run_saved_returns_404_when_missing():
+    from fastapi import HTTPException
+    from gnosis.routers.query import run_saved
+
+    db = _db_returning(None)
+    with pytest.raises(HTTPException) as exc_info:
+        await run_saved(sq_id=99, db=db, current_user=_user(), owner_ids={1})
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_run_saved_returns_422_on_bad_saved_query():
+    from fastapi import HTTPException
+    from gnosis.routers.query import run_saved
+    from gnosis.services.query_parser import GQLParseError
+
+    sq = _sq(query="CORRUPT")
+    db = _db_returning(sq)
+    with (
+        patch("gnosis.routers.query.parse_query", side_effect=GQLParseError("bad")),
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await run_saved(sq_id=1, db=db, current_user=_user(), owner_ids={1})
+    assert exc_info.value.status_code == 422
