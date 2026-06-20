@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import insert
 
 from gnosis.models.note import Note
 from gnosis.models.tag import NoteTag, Tag
@@ -179,13 +180,14 @@ def test_parse_limit_zero_raises():
 # ---------------------------------------------------------------------------
 # Executor — execute_query() DB paths
 #
-# Note.id is String(20) with no server default — must be supplied explicitly.
-# Use fixed timestamp-style IDs to satisfy the NOT NULL constraint.
+# Note.id   — String(20), no server default: must supply explicitly.
+# Tag.name  — String(100), primary key: pass as keyword arg.
+# NoteTag   — Core Table object (not a mapped class): use insert().
 # ---------------------------------------------------------------------------
 
 
 async def _seed_notes(db):
-    """Create two live notes and one deleted note, plus one tag on the first."""
+    """Insert two live notes, one deleted note, one tag, and one association."""
     n1 = Note(
         id="20260101-000001",
         title="Alpha Note",
@@ -222,11 +224,15 @@ async def _seed_notes(db):
     db.add_all([n1, n2, deleted])
     await db.flush()
 
+    # Tag PK is name (string) — no separate id column
     tag = Tag(name="zettelkasten")
     db.add(tag)
     await db.flush()
 
-    db.add(NoteTag(note_id=n1.id, tag_id=tag.id))
+    # NoteTag is a Core Table, not a mapped class — use insert()
+    await db.execute(
+        insert(NoteTag).values(note_id=n1.id, tag_id="zettelkasten")
+    )
     await db.commit()
     return n1, n2, tag
 
@@ -323,7 +329,7 @@ async def test_execute_query_select_cols(test_db):
 
 @pytest.mark.asyncio
 async def test_execute_query_owner_ids_scoped(test_db):
-    """Passing owner_ids should restrict results to that owner via scoped_note_stmt."""
+    """owner_ids branch: scoped results should be subset of unscoped."""
     await _seed_notes(test_db)
     q = ParsedQuery()
     rows_scoped, _ = await execute_query(q, test_db, owner_ids={1})
