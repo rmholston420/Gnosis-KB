@@ -78,7 +78,7 @@ def test_detect_format(filename, expected):
 
 
 # ---------------------------------------------------------------------------
-# parse_file dispatcher — unsupported raises ValueError
+# parse_file dispatcher - unsupported raises ValueError
 # ---------------------------------------------------------------------------
 
 def test_parse_file_unsupported_raises():
@@ -256,10 +256,12 @@ def test_parse_image_extracts_ocr_text():
 # ---------------------------------------------------------------------------
 # parse_url
 #
-# parse_url executes `import httpx` inside the function body at call time.
-# Python resolves this to sys.modules['httpx'].
-# We replace sys.modules['httpx'] entirely with a fake module whose
-# AsyncClient attribute is our mock -- guaranteed to be found.
+# parse_url does `import httpx` inside the function body at call time.
+# We replace sys.modules['httpx'] with a fake module whose AsyncClient
+# is our mock -- guaranteed to be found regardless of import caching.
+#
+# @pytest.mark.asyncio is required even with asyncio_mode='auto' when
+# running individual files in isolation (pytest-asyncio >= 0.24 behaviour).
 # ---------------------------------------------------------------------------
 
 def _make_fake_httpx(html: str):
@@ -280,6 +282,7 @@ def _make_fake_httpx(html: str):
     return fake_httpx
 
 
+@pytest.mark.asyncio
 async def test_parse_url_extracts_title_and_text():
     html = (
         "<html><head><title>Test Page</title></head>"
@@ -294,6 +297,7 @@ async def test_parse_url_extracts_title_and_text():
     assert "content" in result.text.lower()
 
 
+@pytest.mark.asyncio
 async def test_parse_url_fallback_without_bs4():
     """When bs4 is absent, title falls back to the URL string."""
     html = "<html><body>raw html</body></html>"

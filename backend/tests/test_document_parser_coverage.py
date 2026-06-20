@@ -68,6 +68,7 @@ def test_parse_pdf_no_meta_derives_title_from_stem():
 # parse_url
 # ---------------------------------------------------------------------------
 
+@pytest.mark.asyncio
 async def test_parse_url_returns_parsed_document():
     html = "<html><head><title>Hello</title></head><body><main><p>World</p></main></body></html>"
 
@@ -80,6 +81,7 @@ async def test_parse_url_returns_parsed_document():
     assert result.title == "Hello"
 
 
+@pytest.mark.asyncio
 async def test_parse_url_sets_title():
     html = "<html><head><title>Stripped Title</title></head><body><p>content</p></body></html>"
 
