@@ -17,8 +17,14 @@ cleanly on a dev machine with no Postgres, Qdrant, Ollama, or LightRAG:
 
 Auth patching
 -------------
-require_user is overridden so every request is authenticated as
-FakeUser(id=1) without needing a real JWT or database User row.
+BOTH require_user AND get_current_user are overridden so every request is
+authenticated as FakeUser(id=1) without needing a real JWT or database User
+row.
+
+Note: notes.py write endpoints (create, update, delete, daily) use
+get_current_user directly; read endpoints and graph/tags/export use
+require_user via get_vault_owner_ids.  Overriding only one dependency
+leaves the other returning None and causes AttributeError on .id.
 
 Isolation
 ---------
@@ -119,7 +125,7 @@ async def _mock_start_vault_watcher(owner_id: int = 1) -> _MockObserver:  # noqa
 
 
 # ---------------------------------------------------------------------------
-# Fake authenticated user — returned by the require_user dependency override
+# Fake authenticated user — returned by both auth dependency overrides
 # ---------------------------------------------------------------------------
 
 
@@ -154,6 +160,16 @@ async def _make_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, No
 
     Extracted so both 'async_client' and 'client' fixtures can share the
     same implementation without code duplication.
+
+    Both require_user AND get_current_user are overridden:
+    - require_user       : used by get_vault_owner_ids → read endpoints,
+                           graph, tags, export, vault, admin routers
+    - get_current_user   : used directly by notes.py write endpoints
+                           (create_note, update_note, delete_note, daily note)
+                           and export.py write endpoints
+    Without overriding get_current_user, those endpoints receive None for
+    current_user and crash with AttributeError: 'NoneType' object has no
+    attribute 'id'.
     """
     with (
         patch(
@@ -170,7 +186,7 @@ async def _make_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, No
         ),
     ):
         from gnosis import config
-        from gnosis.core.auth import require_user
+        from gnosis.core.auth import get_current_user, require_user
 
         settings = config.get_settings()
         settings.vault_path = str(vault_dir)
@@ -186,7 +202,11 @@ async def _make_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, No
                 yield session
 
         app.dependency_overrides[get_db] = override_get_db
+        # Override both auth dependency entrypoints:
+        # require_user  → used by get_vault_owner_ids (read paths)
+        # get_current_user → used directly by write endpoints in notes.py
         app.dependency_overrides[require_user] = _fake_require_user
+        app.dependency_overrides[get_current_user] = _fake_require_user
 
         async with AsyncClient(
             transport=ASGITransport(app=app),
