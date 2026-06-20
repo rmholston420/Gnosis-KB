@@ -1,16 +1,17 @@
 """Pytest fixtures for Gnosis test suite.
 
 Provides:
-  - async_client / client  : HTTPX async test clients (same instance, two names)
-  - test_client            : synchronous Starlette TestClient for sync test files
-  - auth_headers           : dummy Authorization header for endpoints that need it
-  - test_db                : isolated async session for direct DB operations
-  - vault_dir              : temporary directory acting as the vault
+  - async_client / client        : HTTPX async test clients, authenticated as FakeUser
+  - unauthenticated_client       : HTTPX async test client that always returns HTTP 401
+  - test_client                  : synchronous Starlette TestClient for sync test files
+  - auth_headers                 : dummy Authorization header for endpoints that need it
+  - test_db                      : isolated async session for direct DB operations
+  - vault_dir                    : temporary directory acting as the vault
 
 External service patching
 -------------------------
-Three lifespan calls are patched at *fixture* scope so that pytest runs
-cleanly on a dev machine with no Postgres, Qdrant, Ollama, or LightRAG:
+Three lifespan calls are patched so that pytest runs cleanly on a dev
+machine with no Postgres, Qdrant, Ollama, or LightRAG:
 
   1. ensure_collection()         — Qdrant collection setup  → no-op
   2. start_vault_watcher()       — watchdog + initial sync  → mock Observer
@@ -18,17 +19,18 @@ cleanly on a dev machine with no Postgres, Qdrant, Ollama, or LightRAG:
 
 Auth patching
 -------------
-BOTH require_user AND get_current_user are overridden so every request is
-authenticated as FakeUser(id=1) without needing a real JWT or database User
-row.
+BOTH require_user AND get_current_user are overridden.
 
-_fake_require_user accepts an optional Request parameter.  When FastAPI
-injects a Request (because it is declared in the dependency signature) and
-no ``Authorization: Bearer ...`` header is present, it raises HTTP 401.
-This allows auth-guard tests (e.g. test_vault_sync_requires_auth) to verify
-that unauthenticated requests are rejected even though the real JWT stack is
-not running.  Tests that pass auth_headers={"Authorization": "Bearer ..."}
-continue to receive _FakeUser normally.
+_fake_require_user() — zero-argument, always returns _FakeUser(id=1).
+  Used by async_client / client / test_client (the default authenticated
+  fixtures). DO NOT add Request or any special type as a parameter —
+  FastAPI reflects dependency-override signatures into the OpenAPI schema
+  at app startup and will raise FastAPIError for injection-only types like
+  starlette.requests.Request.
+
+_fake_deny_user() — zero-argument, always raises HTTP 401.
+  Used by unauthenticated_client. Auth-guard tests that assert 401/403
+  should use the `unauthenticated_client` fixture instead of `client`.
 
 Isolation
 ---------
@@ -54,8 +56,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
+from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
-from starlette.requests import Request
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from starlette.testclient import TestClient
@@ -125,7 +127,7 @@ async def _mock_start_vault_watcher(owner_id: int = 1) -> _MockObserver:
 
 
 # ---------------------------------------------------------------------------
-# Fake user
+# Fake users
 # ---------------------------------------------------------------------------
 
 
@@ -140,38 +142,52 @@ class _FakeUser:
     is_superuser: bool = False
 
 
-async def _fake_require_user(
-    request: Request | None = None,
-) -> _FakeUser:
-    """Return a fake authenticated user.
+async def _fake_require_user() -> _FakeUser:
+    """Always return a fake authenticated user.
 
-    When FastAPI injects a *Request* (declared as a dependency parameter)
-    and no ``Authorization: Bearer ...`` header is present, raise HTTP 401
-    so that auth-guard tests receive the expected rejection status rather
-    than a successful fake login.
-
-    Tests that supply ``auth_headers={"Authorization": "Bearer test-token"}``
-    continue to receive _FakeUser normally.
+    IMPORTANT: keep this zero-argument with no special types (e.g. no
+    starlette.requests.Request).  FastAPI reflects dependency-override
+    signatures into the OpenAPI schema at startup and raises FastAPIError
+    for injection-only types that are not valid Pydantic field types.
     """
-    if request is not None:
-        auth = request.headers.get("authorization", "")
-        if not auth.startswith("Bearer "):
-            from fastapi import HTTPException as _HTTPException
-            raise _HTTPException(status_code=401, detail="Not authenticated")
     return _FakeUser()
 
 
+async def _fake_deny_user() -> _FakeUser:
+    """Always raise HTTP 401.
+
+    Used by the unauthenticated_client fixture so auth-guard tests receive
+    the expected 401/403 without needing a real JWT stack.
+    """
+    raise HTTPException(status_code=401, detail="Not authenticated")
+
+
 # ---------------------------------------------------------------------------
-# Async client
+# Shared app factory
 # ---------------------------------------------------------------------------
 
 
-async def _make_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, None]:
-    with (
+def _make_patches():
+    return (
         patch("gnosis.services.vector_store.ensure_collection", return_value=None),
         patch("gnosis.services.vault_sync.start_vault_watcher", new=_mock_start_vault_watcher),
         patch("gnosis.services.graph_rag.graph_rag.initialize", new=AsyncMock(return_value=None)),
-    ):
+    )
+
+
+# ---------------------------------------------------------------------------
+# Async clients
+# ---------------------------------------------------------------------------
+
+
+async def _make_client(
+    test_engine,
+    vault_dir,
+    *,
+    auth_override=_fake_require_user,
+) -> AsyncGenerator[AsyncClient, None]:
+    p1, p2, p3 = _make_patches()
+    with p1, p2, p3:
         from gnosis import config
         from gnosis.core.auth import get_current_user, require_user
 
@@ -186,8 +202,8 @@ async def _make_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, No
                 yield session
 
         app.dependency_overrides[get_db] = override_get_db
-        app.dependency_overrides[require_user] = _fake_require_user
-        app.dependency_overrides[get_current_user] = _fake_require_user
+        app.dependency_overrides[require_user] = auth_override
+        app.dependency_overrides[get_current_user] = auth_override
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             yield c
@@ -197,13 +213,30 @@ async def _make_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, No
 
 @pytest_asyncio.fixture
 async def async_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, None]:
-    async for c in _make_client(test_engine, vault_dir):
+    """Authenticated HTTPX client — all requests resolve to FakeUser(id=1)."""
+    async for c in _make_client(test_engine, vault_dir, auth_override=_fake_require_user):
         yield c
 
 
 @pytest_asyncio.fixture
 async def client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, None]:
-    async for c in _make_client(test_engine, vault_dir):
+    """Alias for async_client (backward-compat)."""
+    async for c in _make_client(test_engine, vault_dir, auth_override=_fake_require_user):
+        yield c
+
+
+@pytest_asyncio.fixture
+async def unauthenticated_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, None]:
+    """HTTPX client where every request raises HTTP 401.
+
+    Use this fixture in auth-guard tests that assert the endpoint rejects
+    unauthenticated callers::
+
+        async def test_vault_sync_requires_auth(unauthenticated_client):
+            r = await unauthenticated_client.post("/api/v1/vault/sync")
+            assert r.status_code in (401, 403)
+    """
+    async for c in _make_client(test_engine, vault_dir, auth_override=_fake_deny_user):
         yield c
 
 
@@ -234,29 +267,20 @@ def _sync_app():
         ]:
             (vault / folder).mkdir()
 
-        # Sync engine for DDL — no asyncio needed
         sync_engine = create_engine("sqlite:///:memory:", echo=False)
         Base.metadata.create_all(sync_engine)
 
-        # Async engine for the ASGI app's DB sessions inside TestClient's thread
         async_engine = create_async_engine(
             TEST_DB_URL,
             echo=False,
             connect_args={"check_same_thread": False},
         )
 
-        # Reset the vault path cache BEFORE patching settings so
-        # _get_vault_path() will pick up the patched tempdir value.
         _vs._VAULT_PATH = None
 
         try:
-            with (
-                patch("gnosis.services.vector_store.ensure_collection", return_value=None),
-                patch("gnosis.services.vault_sync.start_vault_watcher",
-                      new=_mock_start_vault_watcher),
-                patch("gnosis.services.graph_rag.graph_rag.initialize",
-                      new=AsyncMock(return_value=None)),
-            ):
+            p1, p2, p3 = _make_patches()
+            with p1, p2, p3:
                 from gnosis import config
                 from gnosis.core.auth import get_current_user, require_user
 
@@ -279,7 +303,6 @@ def _sync_app():
                 yield app
                 app.dependency_overrides.clear()
         finally:
-            # Drop tables synchronously; dispose async engine in a fresh loop.
             Base.metadata.drop_all(sync_engine)
             sync_engine.dispose()
 
@@ -290,7 +313,6 @@ def _sync_app():
             finally:
                 loop.close()
 
-            # Reset the cache again so subsequent tests start clean.
             _vs._VAULT_PATH = None
 
 
