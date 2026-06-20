@@ -5,6 +5,7 @@ Covers:
 - POST /vault/sync  (background mode) → 202 + accepted payload
 - GET  /vault/sync/status            → idle / running / done states
 - POST /vault/sync?stream=true       → text/event-stream response
+- Auth guard: requests without a token → 401/403
 
 All tests run against the FastAPI TestClient with mocked vault_sync service
 so no real filesystem I/O occurs.
@@ -12,7 +13,9 @@ so no real filesystem I/O occurs.
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
+import tempfile
 
 import pytest
 from fastapi.testclient import TestClient
@@ -47,12 +50,29 @@ def mock_vault_sync(monkeypatch):
 
 @pytest.fixture()
 def auth_headers():
-    """Return minimal auth headers for test requests.
-
-    Integration tests that use a real DB should override this fixture to
-    return a token from the login endpoint.  Unit tests can use a placeholder.
-    """
+    """Return minimal auth headers for test requests."""
     return {"Authorization": "Bearer test-token"}
+
+
+@pytest.fixture()
+def unauthenticated_test_client(_sync_app) -> TestClient:
+    """Sync TestClient where every request resolves to HTTP 401.
+
+    Reuses the same _sync_app fixture (which handles DB + patches) but
+    swaps require_user / get_current_user to _fake_deny_user so that
+    auth-guard tests receive the expected rejection.
+    """
+    from gnosis.core.auth import get_current_user, require_user
+    from tests.conftest import _fake_deny_user
+
+    _sync_app.dependency_overrides[require_user] = _fake_deny_user
+    _sync_app.dependency_overrides[get_current_user] = _fake_deny_user
+    with TestClient(_sync_app, raise_server_exceptions=False) as tc:
+        yield tc
+    # Restore the default authenticated overrides for any tests that run after
+    from tests.conftest import _fake_require_user
+    _sync_app.dependency_overrides[require_user] = _fake_require_user
+    _sync_app.dependency_overrides[get_current_user] = _fake_require_user
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +100,6 @@ def test_vault_sync_status_idle_before_sync(test_client: TestClient, auth_header
     response = test_client.get("/api/v1/vault/sync/status", headers=auth_headers)
     assert response.status_code == 200
     body = response.json()
-    # Accept 'idle' (first call) or any valid state (if previous test left state)
     assert body["state"] in ("idle", "running", "done", "error")
 
 
@@ -114,7 +133,6 @@ def test_vault_sync_stream_emits_sse_lines(test_client: TestClient, auth_headers
             if raw_line.startswith("data:"):
                 collected.append(raw_line[5:].strip())
 
-    # Must receive at least the synthetic lines plus [done]
     assert len(collected) >= 2, f"Expected ≥2 SSE data lines, got: {collected}"
     assert collected[-1] == "[done]", f"Last SSE event should be '[done]', got: {collected[-1]}"
 
@@ -127,7 +145,7 @@ def test_vault_sync_stream_synced_lines_present(test_client: TestClient, auth_he
             if raw_line.startswith("data:"):
                 collected.append(raw_line[5:].strip())
 
-    synced_lines = [l for l in collected if l.startswith("synced:")]
+    synced_lines = [line for line in collected if line.startswith("synced:")]
     assert len(synced_lines) >= 1, "Expected at least one 'synced:' line in the stream"
 
 
@@ -136,13 +154,13 @@ def test_vault_sync_stream_synced_lines_present(test_client: TestClient, auth_he
 # ---------------------------------------------------------------------------
 
 
-def test_vault_sync_requires_auth(test_client: TestClient):
+def test_vault_sync_requires_auth(unauthenticated_test_client: TestClient):
     """Requests without a token should be rejected with 401 or 403."""
-    response = test_client.post("/api/v1/vault/sync")
+    response = unauthenticated_test_client.post("/api/v1/vault/sync")
     assert response.status_code in (401, 403)
 
 
-def test_vault_sync_status_requires_auth(test_client: TestClient):
+def test_vault_sync_status_requires_auth(unauthenticated_test_client: TestClient):
     """Status endpoint also requires authentication."""
-    response = test_client.get("/api/v1/vault/sync/status")
+    response = unauthenticated_test_client.get("/api/v1/vault/sync/status")
     assert response.status_code in (401, 403)
