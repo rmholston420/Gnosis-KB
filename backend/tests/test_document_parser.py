@@ -278,7 +278,7 @@ def test_parse_image_extracts_ocr_text():
 # parse_url (mocked httpx + bs4)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_parse_url_extracts_title_and_text():
     import sys
 
@@ -303,7 +303,7 @@ async def test_parse_url_extracts_title_and_text():
     assert "content" in result.text.lower()
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_parse_url_fallback_without_bs4():
     import sys
 
