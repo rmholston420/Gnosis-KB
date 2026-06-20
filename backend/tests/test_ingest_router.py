@@ -235,8 +235,10 @@ async def test_ingest_url_happy_path(tmp_path):
     mock_llm = MagicMock()
     mock_llm.is_available = False
 
+    # parse_url is imported inside the function body, so patch the module it lives in
     with (
-        patch("gnosis.routers.ingest.parse_url", AsyncMock(return_value=_parsed("Web Page", "Content", "url"))),
+        patch("gnosis.services.document_parser.parse_url",
+              AsyncMock(return_value=_parsed("Web Page", "Content", "url"))),
         patch("gnosis.routers.ingest.llm_provider", mock_llm),
         patch("gnosis.routers.ingest.settings") as mock_cfg,
     ):
@@ -256,7 +258,8 @@ async def test_ingest_url_returns_422_on_scrape_failure():
     from fastapi import HTTPException
     from gnosis.routers.ingest import ingest_url, UrlIngestRequest
     with (
-        patch("gnosis.routers.ingest.parse_url", AsyncMock(side_effect=RuntimeError("timeout"))),
+        patch("gnosis.services.document_parser.parse_url",
+              AsyncMock(side_effect=RuntimeError("timeout"))),
         pytest.raises(HTTPException) as exc_info,
     ):
         await ingest_url(

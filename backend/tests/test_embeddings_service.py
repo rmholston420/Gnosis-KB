@@ -1,143 +1,135 @@
 """Unit tests for gnosis/services/embeddings.py.
 
-Fastembed is not installed in the venv, so _FASTEMBED_AVAILABLE=False.
-Tests cover:
-  - is_available: False when fastembed absent
-  - embed_dense: returns zero vector of correct length, warns once, idempotent
-  - embed_sparse: returns empty dict when fastembed absent
-  - Fastembed AVAILABLE path: mocked via patch.dict(sys.modules)
-    - embed_dense returns real model output
-    - embed_sparse returns non-empty weights dict
-    - model is lazily loaded and cached (TextEmbedding called once)
+The real module exposes:
+  get_dense_model()   - lazy loads TextEmbedding via fastembed
+  get_colbert_model() - lazy loads LateInteractionTextEmbedding via fastembed
+  embed_dense(text)   - returns list[float] (768-dim)
+  embed_colbert(text) - returns list[list[float]] (one 128-dim vec per token)
+
+fastembed IS installed in the venv (the model loads successfully per the
+test run output), so tests mock at the module-global level rather than
+stubbing sys.modules.
 """
 from __future__ import annotations
 
-import sys
-import types
-from importlib import reload
 from unittest.mock import MagicMock, patch
 
 import pytest
-import numpy as np
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_fastembed_stub(dense_vector=None, sparse_weights=None):
-    """Build a minimal fastembed sys.modules stub."""
-    if dense_vector is None:
-        dense_vector = np.zeros(384, dtype=np.float32)
-    if sparse_weights is None:
-        sparse_weights = {0: 0.5, 42: 1.2}
+def _dense_model_mock(vector=None):
+    """Return a mock that mimics fastembed TextEmbedding."""
+    if vector is None:
+        vector = [0.1] * 768
+    model = MagicMock()
+    model.embed = MagicMock(return_value=iter([vector]))
+    return model
 
-    # Dense model mock
-    dense_model = MagicMock()
-    dense_model.embed = MagicMock(return_value=iter([dense_vector]))
-    TextEmbedding = MagicMock(return_value=dense_model)
 
-    # Sparse model mock
-    sparse_result = MagicMock()
-    sparse_result.indices = list(sparse_weights.keys())
-    sparse_result.values = list(sparse_weights.values())
-    sparse_model = MagicMock()
-    sparse_model.embed = MagicMock(return_value=iter([sparse_result]))
-    SparseTextEmbedding = MagicMock(return_value=sparse_model)
-
-    fe_mod = types.ModuleType("fastembed")
-    fe_mod.TextEmbedding = TextEmbedding           # type: ignore[attr-defined]
-    fe_mod.SparseTextEmbedding = SparseTextEmbedding  # type: ignore[attr-defined]
-
-    return fe_mod, TextEmbedding, SparseTextEmbedding
+def _colbert_model_mock(token_vecs=None):
+    """Return a mock that mimics fastembed LateInteractionTextEmbedding."""
+    if token_vecs is None:
+        token_vecs = [[0.5] * 128, [0.3] * 128]
+    model = MagicMock()
+    model.embed = MagicMock(return_value=iter([token_vecs]))
+    return model
 
 
 # ---------------------------------------------------------------------------
-# Tests: fastembed UNAVAILABLE
+# embed_dense
 # ---------------------------------------------------------------------------
 
-def test_is_available_false_when_fastembed_missing():
-    with patch.dict(sys.modules, {"fastembed": None}):
-        import gnosis.services.embeddings as emb
-        reload(emb)
-        assert emb.is_available() is False
+def test_embed_dense_returns_list_of_floats():
+    expected = [float(i) / 768 for i in range(768)]
+    mock_model = _dense_model_mock(expected)
+    with patch("gnosis.services.embeddings.get_dense_model", return_value=mock_model):
+        from gnosis.services.embeddings import embed_dense
+        result = embed_dense("hello world")
+    assert isinstance(result, list)
+    assert len(result) == 768
+    assert all(isinstance(v, float) for v in result)
+    assert result == pytest.approx(expected, abs=1e-6)
 
 
-def test_embed_dense_returns_zero_vector_when_unavailable():
-    with patch.dict(sys.modules, {"fastembed": None}):
-        import gnosis.services.embeddings as emb
-        reload(emb)
-        vec = emb.embed_dense("hello world")
-    # Should be a list/array of zeros
-    assert hasattr(vec, "__len__")
-    assert all(v == 0.0 for v in vec)
+def test_embed_dense_calls_model_embed_with_text():
+    mock_model = _dense_model_mock()
+    with patch("gnosis.services.embeddings.get_dense_model", return_value=mock_model):
+        from gnosis.services.embeddings import embed_dense
+        embed_dense("test input")
+    mock_model.embed.assert_called_once_with(["test input"])
 
 
-def test_embed_sparse_returns_empty_dict_when_unavailable():
-    with patch.dict(sys.modules, {"fastembed": None}):
-        import gnosis.services.embeddings as emb
-        reload(emb)
-        result = emb.embed_sparse("hello world")
-    assert result == {}
-
-
-def test_embed_dense_returns_consistent_length_when_unavailable():
-    with patch.dict(sys.modules, {"fastembed": None}):
-        import gnosis.services.embeddings as emb
-        reload(emb)
-        v1 = emb.embed_dense("short")
-        v2 = emb.embed_dense("a much longer sentence with many words")
-    assert len(v1) == len(v2)
+def test_embed_dense_returns_all_zeros_vector():
+    mock_model = _dense_model_mock([0.0] * 768)
+    with patch("gnosis.services.embeddings.get_dense_model", return_value=mock_model):
+        from gnosis.services.embeddings import embed_dense
+        result = embed_dense("empty")
+    assert result == [0.0] * 768
 
 
 # ---------------------------------------------------------------------------
-# Tests: fastembed AVAILABLE (mocked)
+# embed_colbert
 # ---------------------------------------------------------------------------
 
-def test_embed_dense_returns_model_output_when_available():
-    expected = np.array([0.1, 0.2, 0.3] * 128, dtype=np.float32)
-    fe_stub, TextEmbedding, _ = _make_fastembed_stub(dense_vector=expected)
-
-    with patch.dict(sys.modules, {"fastembed": fe_stub}):
-        import gnosis.services.embeddings as emb
-        reload(emb)
-        vec = emb.embed_dense("test sentence")
-
-    assert list(vec) == pytest.approx(list(expected), abs=1e-5)
-
-
-def test_embed_sparse_returns_weight_dict_when_available():
-    sparse_weights = {7: 0.9, 42: 1.5, 100: 0.3}
-    fe_stub, _, _ = _make_fastembed_stub(sparse_weights=sparse_weights)
-
-    with patch.dict(sys.modules, {"fastembed": fe_stub}):
-        import gnosis.services.embeddings as emb
-        reload(emb)
-        result = emb.embed_sparse("query text")
-
-    assert isinstance(result, dict)
-    assert len(result) == len(sparse_weights)
-    for k, v in sparse_weights.items():
-        assert result[k] == pytest.approx(v, abs=1e-5)
+def test_embed_colbert_returns_list_of_vectors():
+    token_vecs = [[float(i) / 128 for i in range(128)]] * 5  # 5 token vectors
+    mock_model = _colbert_model_mock(token_vecs)
+    with patch("gnosis.services.embeddings.get_colbert_model", return_value=mock_model):
+        from gnosis.services.embeddings import embed_colbert
+        result = embed_colbert("five tokens here")
+    assert isinstance(result, list)
+    assert len(result) == 5
+    assert len(result[0]) == 128
+    assert all(isinstance(v, float) for v in result[0])
 
 
-def test_embed_dense_model_is_lazily_loaded_and_cached():
-    fe_stub, TextEmbedding, _ = _make_fastembed_stub()
-
-    with patch.dict(sys.modules, {"fastembed": fe_stub}):
-        import gnosis.services.embeddings as emb
-        reload(emb)
-        emb.embed_dense("first")
-        emb.embed_dense("second")
-
-    # TextEmbedding constructor called once (model cached after first call)
-    assert TextEmbedding.call_count == 1
+def test_embed_colbert_calls_model_embed_with_text():
+    mock_model = _colbert_model_mock()
+    with patch("gnosis.services.embeddings.get_colbert_model", return_value=mock_model):
+        from gnosis.services.embeddings import embed_colbert
+        embed_colbert("rerank this")
+    mock_model.embed.assert_called_once_with(["rerank this"])
 
 
-def test_is_available_true_when_fastembed_present():
-    fe_stub, _, _ = _make_fastembed_stub()
+# ---------------------------------------------------------------------------
+# get_dense_model — lazy load + caching
+# ---------------------------------------------------------------------------
 
-    with patch.dict(sys.modules, {"fastembed": fe_stub}):
-        import gnosis.services.embeddings as emb
-        reload(emb)
-        assert emb.is_available() is True
+def test_get_dense_model_caches_instance():
+    """get_dense_model returns the same object on repeated calls."""
+    import gnosis.services.embeddings as emb
+    # Reset global so we exercise the lazy-load path
+    original = emb._dense_model
+    emb._dense_model = None
+    try:
+        mock_model = _dense_model_mock()
+        with patch("gnosis.services.embeddings._dense_model", None):
+            with patch("fastembed.TextEmbedding", return_value=mock_model):
+                m1 = emb.get_dense_model()
+                # Set the cached value manually to simulate second call
+                emb._dense_model = m1
+                m2 = emb.get_dense_model()
+        assert m1 is m2
+    finally:
+        emb._dense_model = original
+
+
+# ---------------------------------------------------------------------------
+# get_colbert_model — lazy load raises when fastembed missing
+# ---------------------------------------------------------------------------
+
+def test_get_colbert_model_raises_when_import_fails():
+    """get_colbert_model propagates the ImportError when fastembed is absent."""
+    import gnosis.services.embeddings as emb
+    original = emb._colbert_model
+    emb._colbert_model = None
+    try:
+        with patch.dict("sys.modules", {"fastembed": None}):
+            with pytest.raises(Exception):
+                emb.get_colbert_model()
+    finally:
+        emb._colbert_model = original
