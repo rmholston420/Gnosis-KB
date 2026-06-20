@@ -123,7 +123,7 @@ def _note_to_read(note: Note) -> NoteRead:
         vector_indexed=note.vector_indexed,
         graph_indexed=note.graph_indexed,
         frontmatter=note.frontmatter or {},
-        tags=[t.name for t in (note.tags or [])],
+        tags=[t.name for t in (note.tags if isinstance(note.tags, list) else ([note.tags] if note.tags else []))],
         outgoing_links=[
             LinkSchema(
                 source_id=lnk.source_id,
