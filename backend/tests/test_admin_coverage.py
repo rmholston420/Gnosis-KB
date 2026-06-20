@@ -8,10 +8,10 @@ Covers:
   - happy path: notes fixed, LightRAG ingested
   - DB update error path in _reindex_note
   - LightRAG error path in _reindex_note (non-fatal, continues)
+  - empty body note skips LightRAG ingest
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -31,7 +31,6 @@ from gnosis.routers.admin import router
 def _make_app(db_mock: AsyncMock, user_id: int = 1) -> FastAPI:
     app = FastAPI()
     app.include_router(router, prefix="/api/v1")
-
     user = User(id=user_id, email="admin@test.com", hashed_password="x")
 
     async def _db():
@@ -45,19 +44,25 @@ def _make_app(db_mock: AsyncMock, user_id: int = 1) -> FastAPI:
     return app
 
 
-def _note(note_id="n1", title="T", body="Body text", owner_id=0):
+def _note(note_id="n1", title="T", body="Body text"):
     n = MagicMock()
     n.id = note_id
     n.title = title
     n.body = body
-    n.owner_id = owner_id
     return n
 
 
-def _scalar_result(value):
+def _user_result(user):
+    """Mock execute() result for _get_primary_user which calls scalars().first()."""
     r = MagicMock()
-    r.scalars.return_value.first.return_value = value
-    r.scalars.return_value.all.return_value = [value] if value else []
+    r.scalars.return_value.first.return_value = user
+    return r
+
+
+def _notes_result(notes: list):
+    """Mock execute() result for the legacy-notes query which calls scalars().all()."""
+    r = MagicMock()
+    r.scalars.return_value.all.return_value = notes
     return r
 
 
@@ -67,7 +72,7 @@ def _scalar_result(value):
 
 def test_reindex_forbidden_for_non_admin():
     db = AsyncMock()
-    app = _make_app(db, user_id=42)  # not id=1
+    app = _make_app(db, user_id=42)
     client = TestClient(app)
     resp = client.post("/api/v1/admin/reindex")
     assert resp.status_code == 403
@@ -79,8 +84,7 @@ def test_reindex_forbidden_for_non_admin():
 
 def test_reindex_500_when_no_users():
     db = AsyncMock()
-    # First execute: _get_primary_user returns None
-    db.execute.return_value = _scalar_result(None)
+    db.execute.return_value = _user_result(None)
     app = _make_app(db, user_id=1)
     client = TestClient(app)
     resp = client.post("/api/v1/admin/reindex")
@@ -95,12 +99,9 @@ def test_reindex_500_when_no_users():
 def test_reindex_no_legacy_notes_returns_early():
     db = AsyncMock()
     target_user = User(id=1, email="a@b.com", hashed_password="x")
-
-    # First execute: _get_primary_user → User
-    # Second execute: legacy notes query → empty
     db.execute.side_effect = [
-        _scalar_result(target_user),
-        _scalar_result(None),  # no legacy notes
+        _user_result(target_user),
+        _notes_result([]),
     ]
     app = _make_app(db, user_id=1)
     client = TestClient(app)
@@ -118,26 +119,28 @@ def test_reindex_no_legacy_notes_returns_early():
 def test_reindex_fixes_legacy_notes():
     db = AsyncMock()
     target_user = User(id=1, email="a@b.com", hashed_password="x")
-    note = _note()
+    note = _note(body="some real content")
 
     db.execute.side_effect = [
-        _scalar_result(target_user),
-        MagicMock(**{"scalars.return_value.all.return_value": [note]}),
+        _user_result(target_user),
+        _notes_result([note]),
     ]
     db.flush = AsyncMock()
     db.commit = AsyncMock()
 
-    mock_graph_rag = MagicMock()
-    mock_graph_rag.ingest_note = AsyncMock()
+    mock_rag = MagicMock()
+    mock_rag.ingest_note = AsyncMock()
 
-    with patch("gnosis.routers.admin.graph_rag", mock_graph_rag):
+    # graph_rag is imported lazily: `from gnosis.services.graph_rag import graph_rag`
+    # Patch the object at its definition site.
+    with patch("gnosis.services.graph_rag.graph_rag", mock_rag):
         app = _make_app(db, user_id=1)
         client = TestClient(app)
         resp = client.post("/api/v1/admin/reindex")
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["fixed"] >= 0  # may be 0 if ingest raises — that's ok
+    assert data["notes"][0]["status"] == "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -150,10 +153,9 @@ def test_reindex_db_error_returns_partial():
     note = _note(body="content here")
 
     db.execute.side_effect = [
-        _scalar_result(target_user),
-        MagicMock(**{"scalars.return_value.all.return_value": [note]}),
+        _user_result(target_user),
+        _notes_result([note]),
     ]
-    # DB update raises
     db.flush = AsyncMock(side_effect=Exception("DB locked"))
     db.commit = AsyncMock()
 
@@ -162,7 +164,6 @@ def test_reindex_db_error_returns_partial():
     resp = client.post("/api/v1/admin/reindex")
     assert resp.status_code == 200
     data = resp.json()
-    # One note → one error
     assert data["errors"] == 1
     assert data["status"] == "partial"
 
@@ -177,24 +178,22 @@ def test_reindex_lightrag_error_still_succeeds():
     note = _note(body="some content")
 
     db.execute.side_effect = [
-        _scalar_result(target_user),
-        MagicMock(**{"scalars.return_value.all.return_value": [note]}),
+        _user_result(target_user),
+        _notes_result([note]),
     ]
     db.flush = AsyncMock()
     db.commit = AsyncMock()
 
-    # LightRAG raises — must be caught and recorded as lightrag_error
-    mock_graph_rag = MagicMock()
-    mock_graph_rag.ingest_note = AsyncMock(side_effect=RuntimeError("LightRAG down"))
+    mock_rag = MagicMock()
+    mock_rag.ingest_note = AsyncMock(side_effect=RuntimeError("LightRAG down"))
 
-    with patch("gnosis.routers.admin.graph_rag", mock_graph_rag):
+    with patch("gnosis.services.graph_rag.graph_rag", mock_rag):
         app = _make_app(db, user_id=1)
         client = TestClient(app)
         resp = client.post("/api/v1/admin/reindex")
 
     assert resp.status_code == 200
     data = resp.json()
-    # LightRAG error is non-fatal — note status is still "ok"
     note_result = data["notes"][0]
     assert "lightrag_error" in note_result["ingest"]
     assert note_result["status"] == "ok"
@@ -210,13 +209,14 @@ def test_reindex_empty_body_skips_ingest():
     note = _note(body="   ")  # whitespace only
 
     db.execute.side_effect = [
-        _scalar_result(target_user),
-        MagicMock(**{"scalars.return_value.all.return_value": [note]}),
+        _user_result(target_user),
+        _notes_result([note]),
     ]
     db.flush = AsyncMock()
     db.commit = AsyncMock()
 
-    with patch("gnosis.routers.admin.graph_rag", MagicMock()):
+    mock_rag = MagicMock()
+    with patch("gnosis.services.graph_rag.graph_rag", mock_rag):
         app = _make_app(db, user_id=1)
         client = TestClient(app)
         resp = client.post("/api/v1/admin/reindex")
@@ -224,3 +224,4 @@ def test_reindex_empty_body_skips_ingest():
     assert resp.status_code == 200
     note_result = resp.json()["notes"][0]
     assert note_result["ingest"] == "empty"
+    mock_rag.ingest_note.assert_not_called()

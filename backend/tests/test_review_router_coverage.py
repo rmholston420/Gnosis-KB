@@ -23,40 +23,46 @@ from gnosis.core.auth import require_user
 from gnosis.database import get_db
 from gnosis.models.user import User
 from gnosis.routers.review import router
+from gnosis.schemas.review import ReviewCardRead, ReviewCardWithNote
 
 
 # ---------------------------------------------------------------------------
-# App fixture
+# Helpers
 # ---------------------------------------------------------------------------
 
-def _make_app(db_mock: AsyncMock, user: User | None = None) -> FastAPI:
+def _make_app(db_mock: AsyncMock, user_id: int = 1) -> FastAPI:
     app = FastAPI()
     app.include_router(router, prefix="/api/v1")
-
-    fake_user = user or User(id=1, email="u@test.com", hashed_password="x")
+    user = User(id=user_id, email="u@test.com", hashed_password="x")
 
     async def _db():
         yield db_mock
 
     async def _user():
-        return fake_user
+        return user
 
     app.dependency_overrides[get_db] = _db
     app.dependency_overrides[require_user] = _user
     return app
 
 
-def _mock_card(note_id="note-1", easiness=2.5, interval=6,
+def _make_card(note_id="note-1", easiness=2.5, interval=6,
                repetitions=2, due_days=0, last_quality=4,
-               title="T", body="B", folder="00-inbox", tags=None):
-    """Build a mock ReviewCard with a joined Note."""
+               title="Test Note", body="Body text", folder="00-inbox",
+               tags=None):
+    """Build a mock ReviewCard whose .note has all fields ReviewCardWithNote needs."""
     note = MagicMock()
     note.id = note_id
     note.title = title
     note.body = body
     note.folder = folder
-    note.tags = [MagicMock(name=t) for t in (tags or ["python"])]
     note.last_reviewed = None
+    tag_objs = []
+    for t in (tags or ["python"]):
+        m = MagicMock()
+        m.name = t
+        tag_objs.append(m)
+    note.tags = tag_objs
 
     card = MagicMock()
     card.note_id = note_id
@@ -66,21 +72,22 @@ def _mock_card(note_id="note-1", easiness=2.5, interval=6,
     card.due_date = date.today() + timedelta(days=due_days)
     card.last_quality = last_quality
     card.note = note
-    # Support model_validate
-    card.__class__.__name__ = "ReviewCard"
     return card
 
 
-def _scalar_result(value):
+def _exec_scalars_list(items: list):
+    """Mock db.execute() result where .scalars().all() returns items."""
     r = MagicMock()
-    r.scalar_one_or_none.return_value = value
-    r.scalars.return_value.all.return_value = [value] if value else []
+    r.scalars.return_value.all.return_value = items
     return r
 
 
-def _scalars_result(values):
+def _exec_scalar_one(value):
+    """Mock db.execute() result where .scalar_one_or_none() returns value."""
     r = MagicMock()
-    r.scalars.return_value.all.return_value = values
+    r.scalar_one_or_none.return_value = value
+    # Also support .scalars().first() used by some helpers
+    r.scalars.return_value.first.return_value = value
     return r
 
 
@@ -90,21 +97,20 @@ def _scalars_result(values):
 
 def test_get_due_queue_returns_list():
     db = AsyncMock()
-    card = _mock_card()
-    db.execute.return_value = _scalars_result([card])
-
-    with patch("gnosis.routers.review.ReviewCardWithNote") as MockSchema:
-        MockSchema.return_value = {"note_id": "note-1"}
-        app = _make_app(db)
-        client = TestClient(app)
-        resp = client.get("/api/v1/review/queue")
-
+    card = _make_card()
+    db.execute.return_value = _exec_scalars_list([card])
+    app = _make_app(db)
+    client = TestClient(app)
+    resp = client.get("/api/v1/review/queue")
     assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+    assert data[0]["note_id"] == "note-1"
 
 
 def test_get_due_queue_empty():
     db = AsyncMock()
-    db.execute.return_value = _scalars_result([])
+    db.execute.return_value = _exec_scalars_list([])
     app = _make_app(db)
     client = TestClient(app)
     resp = client.get("/api/v1/review/queue")
@@ -135,8 +141,7 @@ def test_get_stats_null_scalars_default_to_zero():
     client = TestClient(app)
     resp = client.get("/api/v1/review/stats")
     assert resp.status_code == 200
-    data = resp.json()
-    assert data["due_today"] == 0
+    assert resp.json()["due_today"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -145,45 +150,55 @@ def test_get_stats_null_scalars_default_to_zero():
 
 def test_enroll_note_not_found_returns_404():
     db = AsyncMock()
-    db.execute.return_value = _scalar_result(None)  # Note not found
+    # Note lookup returns None
+    db.execute.return_value = _exec_scalar_one(None)
     app = _make_app(db)
     client = TestClient(app)
-    resp = client.post("/api/v1/review/new-note/enroll", json={"due_today": True})
+    resp = client.post(
+        "/api/v1/review/new-note/enroll",
+        json={"note_id": "new-note", "due_today": True},
+    )
     assert resp.status_code == 404
 
 
 def test_enroll_already_enrolled_returns_existing():
     db = AsyncMock()
     note_mock = MagicMock()
-    card_mock = _mock_card()
+    card_mock = _make_card()
 
-    # First execute: find Note; second execute: find existing card
-    db.execute.side_effect = [_scalar_result(note_mock), _scalar_result(card_mock)]
-
-    with patch("gnosis.routers.review.ReviewCardRead") as MockRead:
-        MockRead.model_validate.return_value = MagicMock(model_dump=lambda: {})
-        app = _make_app(db)
-        client = TestClient(app)
-        resp = client.post("/api/v1/review/note-1/enroll", json={"due_today": True})
-
+    # First execute → find Note; second execute → find existing card
+    db.execute.side_effect = [
+        _exec_scalar_one(note_mock),
+        _exec_scalar_one(card_mock),
+    ]
+    app = _make_app(db)
+    client = TestClient(app)
+    resp = client.post(
+        "/api/v1/review/note-1/enroll",
+        json={"note_id": "note-1", "due_today": True},
+    )
     assert resp.status_code == 201
 
 
 def test_enroll_new_card_creates_and_commits():
     db = AsyncMock()
     note_mock = MagicMock()
-    new_card = _mock_card(repetitions=0, interval=1)
+    new_card = _make_card(repetitions=0, interval=1)
 
-    # First execute: find Note; second execute: no existing card
-    db.execute.side_effect = [_scalar_result(note_mock), _scalar_result(None)]
-    db.refresh = AsyncMock()
+    # First execute → find Note; second execute → no existing card
+    db.execute.side_effect = [
+        _exec_scalar_one(note_mock),
+        _exec_scalar_one(None),
+    ]
+    db.refresh = AsyncMock(side_effect=lambda c: None)
 
-    with patch("gnosis.routers.review.ReviewCardRead") as MockRead:
-        MockRead.model_validate.return_value = MagicMock(model_dump=lambda: {})
-        with patch("gnosis.routers.review.ReviewCard", return_value=new_card):
-            app = _make_app(db)
-            client = TestClient(app)
-            resp = client.post("/api/v1/review/note-new/enroll", json={"due_today": False})
+    with patch("gnosis.routers.review.ReviewCard", return_value=new_card):
+        app = _make_app(db)
+        client = TestClient(app)
+        resp = client.post(
+            "/api/v1/review/note-new/enroll",
+            json={"note_id": "note-new", "due_today": False},
+        )
 
     assert resp.status_code == 201
     db.add.assert_called_once()
@@ -196,7 +211,7 @@ def test_enroll_new_card_creates_and_commits():
 
 def test_submit_review_card_not_found_returns_404():
     db = AsyncMock()
-    db.execute.return_value = _scalar_result(None)
+    db.execute.return_value = _exec_scalar_one(None)
     app = _make_app(db)
     client = TestClient(app)
     resp = client.post("/api/v1/review/missing", json={"quality": 4})
@@ -206,20 +221,20 @@ def test_submit_review_card_not_found_returns_404():
 @pytest.mark.parametrize("quality", [0, 1, 2, 3, 4, 5])
 def test_submit_review_all_quality_values(quality):
     db = AsyncMock()
-    card = _mock_card()
-    note = card.note
+    card = _make_card()
+    note_mock = card.note
 
-    # First execute: get card (with note.tags eager load)
-    # Second execute: get note for last_reviewed update
-    db.execute.side_effect = [_scalar_result(card), _scalar_result(note)]
-    db.refresh = AsyncMock()
+    # First execute → _get_card_or_404 (uses scalar_one_or_none)
+    # Second execute → note lookup for last_reviewed update
+    db.execute.side_effect = [
+        _exec_scalar_one(card),
+        _exec_scalar_one(note_mock),
+    ]
+    db.refresh = AsyncMock(side_effect=lambda c: None)
 
-    with patch("gnosis.routers.review.ReviewCardRead") as MockRead:
-        MockRead.model_validate.return_value = MagicMock(model_dump=lambda: {})
-        app = _make_app(db)
-        client = TestClient(app)
-        resp = client.post(f"/api/v1/review/note-1", json={"quality": quality})
-
+    app = _make_app(db)
+    client = TestClient(app)
+    resp = client.post(f"/api/v1/review/note-1", json={"quality": quality})
     assert resp.status_code == 200
     assert card.last_quality == quality
 
@@ -230,7 +245,7 @@ def test_submit_review_all_quality_values(quality):
 
 def test_unenroll_card_not_found_returns_404():
     db = AsyncMock()
-    db.execute.return_value = _scalar_result(None)
+    db.execute.return_value = _exec_scalar_one(None)
     app = _make_app(db)
     client = TestClient(app)
     resp = client.delete("/api/v1/review/ghost")
@@ -239,8 +254,8 @@ def test_unenroll_card_not_found_returns_404():
 
 def test_unenroll_happy_path_returns_204():
     db = AsyncMock()
-    card = _mock_card()
-    db.execute.return_value = _scalar_result(card)
+    card = _make_card()
+    db.execute.return_value = _exec_scalar_one(card)
     db.delete = AsyncMock()
     db.commit = AsyncMock()
     app = _make_app(db)
