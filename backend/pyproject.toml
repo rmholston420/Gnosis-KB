@@ -86,6 +86,7 @@ include = ["gnosis*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "--cov=gnosis --cov-branch --cov-report=term-missing:skip-covered"
 
 [tool.ruff]
 line-length = 100
@@ -99,3 +100,28 @@ ignore = ["E501"]
 python_version = "3.12"
 strict = false
 ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["gnosis"]
+branch = true
+omit = [
+    "gnosis/core/sm2_test.py",
+    "gnosis/services/fts_test.py",
+    "gnosis/core/logging.py",
+    "gnosis/core/middleware.py",
+    "gnosis/core/events.py",
+    "gnosis/schemas/graph.py",
+]
+
+[tool.coverage.report]
+fail_under = 50
+show_missing = true
+skip_covered = true
+omit = [
+    "gnosis/core/sm2_test.py",
+    "gnosis/services/fts_test.py",
+    "gnosis/core/logging.py",
+    "gnosis/core/middleware.py",
+    "gnosis/core/events.py",
+    "gnosis/schemas/graph.py",
+]
