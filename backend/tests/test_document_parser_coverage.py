@@ -10,6 +10,22 @@ import pytest
 from gnosis.services.document_parser import ParsedDocument, detect_format
 
 
+def _make_httpx_mock(html: str):
+    """Return a patch-ready mock for httpx.AsyncClient used as `async with`."""
+    mock_resp = MagicMock()
+    mock_resp.text = html
+    mock_resp.raise_for_status = MagicMock()
+
+    mock_session = AsyncMock()
+    mock_session.get = AsyncMock(return_value=mock_resp)
+
+    mock_instance = MagicMock()
+    mock_instance.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_instance.__aexit__ = AsyncMock(return_value=False)
+
+    return MagicMock(return_value=mock_instance)
+
+
 # ---------------------------------------------------------------------------
 # parse_pdf
 # ---------------------------------------------------------------------------
@@ -47,22 +63,13 @@ def test_parse_pdf_no_meta_derives_title_from_stem():
 
 
 # ---------------------------------------------------------------------------
-# parse_url — httpx is imported *inside* parse_url, so patch the global name
+# parse_url
 # ---------------------------------------------------------------------------
 
-@pytest.mark.asyncio
 async def test_parse_url_returns_parsed_document():
     html = "<html><head><title>Hello</title></head><body><main><p>World</p></main></body></html>"
-    mock_resp = MagicMock()
-    mock_resp.text = html
-    mock_resp.raise_for_status = MagicMock()
 
-    mock_client = AsyncMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    mock_client.get = AsyncMock(return_value=mock_resp)
-
-    with patch("httpx.AsyncClient", return_value=mock_client):
+    with patch("httpx.AsyncClient", _make_httpx_mock(html)):
         from gnosis.services import document_parser as dp
         result = await dp.parse_url("http://example.com")
 
@@ -71,19 +78,10 @@ async def test_parse_url_returns_parsed_document():
     assert result.source == "http://example.com"
 
 
-@pytest.mark.asyncio
 async def test_parse_url_sets_title():
     html = "<html><head><title>  Stripped Title  </title></head><body><p>content</p></body></html>"
-    mock_resp = MagicMock()
-    mock_resp.text = html
-    mock_resp.raise_for_status = MagicMock()
 
-    mock_client = AsyncMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    mock_client.get = AsyncMock(return_value=mock_resp)
-
-    with patch("httpx.AsyncClient", return_value=mock_client):
+    with patch("httpx.AsyncClient", _make_httpx_mock(html)):
         from gnosis.services import document_parser as dp
         result = await dp.parse_url("http://example.com/page")
 

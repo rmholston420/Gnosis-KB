@@ -145,7 +145,7 @@ def test_parse_docx_extracts_paragraphs():
 
     with patch.dict(sys.modules, {"docx": fake_docx_module}):
         from gnosis.services import document_parser as dp
-        result = dp.parse_docx(Path("/vault/essay.docx"))
+            result = dp.parse_docx(Path("/vault/essay.docx"))
 
     assert result.raw_format == "docx"
     assert "Introduction" in result.text
@@ -261,24 +261,39 @@ def test_parse_image_extracts_ocr_text():
 
 
 # ---------------------------------------------------------------------------
-# parse_url — httpx imported inside parse_url body, so patch the global name
+# parse_url
+# httpx is imported *inside* parse_url, so we patch httpx.AsyncClient.
+# AsyncClient is used as `async with httpx.AsyncClient(...) as client`:
+#   1. httpx.AsyncClient(...) -> calls __init__, returns the instance
+#   2. async with <instance> -> calls instance.__aenter__() -> client
+# So: patch the class so its *instance* (return_value) is a proper async CM.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.asyncio
-async def test_parse_url_extracts_title_and_text():
-    html = """<html><head><title>Test Page</title></head>
-    <body><main><p>Main content here.</p></main></body></html>"""
-
+def _make_httpx_mock(html: str):
+    """Return a patch-ready mock for httpx.AsyncClient used as async CM."""
     mock_resp = MagicMock()
     mock_resp.text = html
     mock_resp.raise_for_status = MagicMock()
 
-    mock_client = AsyncMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=None)
-    mock_client.get = AsyncMock(return_value=mock_resp)
+    # This is the object that `async with httpx.AsyncClient(...) as client` yields
+    mock_session = AsyncMock()
+    mock_session.get = AsyncMock(return_value=mock_resp)
 
-    with patch("httpx.AsyncClient", return_value=mock_client):
+    # AsyncClient() -> mock_instance; `async with mock_instance` -> mock_session
+    mock_instance = MagicMock()
+    mock_instance.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_instance.__aexit__ = AsyncMock(return_value=False)
+
+    # httpx.AsyncClient(...) returns mock_instance
+    mock_cls = MagicMock(return_value=mock_instance)
+    return mock_cls
+
+
+async def test_parse_url_extracts_title_and_text():
+    html = """<html><head><title>Test Page</title></head>
+    <body><main><p>Main content here.</p></main></body></html>"""
+
+    with patch("httpx.AsyncClient", _make_httpx_mock(html)):
         from gnosis.services import document_parser as dp
         result = await dp.parse_url("https://example.com")
 
@@ -287,19 +302,10 @@ async def test_parse_url_extracts_title_and_text():
     assert "content" in result.text.lower()
 
 
-@pytest.mark.asyncio
 async def test_parse_url_fallback_without_bs4():
     html = "<html><body>raw html</body></html>"
-    mock_resp = MagicMock()
-    mock_resp.text = html
-    mock_resp.raise_for_status = MagicMock()
 
-    mock_client = AsyncMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=None)
-    mock_client.get = AsyncMock(return_value=mock_resp)
-
-    with patch("httpx.AsyncClient", return_value=mock_client), \
+    with patch("httpx.AsyncClient", _make_httpx_mock(html)), \
          patch.dict(sys.modules, {"bs4": None}):
         from gnosis.services import document_parser as dp
         result = await dp.parse_url("https://example.com")
