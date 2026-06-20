@@ -14,9 +14,18 @@ Every point upserted into Qdrant must carry ``owner_id`` in its payload.
 are never returned.  ``owner_id=None`` is stored as the sentinel value
 ``0`` (Qdrant payload integers cannot be NULL) so legacy points remain
 visible when ``include_legacy=True`` is passed to the search helper.
+
+Point ID contract
+-----------------
+Qdrant only accepts unsigned integers or UUIDs as point IDs.  Note PKs
+are arbitrary strings (e.g. timestamp slugs), so we derive a stable
+UUID v5 from the note_id string using the DNS namespace as a fixed salt.
+The original ``note_id`` string is always stored in the payload so
+search results can be joined back to the DB.
 """
 
 import logging
+import uuid
 from typing import Any, Optional
 
 from qdrant_client import QdrantClient, models
@@ -30,7 +39,20 @@ logger = logging.getLogger(__name__)
 # Sentinel stored in Qdrant for notes whose owner is unknown (legacy / null)
 _LEGACY_OWNER_SENTINEL = 0
 
+# Namespace for UUID v5 derivation — stable across restarts
+_UUID_NS = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")  # uuid.NAMESPACE_DNS
+
 _client: Optional[QdrantClient] = None
+
+
+def _note_id_to_uuid(note_id: str) -> str:
+    """Return a stable UUID string derived from an arbitrary note_id string.
+
+    Uses UUID v5 (SHA-1 hash of namespace + name) so the same note_id
+    always maps to the same UUID, and the original ID is round-trippable
+    via the payload ``note_id`` field.
+    """
+    return str(uuid.uuid5(_UUID_NS, note_id))
 
 
 def get_qdrant_client() -> QdrantClient:
@@ -105,13 +127,12 @@ def upsert_note(
     Generates dense and ColBERT embeddings. Sparse (BM25) embeddings
     are computed by Qdrant server-side via the fastembed-server integration.
 
-    The ``owner_id`` is stored in the payload as an integer.  Callers
-    should always pass the note's ``owner_id``; ``None`` is stored as the
-    legacy sentinel (``0``) and will be visible to all users until a
-    backfill re-indexes the note with the correct owner.
+    The point ID is a UUID v5 derived from ``note_id`` (Qdrant requires
+    UUID or unsigned int).  The original ``note_id`` string is preserved
+    in the payload for DB join-back.
 
     Args:
-        note_id: Note primary key.
+        note_id: Note primary key (arbitrary string).
         title: Note title (included in text for embedding).
         body: Note body Markdown text.
         folder: PARA folder name.
@@ -124,6 +145,7 @@ def upsert_note(
     settings = get_settings()
 
     text = f"{title}\n\n{body}"
+    point_uuid = _note_id_to_uuid(note_id)
 
     try:
         dense_vec = embed_dense(text)
@@ -133,7 +155,7 @@ def upsert_note(
         return
 
     point = models.PointStruct(
-        id=note_id,
+        id=point_uuid,
         vector={
             "dense": dense_vec,
             "colbert": colbert_vec,
@@ -146,8 +168,6 @@ def upsert_note(
             "status": status,
             "tags": tags,
             "text_snippet": body[:500],
-            # Store sentinel 0 for legacy/unowned notes so the field is
-            # always present and filterable.
             "owner_id": owner_id if owner_id is not None else _LEGACY_OWNER_SENTINEL,
         },
     )
@@ -156,19 +176,20 @@ def upsert_note(
         collection_name=settings.qdrant_collection_name,
         points=[point],
     )
-    logger.debug("Upserted note %s (owner=%s) into Qdrant", note_id, owner_id)
+    logger.debug("Upserted note %s (uuid=%s, owner=%s) into Qdrant", note_id, point_uuid, owner_id)
 
 
 def delete_note(note_id: str) -> None:
     """Remove a note from the Qdrant collection.
 
     Args:
-        note_id: Note primary key.
+        note_id: Note primary key (arbitrary string).
     """
     client = get_qdrant_client()
     settings = get_settings()
+    point_uuid = _note_id_to_uuid(note_id)
     client.delete(
         collection_name=settings.qdrant_collection_name,
-        points_selector=models.PointIdsList(points=[note_id]),
+        points_selector=models.PointIdsList(points=[point_uuid]),
     )
-    logger.debug("Deleted note %s from Qdrant", note_id)
+    logger.debug("Deleted note %s (uuid=%s) from Qdrant", note_id, point_uuid)
