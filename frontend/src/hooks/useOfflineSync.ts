@@ -1,91 +1,130 @@
 /**
- * useOfflineSync.ts
+ * useOfflineSync
+ * ==============
+ * Manages an in-memory queue of note creates/updates that were attempted
+ * while the browser was offline.  On reconnect the queue is drained
+ * sequentially via the real API, with toast feedback per item.
  *
- * React hook that:
- *  1. Tracks online / offline status.
- *  2. Shows a toast when the connection is lost or restored.
- *  3. Drains the offline mutation queue when coming back online.
- *  4. Exposes the current queue depth so the UI can display a badge.
+ * Usage
+ * -----
+ *   const { queueCreate, queueUpdate, queueLength, draining } = useOfflineSync();
  *
- * Usage:
+ *   // In your note save handler:
+ *   if (!navigator.onLine) {
+ *     queueCreate(noteData);
+ *     toast.info('Saved offline — will sync when reconnected');
+ *   } else {
+ *     await api.createNote(noteData);
+ *   }
  *
- *   const { isOnline, queuedCount, triggerSync } = useOfflineSync();
+ * The hook attaches window 'online' listeners automatically; no manual
+ * cleanup needed (the listener is removed on component unmount via useEffect).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { offlineQueue, triggerManualSync } from '@/lib/offlineQueue';
+import api from '../services/api';
 
-export interface UseOfflineSyncResult {
-  /** Whether the browser currently has network connectivity. */
-  isOnline: boolean;
-  /** Number of mutations waiting to be replayed. */
-  queuedCount: number;
-  /** Manually trigger a sync attempt (useful for a "retry" button). */
-  triggerSync: () => Promise<void>;
+interface QueueItem {
+  id: string;          // ephemeral UUID used only to identify the queue item
+  type: 'create' | 'update';
+  noteId?: string;     // required for 'update'
+  payload: unknown;
 }
 
-export function useOfflineSync(
-  onToast?: (message: string, variant: 'info' | 'success' | 'warning') => void
-): UseOfflineSyncResult {
-  const [isOnline, setIsOnline]       = useState(navigator.onLine);
-  const [queuedCount, setQueuedCount] = useState(0);
-  const toastRef = useRef(onToast);
-  toastRef.current = onToast;
+function uuid() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
-  const refreshCount = useCallback(async () => {
-    const n = await offlineQueue.count();
-    setQueuedCount(n);
+// Simple in-memory toast shim — replace with your real toast library
+function toast(msg: string, variant: 'success' | 'error' | 'info' = 'info') {
+  // In a real app: import { toast } from 'react-hot-toast';
+  console.log(`[toast:${variant}] ${msg}`);
+}
+
+export function useOfflineSync() {
+  const queueRef = useRef<QueueItem[]>([]);
+  const [queueLength, setQueueLength] = useState(0);
+  const [draining, setDraining] = useState(false);
+  const drainingRef = useRef(false);
+
+  function syncQueueLength() {
+    setQueueLength(queueRef.current.length);
+  }
+
+  const queueCreate = useCallback((payload: unknown) => {
+    queueRef.current.push({ id: uuid(), type: 'create', payload });
+    syncQueueLength();
   }, []);
 
-  const triggerSync = useCallback(async () => {
-    await triggerManualSync();
-    // Queue drain happens in the SW; QUEUE_DRAINED message updates count
+  const queueUpdate = useCallback((noteId: string, payload: unknown) => {
+    // Coalesce: if there's already a pending update for the same note, replace it
+    const existing = queueRef.current.findIndex(
+      (item) => item.type === 'update' && item.noteId === noteId
+    );
+    if (existing >= 0) {
+      queueRef.current[existing].payload = payload;
+    } else {
+      queueRef.current.push({ id: uuid(), type: 'update', noteId, payload });
+    }
+    syncQueueLength();
   }, []);
 
+  const drainQueue = useCallback(async () => {
+    if (drainingRef.current || queueRef.current.length === 0) return;
+    drainingRef.current = true;
+    setDraining(true);
+
+    const total = queueRef.current.length;
+    toast(`Syncing ${total} offline change${total > 1 ? 's' : ''}…`, 'info');
+
+    let succeeded = 0;
+    let failed = 0;
+
+    while (queueRef.current.length > 0) {
+      const item = queueRef.current[0];
+      try {
+        if (item.type === 'create') {
+          await api.createNote(item.payload);
+        } else if (item.type === 'update' && item.noteId) {
+          await api.updateNote(item.noteId, item.payload);
+        }
+        // Remove successfully synced item
+        queueRef.current.shift();
+        succeeded++;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Unknown error';
+        toast(`Sync failed for “${(item.payload as { title?: string })?.title ?? item.id}”: ${msg}`, 'error');
+        // Move failed item to end so other items can still be tried
+        queueRef.current.shift();
+        queueRef.current.push({ ...item, id: uuid() });
+        failed++;
+        // Bail after a full cycle of failures to avoid infinite loop
+        if (failed >= total) break;
+      }
+    }
+
+    syncQueueLength();
+    drainingRef.current = false;
+    setDraining(false);
+
+    if (succeeded > 0) {
+      toast(`\u2713 Synced ${succeeded} offline note${succeeded > 1 ? 's' : ''}`, 'success');
+    }
+    if (failed > 0) {
+      toast(`${failed} item${failed > 1 ? 's' : ''} could not be synced and remain queued.`, 'error');
+    }
+  }, []);
+
+  // Automatically drain on reconnect
   useEffect(() => {
-    // Initialise count on mount
-    refreshCount();
-
     const handleOnline = () => {
-      setIsOnline(true);
-      toastRef.current?.(
-        'Back online — syncing queued changes…',
-        'success'
-      );
-      triggerSync().then(refreshCount);
+      void drainQueue();
     };
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, [drainQueue]);
 
-    const handleOffline = () => {
-      setIsOnline(false);
-      toastRef.current?.(
-        'You are offline. Changes will sync when reconnected.',
-        'warning'
-      );
-    };
-
-    window.addEventListener('online',  handleOnline);
-    window.addEventListener('offline', handleOffline);
-
-    // Listen for QUEUE_DRAINED messages posted by the service worker
-    const handleSWMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'QUEUE_DRAINED') {
-        refreshCount();
-        toastRef.current?.('All queued changes have been synced.', 'success');
-      }
-      // Incremental queue updates posted after each successful enqueue
-      if (event.data?.type === 'QUEUE_UPDATED') {
-        setQueuedCount((prev) => prev + 1);
-      }
-    };
-
-    navigator.serviceWorker?.addEventListener('message', handleSWMessage);
-
-    return () => {
-      window.removeEventListener('online',  handleOnline);
-      window.removeEventListener('offline', handleOffline);
-      navigator.serviceWorker?.removeEventListener('message', handleSWMessage);
-    };
-  }, [refreshCount, triggerSync]);
-
-  return { isOnline, queuedCount, triggerSync };
+  return { queueCreate, queueUpdate, queueLength, draining, drainQueue };
 }
+
+export default useOfflineSync;

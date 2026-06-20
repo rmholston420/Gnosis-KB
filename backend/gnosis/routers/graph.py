@@ -1,23 +1,20 @@
-"""Graph router — knowledge graph endpoints for visualization and traversal.
+"""Graph router.
 
-All endpoints return data formatted for react-force-graph-2d:
-  { nodes: [{id, title, type, incomingLinkCount}], edges: [{source, target}] }
-
-Namespace contract
-------------------
-Every endpoint is scoped to the calling user's accessible vault set via the
-``get_vault_owner_ids`` dependency (honours ``X-Vault-Owner-Id`` header).
-``_build_nx_graph`` accepts ``owner_ids`` and applies ``scoped_note_stmt``
-so notes from inaccessible vaults never appear in any graph response.
-Link edges whose *source* note is outside the accessible set are also
-excluded, preventing indirect information leakage through edge metadata.
+Endpoints
+---------
+- GET /graph/           — full wikilink graph (nodes + links)
+- GET /graph/neighborhood/{note_id} — 1-hop neighbourhood
+- GET /graph/path/{from_id}/{to_id}  — shortest link path
+- GET /graph/clusters    — community/cluster membership
+- GET /graph/stats       — aggregate graph statistics
+- GET /graph/lightrag    — LightRAG entities + relations as D3 nodes/links
 """
+
 from __future__ import annotations
 
 from typing import Any
 
-import networkx as nx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,167 +23,279 @@ from gnosis.core.namespace import scoped_note_stmt
 from gnosis.database import get_db
 from gnosis.models.link import Link
 from gnosis.models.note import Note
-from gnosis.schemas.graph import GraphData, GraphEdge, GraphNode, GraphStats
 
 router = APIRouter(prefix="/graph", tags=["graph"])
 
 
-async def _build_nx_graph(
-    db: AsyncSession,
-    owner_ids: set[int],
-) -> tuple[nx.DiGraph, list[Note]]:
-    """Load scoped notes + links from DB and build a NetworkX DiGraph.
-
-    Only notes whose ``owner_id`` is in *owner_ids* (or is NULL for legacy
-    data) are included.  Link edges whose *source* note is outside the
-    accessible set are also excluded.
-    """
-    # Scoped note fetch
-    note_stmt = scoped_note_stmt(
-        select(Note).where(Note.is_deleted.is_(False)),
-        owner_ids,
-    )
-    result = await db.execute(note_stmt)
-    notes = result.scalars().all()
-    accessible_ids = {n.id for n in notes}
-
-    G: nx.DiGraph = nx.DiGraph()
-    for note in notes:
-        G.add_node(note.id, title=note.title, note_type=note.note_type)
-
-    # Only include edges where BOTH endpoints are in the accessible set
-    link_result = await db.execute(
-        select(Link.source_id, Link.target_id).where(
-            Link.source_id.in_(accessible_ids),
-            Link.target_id.in_(accessible_ids),
-        )
-    )
-    for source_id, target_id in link_result:
-        G.add_edge(source_id, target_id)
-
-    return G, list(notes)
+# ---------------------------------------------------------------------------
+# Helper types
+# ---------------------------------------------------------------------------
 
 
-@router.get("/", response_model=GraphData, summary="Full knowledge graph for visualization")
+def _node(note: Note) -> dict[str, Any]:
+    return {
+        "id": note.id,
+        "label": note.title,
+        "folder": note.folder,
+        "note_type": note.note_type,
+    }
+
+
+def _link(link: Link) -> dict[str, Any]:
+    return {
+        "source": link.source_id,
+        "target": link.target_id,
+        "link_type": link.link_type,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Full graph
+# ---------------------------------------------------------------------------
+
+
+@router.get("/", summary="Full wikilink graph")
 async def get_full_graph(
     db: AsyncSession = Depends(get_db),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
-) -> GraphData:
-    """Return all accessible notes as nodes and their wikilinks as directed edges."""
-    G, notes = await _build_nx_graph(db, owner_ids)
-    in_degree = dict(G.in_degree())
-    nodes = [
-        GraphNode(
-            id=n.id,
-            title=n.title,
-            note_type=n.note_type,
-            status=getattr(n, "status", "draft"),
-            folder=getattr(n, "folder", ""),
-            incoming_link_count=in_degree.get(n.id, 0),
+) -> dict[str, Any]:
+    result = await db.execute(
+        scoped_note_stmt(
+            select(Note).where(Note.is_deleted.is_(False)),
+            owner_ids,
         )
-        for n in notes
-    ]
-    edges = [GraphEdge(source=u, target=v) for u, v in G.edges()]
-    return GraphData(nodes=nodes, edges=edges)
+    )
+    notes = result.scalars().unique().all()
+    note_ids = {n.id for n in notes}
+
+    links_result = await db.execute(
+        select(Link).where(
+            Link.source_id.in_(note_ids),
+            Link.target_id.in_(note_ids),
+        )
+    )
+    links = links_result.scalars().all()
+
+    return {
+        "nodes": [_node(n) for n in notes],
+        "links": [_link(lnk) for lnk in links],
+    }
 
 
-@router.get("/neighborhood/{note_id}", response_model=GraphData, summary="Ego-graph: note + 1-hop neighbours")
+# ---------------------------------------------------------------------------
+# Neighbourhood
+# ---------------------------------------------------------------------------
+
+
+@router.get("/neighborhood/{note_id}", summary="1-hop neighbourhood")
 async def get_neighborhood(
     note_id: str,
     db: AsyncSession = Depends(get_db),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
-) -> GraphData:
-    """Return the target note plus all notes directly linked to/from it.
-
-    Returns HTTP 404 if the note is not found within the caller's accessible
-    vaults (whether it doesn't exist or is simply inaccessible).
-    """
-    G, notes = await _build_nx_graph(db, owner_ids)
-    if note_id not in G:
-        raise HTTPException(status_code=404, detail="Note not found in graph")
-    note_map = {n.id: n for n in notes}
-    neighbours = set(G.predecessors(note_id)) | set(G.successors(note_id)) | {note_id}
-    sub = G.subgraph(neighbours)
-    in_degree = dict(sub.in_degree())
-    nodes = [
-        GraphNode(
-            id=nid,
-            title=note_map[nid].title if nid in note_map else nid,
-            note_type=note_map[nid].note_type if nid in note_map else "unknown",
-            status=getattr(note_map.get(nid), "status", "draft"),
-            folder=getattr(note_map.get(nid), "folder", ""),
-            incoming_link_count=in_degree.get(nid, 0),
+) -> dict[str, Any]:
+    links_result = await db.execute(
+        select(Link).where(
+            (Link.source_id == note_id) | (Link.target_id == note_id)
         )
-        for nid in sub.nodes()
+    )
+    links = links_result.scalars().all()
+    neighbour_ids = {lnk.source_id for lnk in links} | {lnk.target_id for lnk in links} | {note_id}
+
+    result = await db.execute(
+        scoped_note_stmt(
+            select(Note).where(Note.id.in_(neighbour_ids), Note.is_deleted.is_(False)),
+            owner_ids,
+        )
+    )
+    notes = result.scalars().unique().all()
+    present_ids = {n.id for n in notes}
+    visible_links = [
+        lnk for lnk in links
+        if lnk.source_id in present_ids and lnk.target_id in present_ids
     ]
-    edges = [GraphEdge(source=u, target=v) for u, v in sub.edges()]
-    return GraphData(nodes=nodes, edges=edges)
+    return {"nodes": [_node(n) for n in notes], "links": [_link(lnk) for lnk in visible_links]}
 
 
-@router.get("/path/{from_id}/{to_id}", summary="Shortest path between two notes")
+# ---------------------------------------------------------------------------
+# Shortest path
+# ---------------------------------------------------------------------------
+
+
+@router.get("/path/{from_id}/{to_id}", summary="Shortest link path")
 async def get_path(
     from_id: str,
     to_id: str,
     db: AsyncSession = Depends(get_db),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> dict[str, Any]:
-    """Return the shortest directed path from *from_id* to *to_id*.
+    result = await db.execute(
+        scoped_note_stmt(
+            select(Note).where(Note.is_deleted.is_(False)),
+            owner_ids,
+        )
+    )
+    notes = result.scalars().unique().all()
+    note_ids = {n.id for n in notes}
 
-    Both nodes must be within the caller's accessible vaults; otherwise
-    NetworkX raises NodeNotFound which is mapped to HTTP 404.
-    """
-    G, _ = await _build_nx_graph(db, owner_ids)
-    try:
-        path = nx.shortest_path(G, source=from_id, target=to_id)
-        return {"path": path, "length": len(path) - 1}
-    except nx.NetworkXNoPath:
-        raise HTTPException(status_code=404, detail="No path found")
-    except nx.NodeNotFound as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+    links_result = await db.execute(
+        select(Link).where(
+            Link.source_id.in_(note_ids),
+            Link.target_id.in_(note_ids),
+        )
+    )
+    links = links_result.scalars().all()
+
+    # BFS
+    from collections import deque
+    adj: dict[str, list[str]] = {n.id: [] for n in notes}
+    for lnk in links:
+        adj.setdefault(lnk.source_id, []).append(lnk.target_id)
+        adj.setdefault(lnk.target_id, []).append(lnk.source_id)
+
+    visited: dict[str, str | None] = {from_id: None}
+    queue: deque[str] = deque([from_id])
+    while queue:
+        current = queue.popleft()
+        if current == to_id:
+            break
+        for nb in adj.get(current, []):
+            if nb not in visited:
+                visited[nb] = current
+                queue.append(nb)
+
+    if to_id not in visited:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No path found between the two notes.",
+        )
+
+    path: list[str] = []
+    node: str | None = to_id
+    while node is not None:
+        path.append(node)
+        node = visited.get(node)
+    path.reverse()
+
+    note_map = {n.id: n for n in notes}
+    return {"path": [{"id": nid, "label": note_map[nid].title} for nid in path if nid in note_map]}
 
 
-@router.get("/clusters", summary="Community detection (Louvain)")
+# ---------------------------------------------------------------------------
+# Clusters
+# ---------------------------------------------------------------------------
+
+
+@router.get("/clusters", summary="Community cluster membership")
 async def get_clusters(
     db: AsyncSession = Depends(get_db),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> dict[str, Any]:
-    """Detect note communities using the Louvain algorithm on the undirected projection.
-
-    Only notes within the caller's accessible vaults contribute to the
-    partition, so shared-vault members see a graph limited to their scope.
     """
-    G, _ = await _build_nx_graph(db, owner_ids)
-    undirected = G.to_undirected()
-    try:
-        import community as community_louvain  # python-louvain
-        partition = community_louvain.best_partition(undirected)
-    except ImportError:
-        partition = {}
-        for i, comp in enumerate(nx.connected_components(undirected)):
-            for node in comp:
-                partition[node] = i
-    clusters: dict[int, list[str]] = {}
-    for node, cluster_id in partition.items():
-        clusters.setdefault(cluster_id, []).append(node)
-    return {"clusters": clusters, "count": len(clusters)}
+    Simple folder-based clustering as a fast proxy for community detection.
+    Returns a list of clusters, each with an id, label, and list of note ids.
+    """
+    result = await db.execute(
+        scoped_note_stmt(
+            select(Note).where(Note.is_deleted.is_(False)),
+            owner_ids,
+        )
+    )
+    notes = result.scalars().unique().all()
+
+    clusters: dict[str, list[str]] = {}
+    for n in notes:
+        key = n.folder or "Uncategorised"
+        clusters.setdefault(key, []).append(n.id)
+
+    return {
+        "clusters": [
+            {"id": folder, "label": folder, "note_ids": ids}
+            for folder, ids in clusters.items()
+        ]
+    }
 
 
-@router.get("/stats", response_model=GraphStats, summary="Graph statistics")
-async def get_stats(
+# ---------------------------------------------------------------------------
+# Stats
+# ---------------------------------------------------------------------------
+
+
+@router.get("/stats", summary="Aggregate graph statistics")
+async def get_graph_stats(
     db: AsyncSession = Depends(get_db),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
-) -> GraphStats:
-    """Return high-level graph metrics scoped to the caller's accessible vaults."""
-    G, _ = await _build_nx_graph(db, owner_ids)
-    orphans = [n for n in G.nodes() if G.in_degree(n) == 0 and G.out_degree(n) == 0]
-    density = nx.density(G) if len(G.nodes()) > 1 else 0.0
-    avg_degree = (
-        sum(dict(G.degree()).values()) / len(G.nodes()) if len(G.nodes()) > 0 else 0.0
+) -> dict[str, Any]:
+    result = await db.execute(
+        scoped_note_stmt(
+            select(Note).where(Note.is_deleted.is_(False)),
+            owner_ids,
+        )
     )
-    return GraphStats(
-        node_count=G.number_of_nodes(),
-        edge_count=G.number_of_edges(),
-        density=round(density, 6),
-        avg_degree=round(avg_degree, 3),
-        orphan_count=len(orphans),
+    notes = result.scalars().unique().all()
+    note_ids = {n.id for n in notes}
+
+    links_result = await db.execute(
+        select(Link).where(
+            Link.source_id.in_(note_ids),
+            Link.target_id.in_(note_ids),
+        )
     )
+    links = links_result.scalars().all()
+
+    # Degree map
+    degree: dict[str, int] = {n.id: 0 for n in notes}
+    for lnk in links:
+        degree[lnk.source_id] = degree.get(lnk.source_id, 0) + 1
+        degree[lnk.target_id] = degree.get(lnk.target_id, 0) + 1
+
+    orphan_count = sum(1 for v in degree.values() if v == 0)
+    max_degree = max(degree.values(), default=0)
+
+    return {
+        "note_count": len(notes),
+        "link_count": len(links),
+        "orphan_count": orphan_count,
+        "max_degree": max_degree,
+        "avg_degree": round(sum(degree.values()) / len(degree), 2) if degree else 0,
+    }
+
+
+# ---------------------------------------------------------------------------
+# LightRAG knowledge graph export
+# ---------------------------------------------------------------------------
+
+
+@router.get("/lightrag", summary="LightRAG entities + relations for D3 visualisation")
+async def get_lightrag_graph(
+    owner_ids: set[int] = Depends(get_vault_owner_ids),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """
+    Export LightRAG’s entity/relation graph for the frontend D3 Knowledge
+    Graph tab.  Entities are coloured by concept cluster.
+
+    Falls back gracefully when LightRAG is not initialised: returns an empty
+    graph so the frontend tab renders a friendly empty state rather than
+    crashing.
+    """
+    try:
+        from gnosis.services.graph_rag import graph_rag  # lazy import
+    except ImportError:
+        return {"nodes": [], "links": [], "source": "lightrag", "error": "LightRAG not installed"}
+
+    try:
+        data = await graph_rag.export_graph(list(owner_ids))
+    except Exception as exc:  # noqa: BLE001
+        # LightRAG may not be initialised yet — return empty graph gracefully
+        return {
+            "nodes": [],
+            "links": [],
+            "source": "lightrag",
+            "error": str(exc),
+        }
+
+    return {
+        "nodes": data.get("nodes", []),
+        "links": data.get("links", []),
+        "source": "lightrag",
+    }
