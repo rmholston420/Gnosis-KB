@@ -90,6 +90,15 @@ class DailyReviewResponse(BaseModel):
     action_items: list[str]
 
 
+class IngestNoteResponse(BaseModel):
+    """Response from POST /ai/ingest-note/{note_id}."""
+
+    note_id: str
+    title: str
+    graph_indexed: bool
+    message: str
+
+
 # ---------------------------------------------------------------------------
 # MOC Generator
 # ---------------------------------------------------------------------------

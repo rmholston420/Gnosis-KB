@@ -4,18 +4,43 @@
  * Uses fetch() + ReadableStream for SSE so we can send the Authorization
  * header — EventSource does not support custom headers.
  * Token is read from localStorage ('gnosis_token') to mirror api.ts.
+ *
+ * Meta event: the backend emits a single `{meta: {rag_source, mode}}`
+ * event just before [DONE].  We capture it and display a colour-coded
+ * badge in the header showing which retrieval path answered the query.
  */
 
 import { useRef, useState, useEffect } from 'react';
-import { Send, Trash2 } from 'lucide-react';
+import { Send, Trash2, GitBranch, Database } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import api from '../services/api';
 import type { ChatMessage } from '../types';
 
 const RAG_MODES = ['hybrid', 'local', 'global'] as const;
 
+type RagSource = 'lightrag' | 'qdrant' | null;
+
 function getToken(): string {
   return localStorage.getItem('gnosis_token') ?? '';
+}
+
+/** Small badge showing which RAG path produced the last answer. */
+function RagSourceBadge({ source, mode }: { source: RagSource; mode: string }) {
+  if (!source) return null;
+  const isGraph = source === 'lightrag';
+  return (
+    <span
+      className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border transition-colors ${
+        isGraph
+          ? 'bg-accent-purple/10 border-accent-purple/30 text-accent-purple'
+          : 'bg-accent-blue/10 border-accent-blue/30 text-accent-blue'
+      }`}
+      title={isGraph ? 'Answer from LightRAG knowledge graph' : 'Answer from Qdrant vector store'}
+    >
+      {isGraph ? <GitBranch size={10} /> : <Database size={10} />}
+      {isGraph ? `Graph · ${mode}` : `Vector · ${mode}`}
+    </span>
+  );
 }
 
 export default function AIChat() {
@@ -31,6 +56,9 @@ export default function AIChat() {
 
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  // Track the RAG source used for the most recent response
+  const [lastRagSource, setLastRagSource] = useState<RagSource>(null);
+  const [lastRagMode, setLastRagMode] = useState<string>(ragMode);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -41,8 +69,18 @@ export default function AIChat() {
     scrollToBottom();
   }, [chatMessages]);
 
+  // Clear badge when chat is cleared
+  useEffect(() => {
+    if (chatMessages.length === 0) {
+      setLastRagSource(null);
+    }
+  }, [chatMessages.length]);
+
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
+
+    // Clear badge on new message
+    setLastRagSource(null);
 
     const userMsg: ChatMessage = {
       role: 'user',
@@ -101,6 +139,12 @@ export default function AIChat() {
           try {
             const parsed = JSON.parse(raw);
             if (parsed.error) throw new Error(parsed.error);
+            // Meta event — capture RAG source info
+            if (parsed.meta) {
+              setLastRagSource(parsed.meta.rag_source as RagSource);
+              setLastRagMode(parsed.meta.mode as string);
+              continue;
+            }
             const chunk = parsed.token ?? parsed.text ?? '';
             accumulated += chunk;
             updateLastAssistantMessage(accumulated);
@@ -141,7 +185,13 @@ export default function AIChat() {
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-border flex-shrink-0">
-        <h2 className="text-sm font-semibold text-text-primary">AI Chat</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-sm font-semibold text-text-primary">AI Chat</h2>
+          {/* RAG source badge — appears after first response, fades in */}
+          {lastRagSource && !isLoading && (
+            <RagSourceBadge source={lastRagSource} mode={lastRagMode} />
+          )}
+        </div>
         <div className="flex items-center gap-2">
           <select
             value={ragMode}

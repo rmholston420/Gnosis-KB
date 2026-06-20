@@ -2,17 +2,19 @@
 AI Router — /api/v1/ai
 
 Endpoints:
-  POST /chat                 — LightRAG hybrid vault query
-  POST /summarize/{note_id}  — AI summary of a single note
-  POST /suggest-links/{note_id} — Suggest wikilinks for a note
-  POST /suggest-tags/{note_id}  — Suggest tags for a note
-  POST /critique/{note_id}   — Zettelkasten atomicity critique
-  GET  /orphan-audit         — AI-powered orphan remediation suggestions
-  POST /daily-review         — Daily review from inbox notes
-  GET  /stream/chat          — SSE streaming chat (query param: message, mode)
-  POST /generate-moc         — Map of Content generator
-  GET  /providers            — Return active provider info + model list
-  POST /providers/model      — Hot-swap the active Ollama model (no restart needed)
+  POST /chat                      — LightRAG hybrid vault query
+  POST /summarize/{note_id}       — AI summary of a single note
+  POST /suggest-links/{note_id}   — Suggest wikilinks for a note
+  POST /suggest-tags/{note_id}    — Suggest tags for a note
+  POST /critique/{note_id}        — Zettelkasten atomicity critique
+  GET  /orphan-audit              — AI-powered orphan remediation suggestions
+  POST /daily-review              — Daily review from inbox notes
+  GET  /stream/chat               — SSE streaming chat (query param: message, mode)
+                                    Emits: data: {token}  …  data: {meta}  data: [DONE]
+  POST /ingest-note/{note_id}     — On-demand LightRAG ingestion of a single note
+  POST /generate-moc              — Map of Content generator
+  GET  /providers                 — Return active provider info + model list
+  POST /providers/model           — Hot-swap the active Ollama model (no restart needed)
 """
 from __future__ import annotations
 
@@ -26,7 +28,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from gnosis.core.auth import get_current_user, get_vault_owner_ids
@@ -40,6 +42,7 @@ from gnosis.schemas.ai import (
     ChatResponse,
     CritiqueResponse,
     DailyReviewResponse,
+    IngestNoteResponse,
     LinkSuggestionsResponse,
     MocRequest,
     MocResponse,
@@ -372,7 +375,7 @@ async def suggest_tags(
     )
     raw = await llm_provider.complete(prompt, temperature=0.2)
     tags = _parse_json_list(raw)
-    return TagSuggestionsResponse(note_id=note_id, tags=tags)
+    return TagSuggestionsResponse(note_id=note_id, suggested_tags=tags)
 
 
 # ---------------------------------------------------------------------------
@@ -548,13 +551,16 @@ async def stream_chat(
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> StreamingResponse:
     async def event_generator() -> AsyncGenerator[str, None]:
+        rag_source = "qdrant"  # default; overwritten when LightRAG answers
         try:
             if await graph_rag.is_available(current_user.id):
+                rag_source = "lightrag"
                 async for token in graph_rag.stream(
                     message, user_id=current_user.id, owner_ids=owner_ids, mode=mode
                 ):
                     yield f"data: {json.dumps({'token': token})}\n\n"
             elif llm_provider.is_available:
+                rag_source = "qdrant"
                 async for token in _qdrant_rag_stream(
                     message, owner_ids=owner_ids, mode=mode
                 ):
@@ -565,9 +571,72 @@ async def stream_chat(
             logger.exception("SSE stream error")
             yield f"data: {json.dumps({'error': str(exc)})}\n\n"
         finally:
+            # Emit metadata event before DONE so the frontend can show the badge
+            meta = {"meta": {"rag_source": rag_source, "mode": mode}}
+            yield f"data: {json.dumps(meta)}\n\n"
             yield "data: [DONE]\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+# ---------------------------------------------------------------------------
+# POST /ai/ingest-note/{note_id}
+# ---------------------------------------------------------------------------
+
+@router.post("/ingest-note/{note_id}", response_model=IngestNoteResponse)
+async def ingest_note(
+    note_id: str,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+    owner_ids: set[int] = Depends(get_vault_owner_ids),
+) -> IngestNoteResponse:
+    """Ingest a single vault note into the LightRAG knowledge graph.
+
+    Useful for backfilling existing notes that were created before LightRAG
+    ingestion was wired into vault_sync.  Also marks ``graph_indexed=True``
+    on the note row so the UI can reflect indexing status.
+    """
+    note = await _get_note_or_404(note_id, session, owner_ids)
+
+    if not graph_rag or not _LIGHTRAG_AVAILABLE_CHECK():
+        # LightRAG library not installed — return graceful failure
+        return IngestNoteResponse(
+            note_id=note_id,
+            title=note.title,
+            graph_indexed=False,
+            message="LightRAG is not available (library not installed or Ollama not running).",
+        )
+
+    effective_uid: int = note.owner_id if note.owner_id is not None else 0
+    try:
+        await graph_rag.ingest_note(
+            title=note.title,
+            body=note.body,
+            user_id=effective_uid,
+        )
+        # Stamp graph_indexed flag
+        await session.execute(
+            update(Note).where(Note.id == note_id).values(graph_indexed=True)
+        )
+        await session.commit()
+        return IngestNoteResponse(
+            note_id=note_id,
+            title=note.title,
+            graph_indexed=True,
+            message=f"Note '{note.title}' ingested into LightRAG (user={effective_uid}).",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("ingest_note endpoint error for %s: %s", note_id, exc)
+        raise HTTPException(status_code=500, detail=f"LightRAG ingest failed: {exc}") from exc
+
+
+def _LIGHTRAG_AVAILABLE_CHECK() -> bool:
+    """Runtime check for LightRAG availability without importing at module level."""
+    try:
+        import lightrag  # noqa: F401
+        return True
+    except ImportError:
+        return False
 
 
 # ---------------------------------------------------------------------------

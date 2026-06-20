@@ -118,6 +118,9 @@ export const api = {
 
   suggestLinks: (id: string) => request('POST', `/ai/suggest-links/${id}`),
 
+  /** Trigger on-demand LightRAG ingestion of a single note (backfill). */
+  ingestNote: (id: string) => request('POST', `/ai/ingest-note/${id}`),
+
   // --- AI Providers ---
   getProviders: () => request('GET', '/ai/providers'),
 

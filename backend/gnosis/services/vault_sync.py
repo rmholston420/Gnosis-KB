@@ -2,8 +2,8 @@
 
 Watches ``GNOSIS_VAULT_ROOT/`` for .md file changes using watchdog.
 On create/modify: parse frontmatter + body, upsert to DB, upsert to Qdrant
-vector store.  On delete: mark as ``is_deleted=True`` in DB (never hard-delete)
-and remove from Qdrant.
+vector store, then ingest into LightRAG knowledge graph.  On delete: mark as
+``is_deleted=True`` in DB (never hard-delete) and remove from Qdrant.
 Maintains bidirectional link table from parsed [[wikilinks]].
 
 Namespace contract
@@ -101,7 +101,7 @@ class VaultEventHandler(FileSystemEventHandler):
             )
 
     async def _sync_note(self, path: Path) -> None:
-        """Parse a .md file, upsert to DB, then upsert to Qdrant vector store."""
+        """Parse a .md file, upsert to DB, vector-index it, then ingest into LightRAG."""
         try:
             data = parse_note_file(path)
         except Exception as e:
@@ -158,6 +158,7 @@ class VaultEventHandler(FileSystemEventHandler):
                             "source_url": data["source_url"],
                             "is_deleted": False,
                             "vector_indexed": False,
+                            "graph_indexed": False,
                         },
                     )
                 )
@@ -203,6 +204,30 @@ class VaultEventHandler(FileSystemEventHandler):
             logger.debug("Vector-indexed note %s", data["id"])
         except Exception as e:
             logger.warning("Vector indexing failed for note %s: %s", data["id"], e)
+
+        # --- LightRAG knowledge graph ingest ---
+        # Runs after vector indexing; owner_id may be None for legacy notes
+        # (sentinel 0 is used so the global LightRAG instance receives them).
+        try:
+            from gnosis.services.graph_rag import graph_rag  # local import avoids circular dep at module init
+
+            effective_uid: int = owner_id if owner_id is not None else 0
+            await graph_rag.ingest_note(
+                title=data["title"],
+                body=data["body"],
+                user_id=effective_uid,
+            )
+            # Stamp graph_indexed=True
+            async with AsyncSessionLocal() as db:
+                await db.execute(
+                    update(Note)
+                    .where(Note.id == data["id"])
+                    .values(graph_indexed=True)
+                )
+                await db.commit()
+            logger.debug("Graph-indexed note %s (user=%s)", data["id"], effective_uid)
+        except Exception as e:
+            logger.warning("LightRAG ingest failed for note %s: %s", data["id"], e)
 
     async def _soft_delete_note(self, vault_path_str: str) -> None:
         """Mark a note as deleted in the DB and remove from Qdrant."""
