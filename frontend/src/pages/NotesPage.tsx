@@ -3,7 +3,7 @@ import { Plus, Folder } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import NoteEditor from '../components/NoteEditor';
 import api from '../services/api';
-import type { Note } from '../types';
+import type { Note, NoteListResponse } from '../types';
 
 export default function NotesPage() {
   const { activeFolder, activeNoteId, setActiveNoteId } = useAppStore();
@@ -12,9 +12,15 @@ export default function NotesPage() {
 
   useEffect(() => {
     setLoading(true);
+    const params: Record<string, string | number> = { page_size: 200 };
+    if (activeFolder) params.folder = activeFolder;
     api
-      .getNotes(activeFolder ?? undefined)
-      .then((data) => setNotes(data as Note[]))
+      .listNotes(params)
+      .then((data) => {
+        const resp = data as NoteListResponse;
+        // listNotes returns { items, total, ... } — extract items
+        setNotes(resp.items as unknown as Note[]);
+      })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [activeFolder]);
@@ -25,11 +31,18 @@ export default function NotesPage() {
     const folder = activeFolder ?? '00-inbox';
     const created = (await api.createNote({
       title: 'Untitled',
-      content: '',
+      body: '',
       folder,
     })) as Note;
     setNotes((prev) => [created, ...prev]);
     setActiveNoteId(created.id);
+  }
+
+  // onSave signature matches NoteEditor: (body: string, title?: string) => Promise<void>
+  async function handleSave(body: string, title?: string) {
+    if (!activeNoteId) return;
+    const updated = (await api.updateNote(activeNoteId, { body, title })) as Note;
+    setNotes((prev) => prev.map((n) => (n.id === updated.id ? updated : n)));
   }
 
   return (
@@ -75,7 +88,7 @@ export default function NotesPage() {
               >
                 <p className="text-sm font-medium truncate">{note.title}</p>
                 <p className="text-xs text-text-muted truncate mt-0.5">
-                  {note.folder ?? '—'}
+                  {note.folder ?? '\u2014'}
                 </p>
               </button>
             ))
@@ -86,7 +99,7 @@ export default function NotesPage() {
       {/* Editor */}
       <div className="flex-1 overflow-hidden">
         {activeNote ? (
-          <NoteEditor note={activeNote} onSave={(updated) => setNotes((prev) => prev.map((n) => (n.id === updated.id ? updated : n)))} />
+          <NoteEditor note={activeNote} onSave={handleSave} />
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-text-muted gap-3">
             <BookOpenIcon />

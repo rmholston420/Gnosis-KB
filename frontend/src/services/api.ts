@@ -118,6 +118,11 @@ export const api = {
 
   suggestLinks: (id: string) => request('POST', `/ai/suggest-links/${id}`),
 
+  // --- AI Providers ---
+  getProviders: () => request('GET', '/ai/providers'),
+
+  setModel: (model: string) => request('POST', '/ai/providers/model', { model }),
+
   // --- Ingest ---
   // FormData requests can't use Content-Type: application/json, so they
   // build headers manually via buildCommonHeaders() (no Content-Type override).
