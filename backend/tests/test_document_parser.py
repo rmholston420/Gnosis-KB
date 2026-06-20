@@ -145,7 +145,7 @@ def test_parse_docx_extracts_paragraphs():
 
     with patch.dict(sys.modules, {"docx": fake_docx_module}):
         from gnosis.services import document_parser as dp
-            result = dp.parse_docx(Path("/vault/essay.docx"))
+        result = dp.parse_docx(Path("/vault/essay.docx"))
 
     assert result.raw_format == "docx"
     assert "Introduction" in result.text
