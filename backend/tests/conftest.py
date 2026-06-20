@@ -37,6 +37,15 @@ Isolation
 test_engine is function-scoped: each test gets a brand-new in-memory SQLite
 database with tables freshly created and dropped.
 
+StaticPool — why it is required
+--------------------------------
+sqlite+aiosqlite:///:memory: creates a per-connection in-memory database.
+SQLAlchemy's default pool opens multiple connections, so a second checkout
+(e.g. the selectinload() subquery that fires after commit()) lands on a
+fresh connection that has no schema and no data.  StaticPool forces the
+entire async engine to reuse one connection for the lifetime of the test,
+so every query — including selectinload subqueries — sees the same data.
+
 _sync_app vault path cache
 --------------------------
 vault_sync._VAULT_PATH is a module-level cache set on first call to
@@ -51,6 +60,7 @@ from __future__ import annotations
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from sqlite3 import connect as sqlite3_connect
 from typing import AsyncGenerator
 from unittest.mock import AsyncMock, patch
 
@@ -58,8 +68,9 @@ import pytest
 import pytest_asyncio
 from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 from starlette.testclient import TestClient
 
 from gnosis.database import Base, get_db
@@ -69,7 +80,14 @@ TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 
 
 # ---------------------------------------------------------------------------
-# Async engine — function-scoped
+# Async engine — function-scoped + StaticPool
+#
+# StaticPool is mandatory for sqlite:///:memory: tests.
+# Without it the async connection pool can open a second physical connection
+# for selectinload() sub-SELECTs after commit(), and that second connection
+# sees a completely empty in-memory DB (each SQLite :memory: DB is private
+# to its connection).  StaticPool forces every checkout to reuse the same
+# single connection, so all queries within a test share the same data.
 # ---------------------------------------------------------------------------
 
 
@@ -79,6 +97,7 @@ async def test_engine():
         TEST_DB_URL,
         echo=False,
         connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
     )
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -247,6 +266,10 @@ async def unauthenticated_client(test_engine, vault_dir) -> AsyncGenerator[Async
 # test_engine (async fixture) and must NOT call asyncio.run() — both are
 # incompatible with pytest-asyncio's event-loop ownership.
 #
+# StaticPool is used here for the same reason as test_engine: without it
+# the async engine used by the ASGI app can open a second connection for
+# sub-queries that sees an empty in-memory DB.
+#
 # _VAULT_PATH reset:
 #   vault_sync._VAULT_PATH is a module-level cache. We reset it to None
 #   before patching settings.vault_path so _get_vault_path() re-reads the
@@ -267,13 +290,19 @@ def _sync_app():
         ]:
             (vault / folder).mkdir()
 
-        sync_engine = create_engine("sqlite:///:memory:", echo=False)
+        sync_engine = create_engine(
+            "sqlite:///:memory:",
+            echo=False,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
         Base.metadata.create_all(sync_engine)
 
         async_engine = create_async_engine(
             TEST_DB_URL,
             echo=False,
             connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
         )
 
         _vs._VAULT_PATH = None

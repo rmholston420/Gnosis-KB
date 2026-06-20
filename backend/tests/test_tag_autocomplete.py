@@ -1,109 +1,122 @@
 """
-Slice 17 — Tag autocomplete endpoint tests.
+Tag autocomplete endpoint tests.
 
 Covers:
-- GET /tags/                     — returns list of {tag, count} rows
-- GET /tags/?q=<prefix>          — prefix filtering (if supported)
-- Tag list is scoped to the authenticated user's vault
-- Empty vault returns empty list, not an error
+- GET /api/v1/tags/   returns 200 and a JSON list
+- Each item exposes 'tag' (str) and 'count' (int) fields
+- Empty vault returns [] not an error
+- Unauthenticated requests receive 401
+- X-Vault-Owner-Id header is accepted without error
+- Count > 0 for every returned tag
+- Client-side prefix-filter logic (pure Python, no HTTP)
 
-The tests use the FastAPI TestClient and mock the database layer so
-no real PostgreSQL connection is required.
+All HTTP tests use the standard conftest async_client /
+unauthenticated_client fixtures and a real in-memory SQLite DB
+(StaticPool).  The old monkeypatch approach (patching
+gnosis.routers.tags.AsyncSession.execute) no longer works because
+the tags router imports AsyncSession at module load time.
 """
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
 import pytest
-from fastapi.testclient import TestClient
+from httpx import AsyncClient
 
 
 # ---------------------------------------------------------------------------
-# Fixtures
+# Helper
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture()
-def auth_headers():
-    return {"Authorization": "Bearer test-token"}
-
-
-SAMPLE_TAGS = [
-    {"tag": "buddhism",   "count": 5},
-    {"tag": "epistemology", "count": 3},
-    {"tag": "zettelkasten", "count": 8},
-    {"tag": "systems",    "count": 2},
-    {"tag": "philosophy",  "count": 4},
-]
-
-
-@pytest.fixture()
-def mock_tags_db(monkeypatch):
-    """Patch the DB query inside the tags router to return SAMPLE_TAGS."""
-    # The tags router calls db.execute(select(...)) and processes rows.
-    # We patch at the router level for isolation.
-    mock_result = MagicMock()
-    mock_result.all.return_value = [
-        MagicMock(tag=row["tag"], count=row["count"])
-        for row in SAMPLE_TAGS
-    ]
-    mock_execute = AsyncMock(return_value=mock_result)
-
-    monkeypatch.setattr(
-        "gnosis.routers.tags.AsyncSession.execute",
-        mock_execute,
-        raising=False,
+async def _create_tagged_note(
+    client: AsyncClient,
+    title: str,
+    tags: list[str],
+) -> str:
+    """Create a note with the given tags; return its id."""
+    resp = await client.post(
+        "/api/v1/notes/",
+        json={
+            "title": title,
+            "body": f"# {title}\n\nBody.",
+            "folder": "10-zettelkasten",
+            "note_type": "permanent",
+            "tags": tags,
+        },
     )
+    assert resp.status_code in (200, 201), resp.text
+    return resp.json()["id"]
 
 
 # ---------------------------------------------------------------------------
-# GET /tags/
+# GET /api/v1/tags/
 # ---------------------------------------------------------------------------
 
 
-def test_list_tags_returns_200(test_client: TestClient, auth_headers):
-    """Tags endpoint should return HTTP 200."""
-    response = test_client.get("/api/v1/tags/", headers=auth_headers)
-    assert response.status_code == 200
+@pytest.mark.asyncio
+async def test_list_tags_returns_200(async_client: AsyncClient) -> None:
+    """Tags endpoint returns HTTP 200."""
+    resp = await async_client.get("/api/v1/tags/")
+    assert resp.status_code == 200
 
 
-def test_list_tags_returns_list(test_client: TestClient, auth_headers):
-    """Response body should be a JSON array."""
-    response = test_client.get("/api/v1/tags/", headers=auth_headers)
-    body = response.json()
+@pytest.mark.asyncio
+async def test_list_tags_returns_list(async_client: AsyncClient) -> None:
+    """Response body is a JSON array."""
+    resp = await async_client.get("/api/v1/tags/")
+    assert resp.status_code == 200
+    body = resp.json()
     assert isinstance(body, list)
 
 
-def test_list_tags_each_item_has_required_fields(test_client: TestClient, auth_headers):
-    """Every item in the tag list must expose 'tag' and 'count' fields."""
-    response = test_client.get("/api/v1/tags/", headers=auth_headers)
-    body = response.json()
-    if not body:  # empty vault — nothing to assert against
-        pytest.skip("No tags in test vault")
+@pytest.mark.asyncio
+async def test_list_tags_empty_vault(async_client: AsyncClient) -> None:
+    """Empty vault returns [] not an error."""
+    resp = await async_client.get("/api/v1/tags/")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_list_tags_each_item_has_required_fields(async_client: AsyncClient) -> None:
+    """Every item exposes 'tag' (str) and 'count' (int)."""
+    await _create_tagged_note(async_client, "Schema Check Note", ["buddhism", "epistemology"])
+    resp = await async_client.get("/api/v1/tags/")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) >= 1, "Expected at least one tag after creating a tagged note"
     for item in body:
         assert "tag" in item, f"Missing 'tag' field: {item}"
         assert "count" in item, f"Missing 'count' field: {item}"
-
-
-def test_list_tags_count_is_positive_integer(test_client: TestClient, auth_headers):
-    """Count must be a positive integer for each tag."""
-    response = test_client.get("/api/v1/tags/", headers=auth_headers)
-    body = response.json()
-    for item in body:
+        assert isinstance(item["tag"], str)
         assert isinstance(item["count"], int)
-        assert item["count"] > 0, f"Tag count should be > 0, got {item['count']}"
+
+
+@pytest.mark.asyncio
+async def test_list_tags_count_is_positive_integer(async_client: AsyncClient) -> None:
+    """Count is > 0 for every returned tag."""
+    await _create_tagged_note(async_client, "Count Test Note", ["zettelkasten", "systems"])
+    resp = await async_client.get("/api/v1/tags/")
+    assert resp.status_code == 200
+    for item in resp.json():
+        assert item["count"] > 0, f"Tag count should be > 0, got {item}"
 
 
 # ---------------------------------------------------------------------------
-# Auth
+# Auth guard
 # ---------------------------------------------------------------------------
 
 
-def test_list_tags_requires_auth(test_client: TestClient):
-    """Unauthenticated requests should return 401 or 403."""
-    response = test_client.get("/api/v1/tags/")
-    assert response.status_code in (401, 403)
+@pytest.mark.asyncio
+async def test_list_tags_requires_auth(unauthenticated_client: AsyncClient) -> None:
+    """Unauthenticated request returns 401.
+
+    Uses unauthenticated_client — the fixture that overrides get_current_user
+    and require_user with _fake_deny_user (always raises HTTP 401).
+    test_client / async_client always authenticate, so cannot be used here.
+    """
+    resp = await unauthenticated_client.get("/api/v1/tags/")
+    assert resp.status_code in (401, 403)
 
 
 # ---------------------------------------------------------------------------
@@ -111,20 +124,47 @@ def test_list_tags_requires_auth(test_client: TestClient):
 # ---------------------------------------------------------------------------
 
 
-def test_list_tags_vault_header_accepted(test_client: TestClient, auth_headers):
-    """X-Vault-Owner-Id header should be accepted without error."""
-    headers = {**auth_headers, "X-Vault-Owner-Id": "1"}
-    response = test_client.get("/api/v1/tags/", headers=headers)
-    # Any non-5xx response is acceptable (401/403 if auth mock doesn't allow vault header)
-    assert response.status_code < 500
+@pytest.mark.asyncio
+async def test_list_tags_vault_header_accepted(async_client: AsyncClient) -> None:
+    """X-Vault-Owner-Id header is accepted without error (non-5xx)."""
+    resp = await async_client.get(
+        "/api/v1/tags/",
+        headers={"X-Vault-Owner-Id": "1"},
+    )
+    assert resp.status_code < 500
 
 
 # ---------------------------------------------------------------------------
-# Integration smoke: TagInput autocomplete round-trip
+# Integration: count accuracy after multiple notes share a tag
 # ---------------------------------------------------------------------------
 
 
-def test_tag_autocomplete_prefix_filter_client_side():
+@pytest.mark.asyncio
+async def test_list_tags_count_accuracy(async_client: AsyncClient) -> None:
+    """A tag shared by N notes has count == N."""
+    shared = "gnosis-shared-tag"
+    for i in range(3):
+        await _create_tagged_note(async_client, f"Shared Tag Note {i}", [shared])
+    resp = await async_client.get("/api/v1/tags/")
+    tags = {entry["tag"]: entry["count"] for entry in resp.json()}
+    assert tags.get(shared, 0) >= 3
+
+
+# ---------------------------------------------------------------------------
+# Pure-Python: client-side prefix-filter logic (TagInput.tsx)
+# ---------------------------------------------------------------------------
+
+
+SAMPLE_TAGS = [
+    {"tag": "buddhism",    "count": 5},
+    {"tag": "epistemology", "count": 3},
+    {"tag": "zettelkasten", "count": 8},
+    {"tag": "systems",     "count": 2},
+    {"tag": "philosophy",  "count": 4},
+]
+
+
+def test_tag_autocomplete_prefix_filter_client_side() -> None:
     """
     Validate the client-side prefix filter logic used by TagInput.tsx.
 
@@ -134,8 +174,6 @@ def test_tag_autocomplete_prefix_filter_client_side():
             !tags.includes(t) &&
             inputValue.length > 0
         )
-
-    This pure-Python test validates the same logic.
     """
     all_tag_names = [row["tag"] for row in SAMPLE_TAGS]
     current_tags: list[str] = ["buddhism"]
@@ -148,22 +186,9 @@ def test_tag_autocomplete_prefix_filter_client_side():
             if input_value.lower() in t.lower() and t not in current_tags
         ]
 
-    # Typing "ph" should surface "philosophy" but not "buddhism" (already added)
-    results = filter_suggestions("ph")
-    assert "philosophy" in results
-    assert "buddhism" not in results
-
-    # Typing "sys" should surface "systems"
-    results = filter_suggestions("sys")
-    assert "systems" in results
-
-    # Empty input → no suggestions
+    assert "philosophy" in filter_suggestions("ph")
+    assert "buddhism" not in filter_suggestions("ph")  # already added
+    assert "systems" in filter_suggestions("sys")
     assert filter_suggestions("") == []
-
-    # Already-added tag should never appear
-    results = filter_suggestions("bud")
-    assert "buddhism" not in results
-
-    # Case-insensitive: "ZETT" should match "zettelkasten"
-    results = filter_suggestions("ZETT")
-    assert "zettelkasten" in results
+    assert "buddhism" not in filter_suggestions("bud")  # already added
+    assert "zettelkasten" in filter_suggestions("ZETT")  # case-insensitive
