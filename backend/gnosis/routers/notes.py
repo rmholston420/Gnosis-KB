@@ -45,10 +45,9 @@ router = APIRouter(prefix="/notes", tags=["notes"])
 async def _upsert_tags(note_id: str, tag_names: list[str], db: AsyncSession) -> None:
     """Insert note<->tag associations directly into the note_tags table.
 
-    This avoids touching the Note.tags ORM collection, which is None on a
-    brand-new Note instance (lazy='selectin' does not initialise the list
-    until the object is loaded from the DB).  vault_sync.py uses the same
-    pattern.
+    This avoids touching the Note.tags ORM collection, which is uninitialised
+    on a brand-new Note instance until the object is loaded from the DB.
+    vault_sync.py uses the same pattern.
     """
     for tag_name in tag_names:
         tag_result = await db.execute(select(Tag).where(Tag.name == tag_name))
@@ -250,7 +249,7 @@ async def get_note_by_title(
 
 
 # ---------------------------------------------------------------------------
-# Wikilink title search  (GET /notes/by-title) — BEFORE /{note_id}
+# Wikilink title search  (GET /notes/wikilink) — BEFORE /{note_id}
 # ---------------------------------------------------------------------------
 
 
@@ -359,13 +358,16 @@ async def create_note(
     db.add(note)
     await db.flush()  # INSERT note row so FK in note_tags is valid
 
-    # Insert tags via association table — do NOT use note.tags.append().
-    # Note.tags is lazy='selectin' and is None on a new instance until the
-    # object is loaded from the DB. Direct insert avoids that entirely.
     if data.tags:
         await _upsert_tags(note_id, data.tags, db)
 
     await db.commit()
+    # Expire the note instance so the identity map does not serve stale
+    # attribute state (tags=[]) to the selectinload in _get_note_or_404.
+    # expire_on_commit=False is set in conftest for test isolation; without
+    # this explicit expire the re-query would collide with the cached empty
+    # collection and return tags=[].
+    db.expire(note)
     note = await _get_note_or_404(note_id, db, owner_ids)
     return _note_to_read(note)
 
@@ -478,6 +480,8 @@ async def get_or_create_daily_note(
     await db.flush()  # INSERT note row before FK
     # Daily notes have no tags — no _upsert_tags call needed.
     await db.commit()
+    # Expire so _get_note_or_404's selectinload fires a real SELECT.
+    db.expire(note)
     note = await _get_note_or_404(note_id, db, owner_ids)
     return _note_to_read(note)
 
@@ -544,6 +548,8 @@ async def update_note(
 
     await db.flush()
     await db.commit()
+    # Expire so the re-fetch gets fresh tag state, not the cached collection.
+    db.expire(note)
     note = await _get_note_or_404(note_id, db, owner_ids)
     return _note_to_read(note)
 
