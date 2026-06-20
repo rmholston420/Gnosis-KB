@@ -281,12 +281,13 @@ async def execute_query(
     filters = []
     for cond in parsed.conditions:
         if cond["type"] == "tag":
-            tag_sub = select(Tag.id).where(Tag.name == cond["tag"])
+            # Tag.name is the PK — there is no Tag.id column.
+            # NoteTag.tag_id references tags.name directly.
             from gnosis.models.tag import NoteTag
             filters.append(
                 Note.id.in_(
-                    select(NoteTag.note_id).where(
-                        NoteTag.tag_id.in_(tag_sub)
+                    select(NoteTag.c.note_id).where(
+                        NoteTag.c.tag_id == cond["tag"]
                     )
                 )
             )
