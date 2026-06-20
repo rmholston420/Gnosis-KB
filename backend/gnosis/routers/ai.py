@@ -395,11 +395,12 @@ async def critique_note(
         f"Note title: {note.title}\n\nBody:\n{note.body[:4000]}\n\n"
         "Critique this note from a Zettelkasten perspective. Evaluate:\n"
         "1. Atomicity: Does it contain exactly one idea?\n"
-        "2. Autonomy: Can it stand alone without external context?\n"
-        "3. Connections: Does it suggest links to other concepts?\n"
-        "4. Clarity: Is the core insight expressed clearly?\n\n"
-        "Provide a score (1-10) for each dimension and a brief suggestion for improvement. "
-        "Format as JSON: {\"atomicity\": {\"score\": N, \"suggestion\": \"...\"},...}"
+        "2. Connectivity: Does it have sufficient outgoing links?\n"
+        "3. Self-containedness: Can it be understood without external context?\n"
+        "4. Insight density: Does it capture why this matters?\n\n"
+        "Return JSON with exactly these keys: "
+        "{\"atomicity\": \"...\", \"connectivity\": \"...\", "
+        "\"self_containedness\": \"...\", \"insight_density\": \"...\", \"overall\": \"...\"}"
     )
     raw = await llm_provider.complete(prompt, temperature=0.3)
     critique_data: dict = {}
@@ -411,11 +412,11 @@ async def critique_note(
             pass
     return CritiqueResponse(
         note_id=note_id,
-        critique=critique_data or {"raw": raw},
-        overall_score=(
-            sum(v.get("score", 5) for v in critique_data.values() if isinstance(v, dict)) //
-            max(len(critique_data), 1)
-        ) if critique_data else 5,
+        atomicity=str(critique_data.get("atomicity", raw)),
+        connectivity=str(critique_data.get("connectivity", "")),
+        self_containedness=str(critique_data.get("self_containedness", "")),
+        insight_density=str(critique_data.get("insight_density", "")),
+        overall=str(critique_data.get("overall", "")),
     )
 
 
@@ -446,7 +447,7 @@ async def orphan_audit(
     rows = result.scalars().all()
 
     if not rows or not llm_provider.is_available:
-        return OrphanAuditResponse(items=[], total=len(rows))
+        return OrphanAuditResponse(orphan_count=len(rows), items=[])
 
     titles_body = "\n".join(
         f"- [{r.title}]: {r.body[:200]}..." for r in rows
@@ -454,11 +455,11 @@ async def orphan_audit(
     prompt = (
         f"These {len(rows)} notes have no incoming or outgoing wikilinks (orphans):\n\n"
         f"{titles_body}\n\n"
-        "For each orphan note, suggest:\n"
-        "1. A reason it might be isolated (missing context, too broad, duplicate?).\n"
-        "2. A concrete action (link to X, split into Y and Z, archive).\n"
-        "Return as a JSON array: [{\"title\": \"...\", \"reason\": \"...\", \"action\": \"...\"}]\n"
-        "Be concise — one sentence per field."
+        "For each orphan note, suggest 2-3 other notes it could link to or "
+        "topics it might relate to.\n"
+        "Return as a JSON array: "
+        "[{\"note_id\": \"id\", \"title\": \"...\", \"suggestions\": [\"...\", \"...\"]}]\n"
+        "Be concise."
     )
     raw = await llm_provider.complete(prompt, temperature=0.4)
     items: list[OrphanAuditItem] = []
@@ -468,19 +469,18 @@ async def orphan_audit(
             parsed_items = json.loads(json_match.group())
             items = [
                 OrphanAuditItem(
-                    note_id=next(
+                    note_id=item.get("note_id") or next(
                         (r.id for r in rows if r.title == item.get("title")), ""
                     ),
                     title=item.get("title", ""),
-                    reason=item.get("reason", ""),
-                    action=item.get("action", ""),
+                    suggestions=item.get("suggestions", []),
                 )
                 for item in parsed_items
                 if isinstance(item, dict)
             ]
         except json.JSONDecodeError:
             pass
-    return OrphanAuditResponse(items=items, total=len(rows))
+    return OrphanAuditResponse(orphan_count=len(rows), items=items)
 
 
 # ---------------------------------------------------------------------------
@@ -507,7 +507,10 @@ async def daily_review(
     notes = result.scalars().all()
     if not notes or not llm_provider.is_available:
         return DailyReviewResponse(
-            date=today_str, summary="No inbox notes today.", suggestions=[], note_count=len(notes)
+            date=today_str,
+            summary="No inbox notes today.",
+            inbox_note_count=len(notes),
+            action_items=[],
         )
     notes_text = "\n\n".join(
         f"### {n.title}\n{n.body[:500]}" for n in notes
@@ -516,25 +519,25 @@ async def daily_review(
         f"Today's inbox notes ({today_str}):\n\n{notes_text}\n\n"
         "Provide:\n"
         "1. A brief synthesis of today's captures (2-3 sentences).\n"
-        "2. 3-5 actionable suggestions (process, link, promote to project, etc).\n"
-        "Format: {\"summary\": \"...\", \"suggestions\": [\"...\", ...]}"
+        "2. 3-5 actionable next steps (process, link, promote to project, etc).\n"
+        "Format: {\"summary\": \"...\", \"action_items\": [\"...\", ...]}"
     )
     raw = await llm_provider.complete(prompt, temperature=0.3)
     summary_text = raw
-    suggestions: list[str] = []
+    action_items: list[str] = []
     json_match = re.search(r"\{.*\}", raw, re.DOTALL)
     if json_match:
         try:
             parsed = json.loads(json_match.group())
             summary_text = parsed.get("summary", raw)
-            suggestions = parsed.get("suggestions", [])
+            action_items = parsed.get("action_items", [])
         except json.JSONDecodeError:
             pass
     return DailyReviewResponse(
         date=today_str,
         summary=summary_text,
-        suggestions=suggestions,
-        note_count=len(notes),
+        inbox_note_count=len(notes),
+        action_items=action_items,
     )
 
 
@@ -590,16 +593,10 @@ async def ingest_note(
     current_user: User = Depends(get_current_user),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> IngestNoteResponse:
-    """Ingest a single vault note into the LightRAG knowledge graph.
-
-    Useful for backfilling existing notes that were created before LightRAG
-    ingestion was wired into vault_sync.  Also marks ``graph_indexed=True``
-    on the note row so the UI can reflect indexing status.
-    """
+    """Ingest a single vault note into the LightRAG knowledge graph."""
     note = await _get_note_or_404(note_id, session, owner_ids)
 
     if not graph_rag or not _LIGHTRAG_AVAILABLE_CHECK():
-        # LightRAG library not installed — return graceful failure
         return IngestNoteResponse(
             note_id=note_id,
             title=note.title,
@@ -614,7 +611,6 @@ async def ingest_note(
             body=note.body,
             user_id=effective_uid,
         )
-        # Stamp graph_indexed flag
         await session.execute(
             update(Note).where(Note.id == note_id).values(graph_indexed=True)
         )
@@ -680,7 +676,9 @@ async def generate_moc(
         f"### {n.title}\nType: {n.note_type} | Status: {n.status}\n{n.body[:400]}"
         for n in notes
     )
-    moc_title = req.title or f"MOC — {topic.title()}"
+    moc_title = req.title if hasattr(req, "title") and req.title else f"MOC — {topic.title()}"
+    slug = re.sub(r"[^a-z0-9]+", "-", moc_title.lower()).strip("-")
+    vault_path = f"80-meta/{slug}.md"
     prompt = (
         f"Create a Map of Content (MOC) for the topic: **{topic}**\n\n"
         f"Available notes (excerpts):\n{notes_context}\n\n"
@@ -713,8 +711,9 @@ async def generate_moc(
 
     moc_body = _build_moc_markdown(topic, moc_title, sections)
     return MocResponse(
-        title=moc_title,
         topic=topic,
+        moc_title=moc_title,
+        vault_path=vault_path,
         sections=sections,
         markdown=moc_body,
         note_count=len(notes),

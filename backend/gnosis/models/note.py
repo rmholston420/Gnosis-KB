@@ -76,6 +76,7 @@ class Note(Base):
         secondary="note_tags",
         back_populates="notes",
         lazy="selectin",
+        default_factory=list,
     )
     outgoing_links: Mapped[list] = relationship(
         "Link",

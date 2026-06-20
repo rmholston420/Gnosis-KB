@@ -49,7 +49,8 @@ async def _seed_legacy_note(db: AsyncSession) -> Note:
     note = Note(
         id="legacy-note-001",
         title="Legacy Note",
-        content="This note has no owner.",
+        slug="legacy-note-001",
+        body="This note has no owner.",
         owner_id=0,
         vault_path="10-zettelkasten/legacy-note-001.md",
         note_type="permanent",
@@ -159,9 +160,6 @@ async def test_reindex_forbidden_for_non_admin(
             settings = config.get_settings()
             settings.vault_path = str(vault)
 
-            # Reuse the same engine from the calling fixture's test_db
-            # by importing the engine the test_db session was built against.
-            # Simpler: just hit the endpoint with override — we only need 403.
             app2 = create_app()
             app2.dependency_overrides[require_user] = _non_admin
 

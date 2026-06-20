@@ -2,6 +2,7 @@
 
 Provides:
   - async_client / client  : HTTPX async test clients (same instance, two names)
+  - test_client            : synchronous Starlette TestClient for sync test files
   - auth_headers           : dummy Authorization header for endpoints that need it
   - test_db                : isolated async session for direct DB operations
   - vault_dir              : temporary directory acting as the vault
@@ -46,6 +47,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from starlette.testclient import TestClient
 
 from gnosis.database import Base, get_db
 from gnosis.main import create_app
@@ -232,6 +234,63 @@ async def client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, None]:
     """
     async for c in _make_client(test_engine, vault_dir):
         yield c
+
+
+# ---------------------------------------------------------------------------
+# Synchronous TestClient — used by test_tag_autocomplete, test_vault_sync_endpoint
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _sync_app(test_engine, vault_dir):
+    """Build a fully-patched FastAPI app instance for sync TestClient use."""
+    with (
+        patch(
+            "gnosis.services.vector_store.ensure_collection",
+            return_value=None,
+        ),
+        patch(
+            "gnosis.services.vault_sync.start_vault_watcher",
+            new=_mock_start_vault_watcher,
+        ),
+        patch(
+            "gnosis.services.graph_rag.graph_rag.initialize",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
+        from gnosis import config
+        from gnosis.core.auth import get_current_user, require_user
+
+        settings = config.get_settings()
+        settings.vault_path = str(vault_dir)
+
+        app = create_app()
+
+        session_factory = async_sessionmaker(
+            bind=test_engine, expire_on_commit=False
+        )
+
+        async def override_get_db():
+            async with session_factory() as session:
+                yield session
+
+        app.dependency_overrides[get_db] = override_get_db
+        app.dependency_overrides[require_user] = _fake_require_user
+        app.dependency_overrides[get_current_user] = _fake_require_user
+
+        yield app
+        app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def test_client(_sync_app) -> TestClient:
+    """Synchronous Starlette TestClient.
+
+    Used by test_tag_autocomplete.py and test_vault_sync_endpoint.py which
+    declare `test_client: TestClient` (not async_client) in their signatures.
+    """
+    with TestClient(_sync_app, raise_server_exceptions=False) as tc:
+        yield tc
 
 
 # ---------------------------------------------------------------------------
