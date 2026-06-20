@@ -362,12 +362,12 @@ async def create_note(
         await _upsert_tags(note_id, data.tags, db)
 
     await db.commit()
-    # Expire the note instance so the identity map does not serve stale
-    # attribute state (tags=[]) to the selectinload in _get_note_or_404.
-    # expire_on_commit=False is set in conftest for test isolation; without
-    # this explicit expire the re-query would collide with the cached empty
-    # collection and return tags=[].
-    db.expire(note)
+    # expunge removes the instance from the identity map entirely.
+    # db.expire() only marks attributes stale; AsyncSession still returns the
+    # cached object on a PK lookup without issuing a SELECT, so tags stay [].
+    # expunge forces _get_note_or_404's select() to hit the DB fresh and
+    # populate tags via selectinload from the committed rows.
+    db.expunge(note)
     note = await _get_note_or_404(note_id, db, owner_ids)
     return _note_to_read(note)
 
@@ -480,8 +480,7 @@ async def get_or_create_daily_note(
     await db.flush()  # INSERT note row before FK
     # Daily notes have no tags — no _upsert_tags call needed.
     await db.commit()
-    # Expire so _get_note_or_404's selectinload fires a real SELECT.
-    db.expire(note)
+    db.expunge(note)  # remove from identity map so re-fetch issues a real SELECT
     note = await _get_note_or_404(note_id, db, owner_ids)
     return _note_to_read(note)
 
@@ -548,8 +547,7 @@ async def update_note(
 
     await db.flush()
     await db.commit()
-    # Expire so the re-fetch gets fresh tag state, not the cached collection.
-    db.expire(note)
+    db.expunge(note)  # remove from identity map so re-fetch issues a real SELECT
     note = await _get_note_or_404(note_id, db, owner_ids)
     return _note_to_read(note)
 
