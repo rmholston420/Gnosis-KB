@@ -1,66 +1,70 @@
 """Coverage tests for gnosis/routers/search.py."""
 from __future__ import annotations
-
-from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime, timezone
-
+from unittest.mock import AsyncMock, patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
-from gnosis.core.auth import require_user
+from sqlalchemy.ext.asyncio import AsyncSession
+from gnosis.core.auth import get_current_user, get_vault_owner_ids
 from gnosis.database import get_db
-from gnosis.models.user import User
 from gnosis.routers.search import router
 
 
-def _make_app(db_mock: AsyncMock, user_id: int = 1) -> FastAPI:
+def _fake_fts():
+    return {"results": [{"note_id":"abc","title":"T","slug":"t","folder":"00-inbox",
+        "note_type":"note","status":"active","score":0.9,"highlight":"<mark>t</mark>","tags":[]}],
+        "elapsed_ms":1.0}
+
+
+def _make_app():
     app = FastAPI()
     app.include_router(router, prefix="/api/v1")
-    user = User(id=user_id, email="u@test.com", hashed_password="x")
-
-    async def _db():
-        yield db_mock
-
-    async def _user():
-        return user
-
-    app.dependency_overrides[get_db] = _db
-    app.dependency_overrides[require_user] = _user
+    db = AsyncMock(spec=AsyncSession)
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: None
+    app.dependency_overrides[get_vault_owner_ids] = lambda: {1}
     return app
 
 
-def _search_result(note_id="n1", title="T", score=0.9):
-    r = MagicMock()
-    r.note_id = note_id
-    r.title = title
-    r.score = score
-    r.snippet = "...snippet..."
-    return r
+def test_search_fulltext_mode_returns_200():
+    with patch("gnosis.routers.search.fulltext_search", new_callable=AsyncMock, return_value=_fake_fts()):
+        resp = TestClient(_make_app()).get("/api/v1/search/?q=test&mode=fulltext")
+    assert resp.status_code == 200
+    assert resp.json()["mode"] == "fulltext"
 
 
-def test_search_returns_results():
-    db = AsyncMock()
-    results = [_search_result()]
-    with patch("gnosis.routers.search.hybrid_search", new_callable=AsyncMock,
-               return_value=results):
-        client = TestClient(_make_app(db))
-        resp = client.get("/api/v1/search/", params={"q": "python"})
+def test_search_hybrid_mode_returns_200():
+    with patch("gnosis.routers.search.hybrid_search", return_value=_fake_fts()):
+        resp = TestClient(_make_app()).get("/api/v1/search/?q=test&mode=hybrid")
     assert resp.status_code == 200
 
 
-def test_search_empty_query_returns_empty():
-    db = AsyncMock()
-    with patch("gnosis.routers.search.hybrid_search", new_callable=AsyncMock,
-               return_value=[]):
-        client = TestClient(_make_app(db))
-        resp = client.get("/api/v1/search/", params={"q": ""})
+def test_search_hybrid_falls_back_to_fulltext():
+    with patch("gnosis.routers.search.hybrid_search", side_effect=RuntimeError("qdrant down")), \
+         patch("gnosis.routers.search.fulltext_search", new_callable=AsyncMock, return_value=_fake_fts()):
+        resp = TestClient(_make_app()).get("/api/v1/search/?q=test&mode=hybrid")
+    assert resp.status_code == 200
+    assert resp.json()["mode"] == "fulltext"
+
+
+def test_search_semantic_mode_returns_200():
+    with patch("gnosis.routers.search.hybrid_search", return_value=_fake_fts()):
+        resp = TestClient(_make_app()).get("/api/v1/search/?q=test&mode=semantic")
     assert resp.status_code == 200
 
 
-def test_search_with_limit():
-    db = AsyncMock()
-    with patch("gnosis.routers.search.hybrid_search", new_callable=AsyncMock,
-               return_value=[_search_result()] * 3):
-        client = TestClient(_make_app(db))
-        resp = client.get("/api/v1/search/", params={"q": "test", "limit": 3})
+def test_search_missing_q_returns_422():
+    resp = TestClient(_make_app()).get("/api/v1/search/")
+    assert resp.status_code == 422
+
+
+def test_suggest_returns_list():
+    with patch("gnosis.routers.search.suggest_completions", new_callable=AsyncMock, return_value=["A","B"]):
+        resp = TestClient(_make_app()).get("/api/v1/search/suggest?q=a")
     assert resp.status_code == 200
+    assert isinstance(resp.json(), list)
+
+
+def test_suggest_empty():
+    with patch("gnosis.routers.search.suggest_completions", new_callable=AsyncMock, return_value=[]):
+        resp = TestClient(_make_app()).get("/api/v1/search/suggest?q=xyz")
+    assert resp.json() == []
