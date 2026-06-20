@@ -3,42 +3,32 @@
  * ==============
  * Manages an in-memory queue of note creates/updates that were attempted
  * while the browser was offline.  On reconnect the queue is drained
- * sequentially via the real API, with toast feedback per item.
+ * sequentially via the real API, with real toast feedback per item.
  *
  * Usage
  * -----
  *   const { queueCreate, queueUpdate, queueLength, draining } = useOfflineSync();
  *
- *   // In your note save handler:
  *   if (!navigator.onLine) {
  *     queueCreate(noteData);
- *     toast.info('Saved offline — will sync when reconnected');
  *   } else {
  *     await api.createNote(noteData);
  *   }
- *
- * The hook attaches window 'online' listeners automatically; no manual
- * cleanup needed (the listener is removed on component unmount via useEffect).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import api from '../services/api';
+import { toast } from './useToast';
 
 interface QueueItem {
-  id: string;          // ephemeral UUID used only to identify the queue item
+  id: string;
   type: 'create' | 'update';
-  noteId?: string;     // required for 'update'
+  noteId?: string;
   payload: unknown;
 }
 
 function uuid() {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-// Simple in-memory toast shim — replace with your real toast library
-function toast(msg: string, variant: 'success' | 'error' | 'info' = 'info') {
-  // In a real app: import { toast } from 'react-hot-toast';
-  console.log(`[toast:${variant}] ${msg}`);
 }
 
 export function useOfflineSync() {
@@ -57,7 +47,6 @@ export function useOfflineSync() {
   }, []);
 
   const queueUpdate = useCallback((noteId: string, payload: unknown) => {
-    // Coalesce: if there's already a pending update for the same note, replace it
     const existing = queueRef.current.findIndex(
       (item) => item.type === 'update' && item.noteId === noteId
     );
@@ -75,7 +64,7 @@ export function useOfflineSync() {
     setDraining(true);
 
     const total = queueRef.current.length;
-    toast(`Syncing ${total} offline change${total > 1 ? 's' : ''}…`, 'info');
+    toast.info(`Syncing ${total} offline change${total > 1 ? 's' : ''}…`);
 
     let succeeded = 0;
     let failed = 0;
@@ -88,17 +77,14 @@ export function useOfflineSync() {
         } else if (item.type === 'update' && item.noteId) {
           await api.updateNote(item.noteId, item.payload);
         }
-        // Remove successfully synced item
         queueRef.current.shift();
         succeeded++;
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Unknown error';
-        toast(`Sync failed for “${(item.payload as { title?: string })?.title ?? item.id}”: ${msg}`, 'error');
-        // Move failed item to end so other items can still be tried
+        toast.error(`Sync failed for "${(item.payload as { title?: string })?.title ?? item.id}": ${msg}`);
         queueRef.current.shift();
         queueRef.current.push({ ...item, id: uuid() });
         failed++;
-        // Bail after a full cycle of failures to avoid infinite loop
         if (failed >= total) break;
       }
     }
@@ -108,18 +94,15 @@ export function useOfflineSync() {
     setDraining(false);
 
     if (succeeded > 0) {
-      toast(`\u2713 Synced ${succeeded} offline note${succeeded > 1 ? 's' : ''}`, 'success');
+      toast.success(`✓ Synced ${succeeded} offline note${succeeded > 1 ? 's' : ''}`);
     }
     if (failed > 0) {
-      toast(`${failed} item${failed > 1 ? 's' : ''} could not be synced and remain queued.`, 'error');
+      toast.error(`${failed} item${failed > 1 ? 's' : ''} could not be synced and remain queued.`, 8000);
     }
   }, []);
 
-  // Automatically drain on reconnect
   useEffect(() => {
-    const handleOnline = () => {
-      void drainQueue();
-    };
+    const handleOnline = () => { void drainQueue(); };
     window.addEventListener('online', handleOnline);
     return () => window.removeEventListener('online', handleOnline);
   }, [drainQueue]);

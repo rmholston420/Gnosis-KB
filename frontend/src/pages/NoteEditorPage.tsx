@@ -1,3 +1,32 @@
+/**
+ * NoteEditorPage
+ * ==============
+ * Wraps the NoteEditor for both new-note and edit-note flows.
+ *
+ * New-note flow:
+ *   1. On first render (no :id param) the NoteTemplateGallery modal opens.
+ *   2. User picks a template (or "blank") → gallery closes, editor opens
+ *      pre-populated with template body/type/folder.
+ *   3. WikilinkAutocomplete floats above the textarea whenever the user
+ *      types [[ and there is a non-empty query string after it.
+ *
+ * Edit-note flow:
+ *   - Existing note loaded via React Query; wikilink autocomplete works
+ *     the same way in the editing textarea.
+ *
+ * Wikilink autocomplete wiring
+ * ----------------------------
+ * NoteEditor already renders a <textarea> for the body.  This page attaches
+ * a ref to that textarea via the `textareaRef` prop (added to NoteEditor),
+ * uses `useWikilinkDetector` to parse the caret, and renders
+ * `WikilinkAutocomplete` as a portal-style overlay.
+ *
+ * If the underlying NoteEditor does not yet expose `textareaRef`, the
+ * autocomplete falls back to a container-level ref and positions itself
+ * relative to the editor wrapper instead.
+ */
+
+import React, { useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
@@ -5,6 +34,9 @@ import NoteEditor from '../components/NoteEditor';
 import { useAppStore } from '../store/useAppStore';
 import { Loader2, ArrowLeft } from 'lucide-react';
 import type { Note, NoteCreate } from '../types';
+import { WikilinkAutocomplete, useWikilinkDetector } from '../components/editor/WikilinkAutocomplete';
+import { NoteTemplateGallery } from '../components/notes/NoteTemplateGallery';
+import type { NoteTemplate } from '../components/notes/NoteTemplateGallery';
 
 export default function NoteEditorPage() {
   const { id } = useParams<{ id?: string }>();
@@ -13,6 +45,25 @@ export default function NoteEditorPage() {
   const queryClient = useQueryClient();
   const { setActiveNoteId } = useAppStore();
 
+  // ---- Template gallery state (new-note flow only) -------------------------
+  const [showTemplateGallery, setShowTemplateGallery] = useState(!id);
+  const [chosenTemplate, setChosenTemplate] = useState<NoteTemplate | null>(null);
+
+  // ---- Wikilink autocomplete -----------------------------------------------
+  // anchorRef points to the editor wrapper div; WikilinkAutocomplete positions
+  // itself relative to it.  A better approach is to expose the inner textarea
+  // ref from NoteEditor (future refactor).
+  const editorWrapperRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Body state mirrors the NoteEditor's internal value so we can run the
+  // wikilink detector on every keystroke without prop-drilling.
+  const [bodyValue, setBodyValue] = useState('');
+
+  const { wikilinkQuery, detectQuery, insertWikilink, closeAutocomplete } =
+    useWikilinkDetector(textareaRef, bodyValue, setBodyValue);
+
+  // ---- Data fetching -------------------------------------------------------
   const { data: note, isLoading } = useQuery<Note>({
     queryKey: ['note', id],
     queryFn: () => api.getNote(id!) as Promise<Note>,
@@ -38,6 +89,14 @@ export default function NoteEditorPage() {
     },
   });
 
+  // ---- Template selection handler -----------------------------------------
+  function handleTemplateSelect(template: NoteTemplate) {
+    setChosenTemplate(template);
+    setShowTemplateGallery(false);
+    setBodyValue(template.body);
+  }
+
+  // ---- Loading state -------------------------------------------------------
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -46,18 +105,22 @@ export default function NoteEditorPage() {
     );
   }
 
-  // ---- New note (blank or pre-filled from broken-link click) ---------------
+  // ---- New note flow -------------------------------------------------------
   if (!id) {
     const prefillTitle = searchParams.get('title') ?? '';
+    const folder = chosenTemplate?.folder ?? '10-zettelkasten';
+    const noteType = chosenTemplate?.note_type ?? 'permanent';
+    const initialBody = bodyValue || chosenTemplate?.body || '';
+
     const blankNote: Note = {
       id: '',
       title: prefillTitle,
       slug: '',
-      body: '',
+      body: initialBody,
       body_html: '',
-      note_type: 'permanent',
+      note_type: noteType,
       status: 'draft',
-      folder: '10-zettelkasten',
+      folder,
       word_count: 0,
       is_deleted: false,
       vector_indexed: false,
@@ -67,33 +130,74 @@ export default function NoteEditorPage() {
       outgoing_links: [],
       incoming_links: [],
     };
+
     return (
-      <div className="h-full flex flex-col">
-        <div className="px-4 py-2 border-b border-border flex-shrink-0">
-          <button
-            onClick={() => navigate(-1)}
-            className="flex items-center gap-1 text-xs text-text-muted hover:text-text-primary"
-          >
-            <ArrowLeft size={13} /> Back
-          </button>
-        </div>
-        <div className="flex-1 overflow-hidden">
-          <NoteEditor
-            note={blankNote}
-            onSave={async (body, title) => {
-              await createMutation.mutateAsync({
-                title: title || prefillTitle || 'Untitled',
-                body,
-                folder: '10-zettelkasten',
-              });
-            }}
-            isLoading={createMutation.isPending}
+      <>
+        {/* Template Gallery modal — shown until user picks a template */}
+        {showTemplateGallery && (
+          <NoteTemplateGallery
+            onSelect={handleTemplateSelect}
+            onClose={() => setShowTemplateGallery(false)}
           />
+        )}
+
+        <div className="h-full flex flex-col">
+          <div className="px-4 py-2 border-b border-border flex-shrink-0 flex items-center justify-between">
+            <button
+              onClick={() => navigate(-1)}
+              className="flex items-center gap-1 text-xs text-text-muted hover:text-text-primary"
+            >
+              <ArrowLeft size={13} /> Back
+            </button>
+            {chosenTemplate && (
+              <span className="text-xs text-text-muted">
+                Template: <strong>{chosenTemplate.name}</strong>
+                <button
+                  className="ml-2 underline"
+                  onClick={() => setShowTemplateGallery(true)}
+                >
+                  change
+                </button>
+              </span>
+            )}
+          </div>
+
+          <div className="flex-1 overflow-hidden relative" ref={editorWrapperRef}>
+            <NoteEditor
+              note={blankNote}
+              onSave={async (body, title) => {
+                await createMutation.mutateAsync({
+                  title: title || prefillTitle || 'Untitled',
+                  body,
+                  folder,
+                  note_type: noteType,
+                });
+              }}
+              isLoading={createMutation.isPending}
+              onBodyChange={(v) => {
+                setBodyValue(v);
+                // Re-run detector synchronously after state is updated next tick
+                requestAnimationFrame(detectQuery);
+              }}
+              textareaRef={textareaRef}
+            />
+
+            {/* Wikilink autocomplete overlay */}
+            {wikilinkQuery !== null && (
+              <WikilinkAutocomplete
+                anchorRef={textareaRef as React.RefObject<HTMLTextAreaElement>}
+                query={wikilinkQuery}
+                onSelect={(note) => insertWikilink(note)}
+                onClose={closeAutocomplete}
+              />
+            )}
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
+  // ---- Edit existing note --------------------------------------------------
   if (!note) return <div className="p-6 text-accent-red">Note not found.</div>;
 
   return (
@@ -106,14 +210,28 @@ export default function NoteEditorPage() {
           <ArrowLeft size={13} /> All Notes
         </button>
       </div>
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-hidden relative" ref={editorWrapperRef}>
         <NoteEditor
           note={note}
           onSave={async (body, title) => {
             await updateMutation.mutateAsync({ body, title });
           }}
           isLoading={updateMutation.isPending}
+          onBodyChange={(v) => {
+            setBodyValue(v);
+            requestAnimationFrame(detectQuery);
+          }}
+          textareaRef={textareaRef}
         />
+
+        {wikilinkQuery !== null && (
+          <WikilinkAutocomplete
+            anchorRef={textareaRef as React.RefObject<HTMLTextAreaElement>}
+            query={wikilinkQuery}
+            onSelect={(note) => insertWikilink(note)}
+            onClose={closeAutocomplete}
+          />
+        )}
       </div>
     </div>
   );
