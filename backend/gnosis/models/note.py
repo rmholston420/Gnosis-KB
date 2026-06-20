@@ -24,6 +24,17 @@ class Note(Base):
 
     The primary key is a timestamp-based ID (e.g., '20260619-143022').
     Notes are never hard-deleted; is_deleted=True marks them as deleted.
+
+    Relationship loading strategy
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    ``Note.tags`` and ``Note.outgoing_links`` / ``Note.incoming_links`` use
+    ``lazy='select'`` (explicit load only).  All router query sites that need
+    tags call ``.options(selectinload(Note.tags))`` explicitly.  Using
+    ``lazy='selectin'`` here caused a double-load collision: the model-level
+    background load fired first, then the explicit selectinload() fired again
+    on an already-populated collection, collapsing it to a scalar Tag object
+    instead of a list (SQLAlchemy SAWarning: 'Multiple rows returned with
+    uselist=False').  ``lazy='select'`` suppresses the background load.
     """
 
     __tablename__ = "notes"
@@ -71,26 +82,28 @@ class Note(Base):
         foreign_keys=[owner_id],
         lazy="noload",
     )
+    # lazy='select': do NOT auto-load in background.  All query sites that
+    # need tags use .options(selectinload(Note.tags)) explicitly.  A
+    # lazy='selectin' here caused a double-load collision with those explicit
+    # options, collapsing the list to a scalar on the second pass.
     tags: Mapped[list] = relationship(
         "Tag",
         secondary="note_tags",
         back_populates="notes",
-        lazy="selectin",
-        # default_factory=list removed — not a valid relationship() kwarg;
-        # SQLAlchemy initialises collection attributes to [] automatically.
+        lazy="select",
     )
     outgoing_links: Mapped[list] = relationship(
         "Link",
         foreign_keys="Link.source_id",
         back_populates="source_note",
-        lazy="selectin",
+        lazy="select",
         cascade="all, delete-orphan",
     )
     incoming_links: Mapped[list] = relationship(
         "Link",
         foreign_keys="Link.target_id",
         back_populates="target_note",
-        lazy="selectin",
+        lazy="select",
     )
     review_card: Mapped[Optional["ReviewCard"]] = relationship(
         "ReviewCard",

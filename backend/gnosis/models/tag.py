@@ -15,18 +15,24 @@ NoteTag = Table(
 
 
 class Tag(Base):
-    """A note tag (folksonomy-style)."""
+    """A note tag (folksonomy-style).
+
+    ``Tag.notes`` uses ``lazy='select'`` for the same reason as ``Note.tags``:
+    the background selectin load collided with explicit selectinload() options
+    in query sites, collapsing the collection to a scalar on the second pass.
+    """
 
     __tablename__ = "tags"
 
     name: Mapped[str] = mapped_column(String(100), primary_key=True)
     description: Mapped[str] = mapped_column(String(500), default="")
 
+    # lazy='select': explicit load only — avoids double-load collision.
     notes: Mapped[list] = relationship(
         "Note",
         secondary="note_tags",
         back_populates="tags",
-        lazy="selectin",
+        lazy="select",
     )
 
     def __repr__(self) -> str:

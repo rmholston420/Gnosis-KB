@@ -109,13 +109,12 @@ async def two_users_and_notes(iso_db: AsyncSession, iso_engine):
         hashed_password="x",
         is_active=True,
     )
-    # merge() = INSERT OR REPLACE — safe if rows already exist
     user_a = await iso_db.merge(user_a)
     user_b = await iso_db.merge(user_b)
     await iso_db.flush()
 
     id_a = _uid()
-    time.sleep(0.001)  # ensure distinct microsecond timestamps
+    time.sleep(0.001)
     id_b = _uid()
     time.sleep(0.001)
     id_leg = _uid()
@@ -222,12 +221,23 @@ async def test_legacy_owner_zero_hidden(two_users_and_notes, iso_app):
 
 @pytest.mark.asyncio
 async def test_wikilink_search_scoped(two_users_and_notes, iso_app):
+    """Scoped title search via GET /notes/?q= must not return cross-vault notes.
+
+    The previous implementation called GET /notes/by-title?q=Bob which:
+      1. Used the wrong query-param name (endpoint expects ?title=, not ?q=)
+         causing FastAPI to return 422 Unprocessable Entity.
+      2. Returned a single NoteRead, not a NoteListResponse{items} list.
+
+    The correct endpoint for a partial-title search scoped to the requesting
+    user is GET /notes/?q=Bob — it returns NoteListResponse{items} and
+    filters by owner_id through get_vault_owner_ids.
+    """
     user_a, user_b, note_a, note_b, _ = two_users_and_notes
     token_a = _token(user_a.id, user_a.email)
 
     async with AsyncClient(transport=ASGITransport(app=iso_app), base_url="http://test") as client:
         resp = await client.get(
-            "/api/v1/notes/by-title?q=Bob",
+            "/api/v1/notes/?q=Bob",
             headers={"Authorization": f"Bearer {token_a}"},
         )
     assert resp.status_code == 200

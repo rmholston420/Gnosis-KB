@@ -10,6 +10,13 @@ GET /export/note/{id}.pdf       — single note PDF (requires ENABLE_PDF_EXPORT=
 
 The ?format= endpoint is what the SettingsPage export button calls.
 The owner_id filter ensures users only receive their own notes.
+
+Loading strategy note
+~~~~~~~~~~~~~~~~~~~~~
+Note.tags now uses lazy='select' (explicit load only).  The explicit
+.options(selectinload(Note.tags)) calls below are the sole load path.
+Do NOT add a second .options() call for the same relationship on the
+same query — that would trigger the double-load collapse again.
 """
 from __future__ import annotations
 
@@ -48,10 +55,10 @@ def _iso(val: object) -> str:
 def _note_to_markdown(note: Note) -> str:
     """Serialise a Note ORM row to a .md string with YAML frontmatter.
 
-    note.tags is a list of Tag ORM objects (after selectinload); extract
+    note.tags is a list of Tag ORM objects (loaded by selectinload); extract
     .name from each rather than passing the object to str.join.
     """
-    _tags = note.tags if note.tags else []
+    _tags = note.tags if isinstance(note.tags, list) else []
     tags_str = ", ".join(t.name if hasattr(t, "name") else str(t) for t in _tags)
     fm_lines = [
         "---",
@@ -71,6 +78,7 @@ def _note_to_markdown(note: Note) -> str:
 
 def _note_to_dict(note: Note) -> dict:
     """Serialise a Note ORM row to a plain dict for JSON export."""
+    _tags = note.tags if isinstance(note.tags, list) else []
     return {
         "id": note.id,
         "title": note.title,
@@ -78,7 +86,7 @@ def _note_to_dict(note: Note) -> dict:
         "folder": note.folder or "",
         "note_type": note.note_type,
         "status": getattr(note, "status", "draft"),
-        "tags": [t.name if hasattr(t, "name") else str(t) for t in (note.tags or [])],
+        "tags": [t.name if hasattr(t, "name") else str(t) for t in _tags],
         "vault_path": note.vault_path or "",
         "word_count": note.word_count or 0,
         "created_at": _iso(getattr(note, "created_at", None)),
@@ -87,7 +95,11 @@ def _note_to_dict(note: Note) -> dict:
 
 
 async def _fetch_user_notes(db: AsyncSession, owner_id: int) -> list[Note]:
-    """Return all non-deleted notes owned by *owner_id*, tags eagerly loaded."""
+    """Return all non-deleted notes owned by *owner_id*, tags eagerly loaded.
+
+    A single selectinload(Note.tags) is the correct and complete load path
+    now that Note.tags uses lazy='select'.  Do not add a second one.
+    """
     result = await db.execute(
         select(Note)
         .options(selectinload(Note.tags))
