@@ -22,6 +22,14 @@ BOTH require_user AND get_current_user are overridden so every request is
 authenticated as FakeUser(id=1) without needing a real JWT or database User
 row.
 
+_fake_require_user accepts an optional Request parameter.  When FastAPI
+injects a Request (because it is declared in the dependency signature) and
+no ``Authorization: Bearer ...`` header is present, it raises HTTP 401.
+This allows auth-guard tests (e.g. test_vault_sync_requires_auth) to verify
+that unauthenticated requests are rejected even though the real JWT stack is
+not running.  Tests that pass auth_headers={"Authorization": "Bearer ..."}
+continue to receive _FakeUser normally.
+
 Isolation
 ---------
 test_engine is function-scoped: each test gets a brand-new in-memory SQLite
@@ -47,6 +55,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from starlette.requests import Request
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from starlette.testclient import TestClient
@@ -131,7 +140,24 @@ class _FakeUser:
     is_superuser: bool = False
 
 
-async def _fake_require_user() -> _FakeUser:
+async def _fake_require_user(
+    request: Request | None = None,
+) -> _FakeUser:
+    """Return a fake authenticated user.
+
+    When FastAPI injects a *Request* (declared as a dependency parameter)
+    and no ``Authorization: Bearer ...`` header is present, raise HTTP 401
+    so that auth-guard tests receive the expected rejection status rather
+    than a successful fake login.
+
+    Tests that supply ``auth_headers={"Authorization": "Bearer test-token"}``
+    continue to receive _FakeUser normally.
+    """
+    if request is not None:
+        auth = request.headers.get("authorization", "")
+        if not auth.startswith("Bearer "):
+            from fastapi import HTTPException as _HTTPException
+            raise _HTTPException(status_code=401, detail="Not authenticated")
     return _FakeUser()
 
 
