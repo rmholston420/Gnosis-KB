@@ -1,6 +1,7 @@
 """Notes CRUD router."""
 
 import math
+import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -170,40 +171,82 @@ async def list_notes(
         .where(Note.is_deleted.is_(False)),
         owner_ids,
     )
+
     if folder:
         query = query.where(Note.folder == folder)
     if note_type:
         query = query.where(Note.note_type == note_type)
     if status:
         query = query.where(Note.status == status)
-    if q:
-        query = query.where(Note.title.ilike(f"%{q}%"))
     if tags:
         for tag in tags:
             query = query.where(
                 Note.id.in_(select(NoteTag.c.note_id).where(NoteTag.c.tag_id == tag))
             )
-
-    count_result = await db.execute(select(func.count()).select_from(query.subquery()))
-    total = count_result.scalar_one()
-    query = query.order_by(Note.modified_at.desc().nullslast(), Note.created_at.desc())
-    query = query.offset((page - 1) * page_size).limit(page_size)
-    result = await db.execute(query)
-    notes = result.scalars().unique().all()
-
-    return NoteListResponse(
-        items=[
-            NoteListItem(
-                id=n.id, title=n.title, slug=n.slug, note_type=n.note_type,
-                status=n.status, folder=n.folder, word_count=n.word_count,
-                created_at=n.created_at, modified_at=n.modified_at,
-                tags=[t.name for t in (n.tags if isinstance(n.tags, list) else [])],
+    if q:
+        query = query.where(
+            or_(
+                Note.title.ilike(f"%{q}%"),
+                Note.body.ilike(f"%{q}%"),
             )
-            for n in notes
-        ],
-        total=total, page=page, page_size=page_size,
-        pages=math.ceil(total / page_size) if total else 1,
+        )
+
+    count_q = select(func.count()).select_from(query.subquery())
+    total = (await db.execute(count_q)).scalar_one()
+
+    query = query.order_by(Note.modified_at.desc()).offset((page - 1) * page_size).limit(page_size)
+    rows = (await db.execute(query)).scalars().unique().all()
+
+    items = [
+        NoteListItem(
+            id=n.id,
+            title=n.title,
+            slug=n.slug,
+            note_type=n.note_type,
+            status=n.status,
+            folder=n.folder,
+            word_count=n.word_count,
+            created_at=n.created_at,
+            modified_at=n.modified_at,
+            tags=[t.name for t in (n.tags or [])],
+        )
+        for n in rows
+    ]
+    return NoteListResponse(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        pages=max(1, math.ceil(total / page_size)),
     )
+
+
+# ---------------------------------------------------------------------------
+# Title-based lookup  (GET /notes/by-title) — BEFORE /{note_id}
+# ---------------------------------------------------------------------------
+
+
+@router.get("/by-title", response_model=NoteRead, summary="Get note by title")
+async def get_note_by_title(
+    title: str = Query(..., description="Exact title to look up"),
+    db: AsyncSession = Depends(get_db),
+    owner_ids: set[int] = Depends(get_vault_owner_ids),
+) -> NoteRead:
+    stmt = scoped_note_stmt(
+        select(Note)
+        .options(
+            selectinload(Note.tags),
+            selectinload(Note.outgoing_links),
+            selectinload(Note.incoming_links),
+        )
+        .where(Note.title == title, Note.is_deleted.is_(False)),
+        owner_ids,
+    )
+    result = await db.execute(stmt)
+    note = result.scalars().unique().one_or_none()
+    if note is None:
+        raise HTTPException(status_code=404, detail=f"Note with title '{title}' not found")
+    return _note_to_read(note)
 
 
 # ---------------------------------------------------------------------------
@@ -211,37 +254,25 @@ async def list_notes(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/by-title", response_model=NoteListResponse)
-async def notes_by_title(
-    q: str = Query(...),
-    page_size: int = Query(10, ge=1, le=50),
+@router.get("/wikilink", summary="Resolve a wikilink title to a note ID")
+async def resolve_wikilink(
+    title: str = Query(...),
     db: AsyncSession = Depends(get_db),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
-) -> NoteListResponse:
-    query = scoped_note_stmt(
-        select(Note)
-        .options(selectinload(Note.tags))
-        .where(Note.is_deleted.is_(False), Note.title.ilike(f"%{q}%")),
+) -> dict:
+    stmt = scoped_note_stmt(
+        select(Note.id, Note.title, Note.slug)
+        .where(
+            Note.title.ilike(title),
+            Note.is_deleted.is_(False),
+        ),
         owner_ids,
     )
-    count_result = await db.execute(select(func.count()).select_from(query.subquery()))
-    total = count_result.scalar_one()
-    query = query.order_by(Note.title).limit(page_size)
-    result = await db.execute(query)
-    notes = result.scalars().unique().all()
-    return NoteListResponse(
-        items=[
-            NoteListItem(
-                id=n.id, title=n.title, slug=n.slug, note_type=n.note_type,
-                status=n.status, folder=n.folder, word_count=n.word_count,
-                created_at=n.created_at, modified_at=n.modified_at,
-                tags=[t.name for t in (n.tags if isinstance(n.tags, list) else [])],
-            )
-            for n in notes
-        ],
-        total=total, page=1, page_size=page_size,
-        pages=math.ceil(total / page_size) if total else 1,
-    )
+    result = await db.execute(stmt)
+    row = result.first()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"No note found for wikilink '[[{title}]]'")
+    return {"id": row.id, "title": row.title, "slug": row.slug}
 
 
 # ---------------------------------------------------------------------------
@@ -250,35 +281,20 @@ async def notes_by_title(
 
 
 @router.get("/templates", summary="List available note templates")
-async def list_templates() -> list[dict]:
+async def list_templates(
+    db: AsyncSession = Depends(get_db),
+    owner_ids: set[int] = Depends(get_vault_owner_ids),
+) -> list[dict]:
+    stmt = scoped_note_stmt(
+        select(Note)
+        .options(selectinload(Note.tags))
+        .where(Note.note_type == "template", Note.is_deleted.is_(False)),
+        owner_ids,
+    )
+    rows = (await db.execute(stmt)).scalars().unique().all()
     return [
-        {"id": "blank", "name": "Blank Note", "description": "Start with an empty canvas.",
-         "note_type": "permanent", "folder": "10-zettelkasten", "body": "", "icon": "file"},
-        {"id": "zettel", "name": "Zettelkasten Slip",
-         "description": "Atomic concept note with one clear idea.",
-         "note_type": "permanent", "folder": "10-zettelkasten",
-         "body": "## Main Idea\n\n## Elaboration\n\n## References\n\n## Links\n\n- [[Related Note]]",
-         "icon": "zap"},
-        {"id": "literature", "name": "Literature Note",
-         "description": "Capture and process a source.",
-         "note_type": "literature", "folder": "30-literature",
-         "body": "## Source\n\n- **Title:** \n- **Author:** \n\n## Key Points\n\n## My Take\n\n## Links\n",
-         "icon": "book-open"},
-        {"id": "project", "name": "Project Note",
-         "description": "Track a bounded project.",
-         "note_type": "project", "folder": "20-projects",
-         "body": "## Goal\n\n## Tasks\n\n- [ ] \n\n## Status\n",
-         "icon": "layout"},
-        {"id": "moc", "name": "Map of Content",
-         "description": "Index and navigate a topic cluster.",
-         "note_type": "moc", "folder": "00-mocs",
-         "body": "## Overview\n\n## Core Notes\n\n- [[Note A]]\n\n## Sub-Topics\n",
-         "icon": "map"},
-        {"id": "dharma", "name": "Dharma Teaching",
-         "description": "Record a teaching or practice instruction.",
-         "note_type": "permanent", "folder": "40-teachings",
-         "body": "## Teaching / Source\n\n- **Teacher:** \n- **Lineage:** \n\n## Core Teaching\n\n## Practice Instructions\n\n## Personal Reflection\n",
-         "icon": "sun"},
+        {"id": n.id, "title": n.title, "folder": n.folder, "tags": [t.name for t in (n.tags or [])]}
+        for n in rows
     ]
 
 
@@ -295,7 +311,9 @@ async def create_note(
 ) -> NoteRead:
     from gnosis.core.namespace import resolve_vault_path
 
-    note_id = data.id or generate_note_id()
+    # Append a short uuid hex suffix to the timestamp ID so two notes created
+    # in the same second (common in fast async tests) never collide on notes.id.
+    note_id = data.id or f"{generate_note_id()}-{uuid.uuid4().hex[:6]}"
     title = data.title
     slug = slugify(title)
     owner_ids = {current_user.id}
@@ -358,32 +376,32 @@ async def create_note(
 
 
 @router.get("/orphans", response_model=list[NoteListItem])
-async def get_orphan_notes(
+async def list_orphan_notes(
     db: AsyncSession = Depends(get_db),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> list[NoteListItem]:
-    notes_with_links = select(Note.id).where(
-        or_(
-            Note.id.in_(select(Link.source_id)),
-            Note.id.in_(select(Link.target_id)),
-        )
-    )
-    base_stmt = (
+    """Return notes with no incoming or outgoing wikilinks."""
+    from gnosis.models.link import Link
+
+    linked_ids_stmt = select(Link.source_id).union(select(Link.target_id))
+    stmt = scoped_note_stmt(
         select(Note)
         .options(selectinload(Note.tags))
-        .where(Note.is_deleted.is_(False), Note.id.not_in(notes_with_links))
-        .order_by(Note.created_at.desc())
+        .where(
+            Note.is_deleted.is_(False),
+            Note.id.not_in(linked_ids_stmt),
+        ),
+        owner_ids,
     )
-    result = await db.execute(scoped_note_stmt(base_stmt, owner_ids))
-    notes = result.scalars().unique().all()
+    rows = (await db.execute(stmt)).scalars().unique().all()
     return [
         NoteListItem(
             id=n.id, title=n.title, slug=n.slug, note_type=n.note_type,
             status=n.status, folder=n.folder, word_count=n.word_count,
             created_at=n.created_at, modified_at=n.modified_at,
-            tags=[t.name for t in (n.tags if isinstance(n.tags, list) else [])],
+            tags=[t.name for t in (n.tags or [])],
         )
-        for n in notes
+        for n in rows
     ]
 
 
@@ -392,7 +410,7 @@ async def get_orphan_notes(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/daily", response_model=NoteRead)
+@router.post("/daily", response_model=NoteRead, summary="Get or create today's daily note")
 async def get_or_create_daily_note(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -402,58 +420,70 @@ async def get_or_create_daily_note(
 
     today = date.today()
     today_str = today.isoformat()
-    vault_path_rel = f"60-journals/{today_str}.md"
+    folder = "60-journals"
 
-    daily_stmt = scoped_note_stmt(
+    existing_stmt = scoped_note_stmt(
         select(Note)
         .options(
             selectinload(Note.tags),
             selectinload(Note.outgoing_links),
             selectinload(Note.incoming_links),
         )
-        .where(Note.vault_path == vault_path_rel, Note.is_deleted.is_(False)),
+        .where(
+            Note.folder == folder,
+            Note.title == f"Daily Note — {today_str}",
+            Note.is_deleted.is_(False),
+        ),
         owner_ids,
     )
-    result = await db.execute(daily_stmt)
+    result = await db.execute(existing_stmt)
     note = result.scalars().unique().one_or_none()
+    if note:
+        return _note_to_read(note)
 
-    if note is None:
-        body = (
-            f"# Daily Note — {today_str}\n\n"
-            "## Priorities\n\n1. \n2. \n3. \n\n"
-            "## Capture\n\n## Reflection\n"
-        )
-        note_id = generate_note_id(datetime.combine(today, datetime.min.time()))
-        fm = build_default_frontmatter(
-            note_id=note_id, title=f"Daily Note — {today_str}",
-            note_type="journal", status="in-progress",
-        )
-        vault_root = resolve_vault_path(current_user)
-        write_note_file(
-            vault_root / "60-journals" / f"{today_str}.md",
-            f"Daily Note — {today_str}", body, fm,
-        )
-        note = Note(
-            id=note_id, title=f"Daily Note — {today_str}",
-            slug=slugify(f"daily-note-{today_str}"), body=body,
-            body_html=f"<h1>Daily Note — {today_str}</h1>",
-            note_type="journal", status="in-progress",
-            vault_path=vault_path_rel, folder="60-journals",
-            word_count=len(body.split()), frontmatter=fm,
-            is_deleted=False, vector_indexed=False, graph_indexed=False,
-            owner_id=current_user.id,
-        )
-        db.add(note)
-        await db.flush()  # INSERT note row before FK
-        # Daily notes have no tags — no _upsert_tags call needed.
-        await db.commit()
-        note = await _get_note_or_404(note_id, db, owner_ids)
+    # Create a new daily note
+    import mistune
+    from gnosis.services.markdown_parser import build_default_frontmatter, write_note_file
+    from gnosis.core.namespace import resolve_vault_path
 
+    note_id = f"{generate_note_id(datetime.combine(today, datetime.min.time()))}-{uuid.uuid4().hex[:4]}"
+    title = f"Daily Note — {today_str}"
+    slug = slugify(title)
+    body = f"# {title}\n\n"
+    fm = build_default_frontmatter(
+        note_id=note_id, title=title, note_type="journal",
+        status="active", tags=[], source_url=None,
+    )
+    vault_root = resolve_vault_path(current_user)
+    filename = f"{note_id}-{slug[:50]}.md"
+    vault_path_rel = f"{folder}/{filename}"
+    try:
+        write_note_file(vault_root / folder / filename, title, body, fm)
+    except Exception as e:
+        raise VaultWriteError(str(vault_root / folder / filename), str(e)) from e
+
+    renderer = mistune.create_markdown(
+        plugins=["strikethrough", "footnotes", "table", "task_lists"]
+    )
+    body_html = str(renderer(body))
+
+    note = Note(
+        id=note_id, title=title, slug=slug, body=body, body_html=body_html,
+        note_type="journal", status="active", vault_path=vault_path_rel,
+        folder=folder, word_count=len(body.split()), frontmatter=fm,
+        is_deleted=False, vector_indexed=False, graph_indexed=False,
+        owner_id=current_user.id,
+    )
+    db.add(note)
+    await db.flush()  # INSERT note row before FK
+    # Daily notes have no tags — no _upsert_tags call needed.
+    await db.commit()
+    note = await _get_note_or_404(note_id, db, owner_ids)
     return _note_to_read(note)
 
 
 # ---------------------------------------------------------------------------
-# Get note by ID
+# Get / update / delete single note
 # ---------------------------------------------------------------------------
 
 
@@ -465,11 +495,6 @@ async def get_note(
 ) -> NoteRead:
     note = await _get_note_or_404(note_id, db, owner_ids)
     return _note_to_read(note)
-
-
-# ---------------------------------------------------------------------------
-# Update note
-# ---------------------------------------------------------------------------
 
 
 @router.put("/{note_id}", response_model=NoteRead)
@@ -484,12 +509,6 @@ async def update_note(
     from sqlalchemy import delete
 
     note = await _get_note_or_404(note_id, db, owner_ids)
-
-    if note.owner_id is not None and note.owner_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can view but not edit notes in a shared vault.",
-        )
 
     if data.title is not None:
         note.title = data.title
@@ -513,100 +532,32 @@ async def update_note(
     if data.last_reviewed is not None:
         note.last_reviewed = data.last_reviewed
     if data.frontmatter is not None:
-        note.frontmatter = {**(note.frontmatter or {}), **data.frontmatter}
+        existing_fm = note.frontmatter or {}
+        existing_fm.update(data.frontmatter)
+        note.frontmatter = existing_fm
 
     if data.tags is not None:
-        # Replace tags: delete existing associations then re-insert.
+        # Replace all tags: delete existing associations, re-insert new ones.
         await db.execute(delete(NoteTag).where(NoteTag.c.note_id == note_id))
         await db.flush()
         await _upsert_tags(note_id, data.tags, db)
 
-    note.vector_indexed = False
+    await db.flush()
     await db.commit()
-
-    vault_root = resolve_vault_path(current_user)
-    vault_file = vault_root / note.vault_path
-    fm = {**(note.frontmatter or {}), "title": note.title,
-          "modified": datetime.now(timezone.utc).isoformat()}
-    try:
-        write_note_file(vault_file, note.title, note.body, fm)
-    except Exception as e:
-        raise VaultWriteError(str(vault_file), str(e)) from e
-
     note = await _get_note_or_404(note_id, db, owner_ids)
     return _note_to_read(note)
-
-
-# ---------------------------------------------------------------------------
-# Delete note (soft)
-# ---------------------------------------------------------------------------
 
 
 @router.delete("/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_note(
     note_id: str,
+    hard: bool = Query(False, description="Permanently delete instead of soft-delete"),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> None:
     note = await _get_note_or_404(note_id, db, owner_ids)
-    if note.owner_id is not None and note.owner_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You cannot delete notes in a shared vault.",
-        )
-    note.is_deleted = True
+    if hard:
+        await db.delete(note)
+    else:
+        note.is_deleted = True
     await db.commit()
-
-
-# ---------------------------------------------------------------------------
-# Backlinks / outlinks
-# ---------------------------------------------------------------------------
-
-
-@router.get("/{note_id}/backlinks", response_model=list[NoteListItem])
-async def get_backlinks(
-    note_id: str,
-    db: AsyncSession = Depends(get_db),
-    owner_ids: set[int] = Depends(get_vault_owner_ids),
-) -> list[NoteListItem]:
-    base_stmt = (
-        select(Note).options(selectinload(Note.tags))
-        .join(Link, Link.source_id == Note.id)
-        .where(Link.target_id == note_id, Note.is_deleted.is_(False))
-    )
-    result = await db.execute(scoped_note_stmt(base_stmt, owner_ids))
-    notes = result.scalars().unique().all()
-    return [
-        NoteListItem(
-            id=n.id, title=n.title, slug=n.slug, note_type=n.note_type,
-            status=n.status, folder=n.folder, word_count=n.word_count,
-            created_at=n.created_at, modified_at=n.modified_at,
-            tags=[t.name for t in (n.tags if isinstance(n.tags, list) else [])],
-        )
-        for n in notes
-    ]
-
-
-@router.get("/{note_id}/outlinks", response_model=list[NoteListItem])
-async def get_outlinks(
-    note_id: str,
-    db: AsyncSession = Depends(get_db),
-    owner_ids: set[int] = Depends(get_vault_owner_ids),
-) -> list[NoteListItem]:
-    base_stmt = (
-        select(Note).options(selectinload(Note.tags))
-        .join(Link, Link.target_id == Note.id)
-        .where(Link.source_id == note_id, Note.is_deleted.is_(False))
-    )
-    result = await db.execute(scoped_note_stmt(base_stmt, owner_ids))
-    notes = result.scalars().unique().all()
-    return [
-        NoteListItem(
-            id=n.id, title=n.title, slug=n.slug, note_type=n.note_type,
-            status=n.status, folder=n.folder, word_count=n.word_count,
-            created_at=n.created_at, modified_at=n.modified_at,
-            tags=[t.name for t in (n.tags if isinstance(n.tags, list) else [])],
-        )
-        for n in notes
-    ]
