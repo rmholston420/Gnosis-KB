@@ -3,18 +3,6 @@
 All heavy third-party libs (fitz, docx, pptx, openpyxl, pytesseract,
 Pillow, httpx, bs4) are stubbed via sys.modules injection so no real
 files or network calls are needed.
-
-Coverage targets
-----------------
-- detect_format: extension mapping + unknown extension
-- parse_file:    dispatcher routes to each parser; raises ValueError for unknown ext
-- parse_pdf:     metadata title, filename fallback, author, page_count
-- parse_docx:    paragraph text, title from first paragraph, empty body fallback
-- parse_pptx:    slide text, slide count
-- parse_xlsx:    Markdown table generation, multi-sheet, empty sheet skip
-- parse_image:   OCR text, title from stem
-- parse_url:     BeautifulSoup happy path, bs4-absent fallback
-- ImportError:   each parser raises RuntimeError when dep missing
 """
 from __future__ import annotations
 
@@ -96,10 +84,27 @@ def _make_tesseract_stub(ocr_text="Extracted OCR text"):
     return pytesseract_mod, pil_mod
 
 
-def _real_bs4():
-    """Return the actual bs4 module, ensuring it is importable."""
-    import bs4 as _bs4
-    return _bs4
+def _make_bs4_stub(title="My Page", main_text="Main content here."):
+    """Stub bs4.BeautifulSoup that returns fixed title and body text."""
+    # soup.find("title").get_text() -> title
+    title_tag = MagicMock()
+    title_tag.get_text = MagicMock(return_value=title)
+
+    # soup.find("main").get_text() -> main_text
+    main_tag = MagicMock()
+    main_tag.get_text = MagicMock(return_value=main_text)
+
+    soup = MagicMock()
+    soup.find = MagicMock(side_effect=lambda tag, **kw: {
+        "title": title_tag,
+        "main": main_tag,
+    }.get(tag))
+    soup.find_all = MagicMock(return_value=[])  # no script/style to decompose
+
+    BeautifulSoup = MagicMock(return_value=soup)
+    bs4_mod = types.ModuleType("bs4")
+    bs4_mod.BeautifulSoup = BeautifulSoup  # type: ignore[attr-defined]
+    return bs4_mod
 
 
 # ---------------------------------------------------------------------------
@@ -302,7 +307,7 @@ def test_parse_image_returns_ocr_text(tmp_path):
 
 @pytest.mark.asyncio
 async def test_parse_url_extracts_title_and_body():
-    """Happy path: bs4 IS available; title and main content extracted."""
+    """Happy path: stub bs4.BeautifulSoup; title and main content extracted."""
     html = "<html><head><title>My Page</title></head><body><main><p>Main content here.</p></main></body></html>"
 
     mock_resp = MagicMock()
@@ -314,9 +319,9 @@ async def test_parse_url_extracts_title_and_body():
     mock_client.__aexit__ = AsyncMock(return_value=False)
     mock_client.get = AsyncMock(return_value=mock_resp)
 
-    # Ensure the real bs4 is present, then reload so parse_url sees it
-    real_bs4 = _real_bs4()
-    with patch.dict(sys.modules, {"bs4": real_bs4}):
+    bs4_stub = _make_bs4_stub(title="My Page", main_text="Main content here.")
+
+    with patch.dict(sys.modules, {"bs4": bs4_stub}):
         import gnosis.services.document_parser as dp
         reload(dp)
         with patch("httpx.AsyncClient", return_value=mock_client):
