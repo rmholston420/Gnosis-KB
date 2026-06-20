@@ -7,11 +7,6 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      /**
-       * injectManifest strategy: we own sw.js entirely and
-       * vite-plugin-pwa only injects the precache manifest list
-       * (replacing the __WB_MANIFEST placeholder).
-       */
       strategies: 'injectManifest',
       srcDir: 'public',
       filename: 'sw.js',
@@ -19,7 +14,7 @@ export default defineConfig({
         injectionPoint: '__WB_MANIFEST',
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
       },
-      manifest: false, // We manage manifest.json manually in public/
+      manifest: false,
       devOptions: {
         enabled: true,
         type: 'module',
@@ -32,9 +27,10 @@ export default defineConfig({
     },
   },
   server: {
+    port: 5273,
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        target: 'http://localhost:8002',
         changeOrigin: true,
       },
     },
