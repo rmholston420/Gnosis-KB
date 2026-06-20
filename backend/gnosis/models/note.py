@@ -93,20 +93,20 @@ class Note(Base):
         foreign_keys=[owner_id],
         lazy="noload",
     )
-    tags: Mapped[list] = relationship(
+    tags: Mapped[list["Tag"]] = relationship(
         "Tag",
         secondary="note_tags",
         back_populates="notes",
         lazy="select",
     )
-    outgoing_links: Mapped[list] = relationship(
+    outgoing_links: Mapped[list["Link"]] = relationship(
         "Link",
         foreign_keys="Link.source_id",
         back_populates="source_note",
         lazy="select",
         cascade="all, delete-orphan",
     )
-    incoming_links: Mapped[list] = relationship(
+    incoming_links: Mapped[list["Link"]] = relationship(
         "Link",
         foreign_keys="Link.target_id",
         back_populates="target_note",

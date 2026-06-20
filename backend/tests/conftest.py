@@ -212,6 +212,7 @@ async def _make_client(
 
         settings = config.get_settings()
         settings.vault_path = str(vault_dir)
+        import gnosis.core.namespace as _ns; _ns.VAULT_ROOT = vault_dir
 
         app = create_app()
         session_factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)

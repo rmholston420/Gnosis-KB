@@ -28,7 +28,7 @@ class Tag(Base):
     description: Mapped[str] = mapped_column(String(500), default="")
 
     # lazy='select': explicit load only — avoids double-load collision.
-    notes: Mapped[list] = relationship(
+    notes: Mapped[list["Note"]] = relationship(
         "Note",
         secondary="note_tags",
         back_populates="tags",
