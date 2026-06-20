@@ -7,13 +7,14 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from bs4 import BeautifulSoup  # real bs4 -- used inside our fake module
 
 import gnosis.services.document_parser as dp
 from gnosis.services.document_parser import ParsedDocument, detect_format
 
 
 def _make_fake_httpx(html: str):
-    """Return a fake httpx module with a mocked AsyncClient."""
+    """Fake httpx module whose AsyncClient returns `html` as resp.text."""
     mock_resp = MagicMock()
     mock_resp.text = html
     mock_resp.raise_for_status = MagicMock()
@@ -25,9 +26,16 @@ def _make_fake_httpx(html: str):
     mock_instance.__aenter__ = AsyncMock(return_value=mock_client)
     mock_instance.__aexit__ = AsyncMock(return_value=False)
 
-    fake_httpx = types.ModuleType("httpx")
-    fake_httpx.AsyncClient = MagicMock(return_value=mock_instance)  # type: ignore
-    return fake_httpx
+    fake = types.ModuleType("httpx")
+    fake.AsyncClient = MagicMock(return_value=mock_instance)  # type: ignore
+    return fake
+
+
+def _make_fake_bs4():
+    """Fake bs4 module that delegates to the real BeautifulSoup."""
+    fake = types.ModuleType("bs4")
+    fake.BeautifulSoup = BeautifulSoup  # type: ignore
+    return fake
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +80,7 @@ def test_parse_pdf_no_meta_derives_title_from_stem():
 async def test_parse_url_returns_parsed_document():
     html = "<html><head><title>Hello</title></head><body><main><p>World</p></main></body></html>"
 
-    with patch.dict(sys.modules, {"httpx": _make_fake_httpx(html)}):
+    with patch.dict(sys.modules, {"httpx": _make_fake_httpx(html), "bs4": _make_fake_bs4()}):
         result = await dp.parse_url("http://example.com")
 
     assert isinstance(result, ParsedDocument)
@@ -85,7 +93,7 @@ async def test_parse_url_returns_parsed_document():
 async def test_parse_url_sets_title():
     html = "<html><head><title>Stripped Title</title></head><body><p>content</p></body></html>"
 
-    with patch.dict(sys.modules, {"httpx": _make_fake_httpx(html)}):
+    with patch.dict(sys.modules, {"httpx": _make_fake_httpx(html), "bs4": _make_fake_bs4()}):
         result = await dp.parse_url("http://example.com/page")
 
     assert result.title == "Stripped Title"

@@ -1,7 +1,6 @@
 """
 Unit tests for document_parser.py.
 
-Tests cover the pure-Python helpers and the format dispatcher.
 All heavy optional dependencies (fitz, docx, pptx, openpyxl, pytesseract)
 are mocked so no binaries are required.
 """
@@ -13,6 +12,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from bs4 import BeautifulSoup  # real bs4 -- used inside our fake module
 
 import gnosis.services.document_parser as dp
 from gnosis.services.document_parser import (
@@ -20,6 +20,35 @@ from gnosis.services.document_parser import (
     detect_format,
     parse_file,
 )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _make_fake_httpx(html: str):
+    """Fake httpx module whose AsyncClient returns `html` as resp.text."""
+    mock_resp = MagicMock()
+    mock_resp.text = html
+    mock_resp.raise_for_status = MagicMock()
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_resp)
+
+    mock_instance = MagicMock()
+    mock_instance.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_instance.__aexit__ = AsyncMock(return_value=False)
+
+    fake = types.ModuleType("httpx")
+    fake.AsyncClient = MagicMock(return_value=mock_instance)  # type: ignore
+    return fake
+
+
+def _make_fake_bs4():
+    """Fake bs4 module that delegates to the real BeautifulSoup."""
+    fake = types.ModuleType("bs4")
+    fake.BeautifulSoup = BeautifulSoup  # type: ignore
+    return fake
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +107,7 @@ def test_detect_format(filename, expected):
 
 
 # ---------------------------------------------------------------------------
-# parse_file dispatcher - unsupported raises ValueError
+# parse_file dispatcher
 # ---------------------------------------------------------------------------
 
 def test_parse_file_unsupported_raises():
@@ -256,31 +285,14 @@ def test_parse_image_extracts_ocr_text():
 # ---------------------------------------------------------------------------
 # parse_url
 #
-# parse_url does `import httpx` inside the function body at call time.
-# We replace sys.modules['httpx'] with a fake module whose AsyncClient
-# is our mock -- guaranteed to be found regardless of import caching.
+# parse_url does:
+#   import httpx                          <-- resolved from sys.modules
+#   from bs4 import BeautifulSoup         <-- resolved from sys.modules
 #
-# @pytest.mark.asyncio is required even with asyncio_mode='auto' when
-# running individual files in isolation (pytest-asyncio >= 0.24 behaviour).
+# We inject fake modules for BOTH into sys.modules for the duration of
+# each test. The fake bs4 delegates to the real BeautifulSoup so actual
+# HTML parsing works and title assertions pass.
 # ---------------------------------------------------------------------------
-
-def _make_fake_httpx(html: str):
-    """Return a fake httpx module with a mocked AsyncClient."""
-    mock_resp = MagicMock()
-    mock_resp.text = html
-    mock_resp.raise_for_status = MagicMock()
-
-    mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=mock_resp)
-
-    mock_instance = MagicMock()
-    mock_instance.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_instance.__aexit__ = AsyncMock(return_value=False)
-
-    fake_httpx = types.ModuleType("httpx")
-    fake_httpx.AsyncClient = MagicMock(return_value=mock_instance)  # type: ignore
-    return fake_httpx
-
 
 @pytest.mark.asyncio
 async def test_parse_url_extracts_title_and_text():
@@ -288,7 +300,7 @@ async def test_parse_url_extracts_title_and_text():
         "<html><head><title>Test Page</title></head>"
         "<body><main><p>Main content here.</p></main></body></html>"
     )
-    with patch.dict(sys.modules, {"httpx": _make_fake_httpx(html)}):
+    with patch.dict(sys.modules, {"httpx": _make_fake_httpx(html), "bs4": _make_fake_bs4()}):
         result = await dp.parse_url("https://example.com")
 
     assert result.raw_format == "url"
@@ -306,6 +318,7 @@ async def test_parse_url_fallback_without_bs4():
 
     assert result.raw_format == "url"
     assert result.source == "https://example.com/fallback"
+    assert result.title == "https://example.com/fallback"
 
 
 # ---------------------------------------------------------------------------
