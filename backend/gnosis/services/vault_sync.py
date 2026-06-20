@@ -1,8 +1,9 @@
 """Vault filesystem watcher and sync service.
 
 Watches ``GNOSIS_VAULT_ROOT/`` for .md file changes using watchdog.
-On create/modify: parse frontmatter + body, upsert to DB, queue for vector
-indexing.  On delete: mark as ``is_deleted=True`` in DB (never hard-delete).
+On create/modify: parse frontmatter + body, upsert to DB, upsert to Qdrant
+vector store.  On delete: mark as ``is_deleted=True`` in DB (never hard-delete)
+and remove from Qdrant.
 Maintains bidirectional link table from parsed [[wikilinks]].
 
 Namespace contract
@@ -28,7 +29,7 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.sqlite import insert  # SQLite upsert; swap to postgresql if needed
 from watchdog.events import FileCreatedEvent, FileDeletedEvent, FileModifiedEvent, FileSystemEventHandler
 from watchdog.observers import Observer
@@ -41,6 +42,7 @@ from gnosis.models.note import Note
 from gnosis.models.tag import Tag
 from gnosis.models.user import User
 from gnosis.services.markdown_parser import parse_note_file
+from gnosis.services.vector_store import upsert_note as vector_upsert_note, delete_note as vector_delete_note
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +101,7 @@ class VaultEventHandler(FileSystemEventHandler):
             )
 
     async def _sync_note(self, path: Path) -> None:
-        """Parse a .md file and upsert the note into the database."""
+        """Parse a .md file, upsert to DB, then upsert to Qdrant vector store."""
         try:
             data = parse_note_file(path)
         except Exception as e:
@@ -168,17 +170,42 @@ class VaultEventHandler(FileSystemEventHandler):
                 await db.commit()
 
                 logger.debug(
-                    "Synced note %s (owner=%s, path=%s)",
+                    "Synced note %s (owner=%s, path=%s) to DB",
                     data["id"],
                     owner_id,
                     vault_path,
                 )
             except Exception as e:
                 await db.rollback()
-                logger.error("Error syncing note %s: %s", vault_path, e)
+                logger.error("Error syncing note %s to DB: %s", vault_path, e)
+                return
+
+        # --- Vector store upsert (outside the DB session) ---
+        try:
+            vector_upsert_note(
+                note_id=data["id"],
+                title=data["title"],
+                body=data["body"],
+                folder=data["folder"],
+                note_type=data["note_type"],
+                status=data["status"],
+                tags=data["tags"],
+                owner_id=owner_id,
+            )
+            # Mark vector_indexed=True in DB
+            async with AsyncSessionLocal() as db:
+                await db.execute(
+                    update(Note)
+                    .where(Note.id == data["id"])
+                    .values(vector_indexed=True)
+                )
+                await db.commit()
+            logger.debug("Vector-indexed note %s", data["id"])
+        except Exception as e:
+            logger.warning("Vector indexing failed for note %s: %s", data["id"], e)
 
     async def _soft_delete_note(self, vault_path_str: str) -> None:
-        """Mark a note as deleted in the DB."""
+        """Mark a note as deleted in the DB and remove from Qdrant."""
         for root in (VAULT_ROOT, self.settings.vault_path):
             try:
                 rel_path = str(Path(vault_path_str).relative_to(root))
@@ -197,6 +224,11 @@ class VaultEventHandler(FileSystemEventHandler):
                 note.is_deleted = True
                 await db.commit()
                 logger.info("Soft-deleted note at %s", rel_path)
+                # Remove from Qdrant
+                try:
+                    vector_delete_note(note.id)
+                except Exception as e:
+                    logger.warning("Failed to delete note %s from Qdrant: %s", note.id, e)
 
 
 # ---------------------------------------------------------------------------

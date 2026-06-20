@@ -45,6 +45,7 @@ from gnosis.routers import (
 )
 from gnosis.services.llm_provider import llm_provider
 from gnosis.services.vault_sync import start_vault_watcher
+from gnosis.services.vector_store import ensure_collection
 
 logging.basicConfig(
     level=logging.INFO,
@@ -55,7 +56,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Startup: create tables, init LLM provider, start vault watcher. Shutdown: stop watcher."""
+    """Startup: create tables, init LLM provider, ensure Qdrant collection, start vault watcher."""
     # 1. Ensure all SQLAlchemy tables exist (dev convenience; prod uses Alembic)
     async with get_engine().begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -64,12 +65,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 2. Initialize LLM provider (probe Ollama / Groq / OpenAI)
     await llm_provider.initialize()
 
-    # 3. Start vault filesystem watcher + initial full sync
+    # 3. Ensure Qdrant collection exists (idempotent)
+    ensure_collection()
+
+    # 4. Start vault filesystem watcher + initial full sync
     observer = await start_vault_watcher()
 
     yield
 
-    # 4. Graceful shutdown
+    # 5. Graceful shutdown
     observer.stop()
     observer.join()
     logger.info("Gnosis API shutting down")
