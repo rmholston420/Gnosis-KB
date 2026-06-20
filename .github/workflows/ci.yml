@@ -55,13 +55,16 @@ jobs:
       - name: Create vault directory
         run: mkdir -p /tmp/gnosis-vault-ci/10-zettelkasten
 
-      - name: Run pytest
+      - name: Run pytest with coverage
         run: |
           pytest tests/ \
             -v \
             --tb=short \
             --asyncio-mode=auto \
-            -x
+            --cov=gnosis \
+            --cov-branch \
+            --cov-report=term-missing:skip-covered \
+            --cov-fail-under=50
 
   # ---------------------------------------------------------------------------
   # Frontend — TypeScript + Vite build
