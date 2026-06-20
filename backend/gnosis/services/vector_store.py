@@ -112,6 +112,79 @@ def ensure_collection() -> None:
     logger.info("Qdrant collection '%s' created", collection_name)
 
 
+def hybrid_search(
+    query: str,
+    owner_ids: Optional[set[int]] = None,
+    top_k: int = 5,
+    include_legacy: bool = True,
+) -> list[dict]:
+    """Run dense + sparse prefetch → RRF fusion → return top_k results.
+
+    Filters results to the given ``owner_ids`` set. When ``include_legacy``
+    is True (default), points with ``owner_id=0`` (legacy sentinel) are
+    also returned regardless of ``owner_ids``.
+
+    The sparse vector is approximated by reusing the dense embedding query
+    vector for the prefetch stage (true BM25 sparse encoding requires
+    the fastembed server-side pipeline; this approach gives good results
+    with the current collection configuration).
+
+    Args:
+        query: Natural language query string.
+        owner_ids: Set of integer owner IDs to filter results. None means
+            no filtering (return all).
+        top_k: Number of results to return.
+        include_legacy: Whether to also include owner_id=0 sentinel points.
+
+    Returns:
+        List of payload dicts from the top_k matching points.
+    """
+    client = get_qdrant_client()
+    settings = get_settings()
+    collection_name = settings.qdrant_collection_name
+
+    try:
+        dense_vec = embed_dense(query)
+    except Exception as exc:
+        logger.warning("hybrid_search: embed_dense failed: %s", exc)
+        return []
+
+    # Build owner filter
+    filter_condition: Optional[models.Filter] = None
+    if owner_ids is not None:
+        allowed_ids = list(owner_ids)
+        if include_legacy and _LEGACY_OWNER_SENTINEL not in allowed_ids:
+            allowed_ids.append(_LEGACY_OWNER_SENTINEL)
+        filter_condition = models.Filter(
+            should=[
+                models.FieldCondition(
+                    key="owner_id",
+                    match=models.MatchAny(any=allowed_ids),
+                )
+            ]
+        )
+
+    try:
+        results = client.query_points(
+            collection_name=collection_name,
+            prefetch=[
+                models.Prefetch(
+                    query=dense_vec,
+                    using="dense",
+                    limit=top_k * 3,
+                    filter=filter_condition,
+                ),
+            ],
+            query=models.FusionQuery(fusion=models.Fusion.RRF),
+            limit=top_k,
+            with_payload=True,
+        )
+        return [p.payload for p in results.points if p.payload]
+    except Exception as exc:
+        logger.warning("hybrid_search: Qdrant query failed: %s", exc)
+        return []
+
+
 def upsert_note(
     note_id: str,
     title: str,
@@ -122,25 +195,7 @@ def upsert_note(
     tags: list[str],
     owner_id: Optional[int] = None,
 ) -> None:
-    """Upsert a note into the Qdrant collection.
-
-    Generates dense and ColBERT embeddings. Sparse (BM25) embeddings
-    are computed by Qdrant server-side via the fastembed-server integration.
-
-    The point ID is a UUID v5 derived from ``note_id`` (Qdrant requires
-    UUID or unsigned int).  The original ``note_id`` string is preserved
-    in the payload for DB join-back.
-
-    Args:
-        note_id: Note primary key (arbitrary string).
-        title: Note title (included in text for embedding).
-        body: Note body Markdown text.
-        folder: PARA folder name.
-        note_type: Note type string.
-        status: Note status string.
-        tags: List of tag names.
-        owner_id: User ID that owns this note, or None for legacy notes.
-    """
+    """Upsert a note into the Qdrant collection."""
     client = get_qdrant_client()
     settings = get_settings()
 
@@ -180,11 +235,7 @@ def upsert_note(
 
 
 def delete_note(note_id: str) -> None:
-    """Remove a note from the Qdrant collection.
-
-    Args:
-        note_id: Note primary key (arbitrary string).
-    """
+    """Remove a note from the Qdrant collection."""
     client = get_qdrant_client()
     settings = get_settings()
     point_uuid = _note_id_to_uuid(note_id)

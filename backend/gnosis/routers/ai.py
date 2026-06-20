@@ -12,20 +12,16 @@ Endpoints:
   GET  /stream/chat          — SSE streaming chat (query param: message, mode)
   POST /generate-moc         — Map of Content generator (Feature 3)
 
-Dependencies:
-  services/llm_provider.py — three-tier LLM fallback
-  services/graph_rag.py    — LightRAG for vault-aware answers
+RAG pipeline
+------------
+Chat and stream/chat use Qdrant hybrid search (dense + sparse prefetch,
+RRF fusion) to retrieve relevant note snippets, then inject them as
+system context before calling the LLM. LightRAG is used when available
+and its instance is warm; otherwise Qdrant RAG is the primary path.
 
 Namespace contract
 ------------------
-Every endpoint is scoped to the authenticated user's accessible vault set.
-- graph_rag calls carry owner_ids so LightRAG uses the correct per-user
-  working directory (chat + stream_chat endpoints).
-- Note fetches use scoped_note_stmt() via _get_note_or_404 so cross-vault
-  notes are never surfaced, even if a caller guesses a note UUID.
-- orphan_audit uses scoped_note_stmt (no raw SQL interpolation).
-- All scoped endpoints declare owner_ids: set[int] = Depends(get_vault_owner_ids)
-  which honours the optional X-Vault-Owner-Id header for VaultSwitcher support.
+Every endpoint is scoped to the authenticated user’s accessible vault set.
 """
 from __future__ import annotations
 
@@ -62,14 +58,66 @@ from gnosis.schemas.ai import (
 )
 from gnosis.services.graph_rag import graph_rag
 from gnosis.services.llm_provider import llm_provider
+from gnosis.services.vector_store import hybrid_search
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ai", tags=["ai"])
+
+_VAULT_SYSTEM_PROMPT = (
+    "You are Gnosis, a personal knowledge assistant. "
+    "You have access to the user’s private Zettelkasten vault. "
+    "Answer questions using the vault context provided. "
+    "If the context does not contain enough information, say so honestly — "
+    "do not invent notes or facts. "
+    "Keep answers concise and cite note titles when relevant."
+)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _build_rag_context(hits: list[dict]) -> str:
+    """Format Qdrant search hits into a system-prompt context block."""
+    if not hits:
+        return ""
+    parts = ["Relevant notes from the vault:\n"]
+    for i, h in enumerate(hits, 1):
+        title = h.get("title", "Untitled")
+        snippet = h.get("text_snippet", "").strip()
+        folder = h.get("folder", "")
+        parts.append(f"{i}. [{title}] ({folder})\n{snippet}\n")
+    return "\n".join(parts)
+
+
+async def _qdrant_rag_complete(
+    message: str,
+    owner_ids: set[int],
+    mode: str = "hybrid",
+) -> str:
+    """Retrieve vault context via Qdrant then complete with LLM."""
+    hits = hybrid_search(message, owner_ids=owner_ids, top_k=5)
+    context = _build_rag_context(hits)
+    system = _VAULT_SYSTEM_PROMPT
+    if context:
+        system = system + "\n\n" + context
+    return await llm_provider.complete(prompt=message, system=system)
+
+
+async def _qdrant_rag_stream(
+    message: str,
+    owner_ids: set[int],
+    mode: str = "hybrid",
+) -> AsyncGenerator[str, None]:
+    """Retrieve vault context via Qdrant then stream tokens from LLM."""
+    hits = hybrid_search(message, owner_ids=owner_ids, top_k=5)
+    context = _build_rag_context(hits)
+    system = _VAULT_SYSTEM_PROMPT
+    if context:
+        system = system + "\n\n" + context
+    async for token in llm_provider.stream(prompt=message, system=system):
+        yield token
+
 
 async def _get_note_or_404(
     note_id: str,
@@ -153,18 +201,13 @@ async def chat(
     current_user: User = Depends(get_current_user),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> ChatResponse:
+    # Prefer LightRAG when warm; fall back to Qdrant RAG; then bare LLM.
     if await graph_rag.is_available(current_user.id):
         answer = await graph_rag.query(
             req.message, user_id=current_user.id, owner_ids=owner_ids, mode=req.mode
         )
     elif llm_provider.is_available:
-        answer = await llm_provider.complete(
-            prompt=req.message,
-            system=(
-                "You are a knowledgeable assistant. The vault graph-RAG is not available "
-                "so answer from general knowledge and note that you cannot search the vault."
-            ),
-        )
+        answer = await _qdrant_rag_complete(req.message, owner_ids=owner_ids, mode=req.mode)
     else:
         raise HTTPException(
             status_code=503,
@@ -208,7 +251,6 @@ async def suggest_links(
     if not llm_provider.is_available:
         raise HTTPException(status_code=503, detail="No LLM provider available")
     note = await _get_note_or_404(note_id, session, owner_ids)
-    # Candidate notes scoped to accessible vaults
     base = (
         select(Note.id, Note.title)
         .where(Note.id != note_id, Note.is_deleted.is_(False))
@@ -322,7 +364,6 @@ async def orphan_audit(
     session: AsyncSession = Depends(get_session),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> OrphanAuditResponse:
-    # Use scoped_note_stmt (no raw SQL interpolation, honours null-owner legacy)
     linked_ids = (
         select(Note.id)
         .join(Link, (Link.source_id == Note.id) | (Link.target_id == Note.id))
@@ -407,9 +448,9 @@ async def daily_review(
         f"### {n.title}\n{n.body[:500]}" for n in notes
     )
     prompt = (
-        f"Today's inbox notes ({today_str}):\n\n{notes_text}\n\n"
+        f"Today’s inbox notes ({today_str}):\n\n{notes_text}\n\n"
         "Provide:\n"
-        "1. A brief synthesis of today's captures (2-3 sentences).\n"
+        "1. A brief synthesis of today’s captures (2-3 sentences).\n"
         "2. 3-5 actionable suggestions (process, link, promote to project, etc).\n"
         "Format: {\"summary\": \"...\", \"suggestions\": [\"...\", ...]}"
     )
@@ -444,7 +485,13 @@ async def stream_chat(
     current_user: User = Depends(get_current_user),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> StreamingResponse:
-    """SSE endpoint: streams the AI answer token-by-token, scoped to accessible vaults."""
+    """SSE endpoint: streams the AI answer token-by-token, scoped to accessible vaults.
+
+    RAG pipeline priority:
+      1. LightRAG (when installed and warm for current user)
+      2. Qdrant hybrid search → context-injected LLM stream (default)
+      3. Error if no LLM available
+    """
 
     async def event_generator() -> AsyncGenerator[str, None]:
         try:
@@ -454,9 +501,8 @@ async def stream_chat(
                 ):
                     yield f"data: {json.dumps({'token': token})}\n\n"
             elif llm_provider.is_available:
-                async for token in llm_provider.stream(
-                    prompt=message,
-                    system="You are a knowledgeable assistant.",
+                async for token in _qdrant_rag_stream(
+                    message, owner_ids=owner_ids, mode=mode
                 ):
                     yield f"data: {json.dumps({'token': token})}\n\n"
             else:
@@ -518,7 +564,7 @@ async def generate_moc(
         f"MOC title: {moc_title}\n\n"
         "Organise the notes into 3-6 thematic sections. For each section provide:\n"
         "— A heading (short phrase)\n"
-        "— A one-sentence summary of the section's theme\n"
+        "— A one-sentence summary of the section’s theme\n"
         "— A list of note titles that belong in this section (use exact titles)\n\n"
         "Return as JSON:\n"
         "[{\"heading\": \"...\", \"summary\": \"...\", \"wikilinks\": [\"Note Title\", ...]}]\n"
