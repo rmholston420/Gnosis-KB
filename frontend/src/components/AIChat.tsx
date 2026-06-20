@@ -1,11 +1,11 @@
 /**
  * AIChat: Real-time streaming chat with the Gnosis knowledge graph.
  *
- * Uses Server-Sent Events (SSE) via EventSource for streaming.
- * Falls back to POST /ai/chat for non-streaming response.
+ * Uses fetch() + ReadableStream for SSE so we can send the Authorization
+ * header — EventSource does not support custom headers.
  */
 
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { Send, Trash2 } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import api from '../services/api';
@@ -14,13 +14,19 @@ import type { ChatMessage } from '../types';
 const RAG_MODES = ['hybrid', 'local', 'global'] as const;
 
 export default function AIChat() {
-  const { chatMessages, appendChatMessage, clearChat, ragMode, setRagMode, sessionId } = useAppStore();
+  const { chatMessages, appendChatMessage, updateLastAssistantMessage, clearChat, ragMode, setRagMode, sessionId, token } =
+    useAppStore();
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const scrollToBottom = () =>
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [chatMessages]);
 
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
@@ -33,63 +39,82 @@ export default function AIChat() {
     appendChatMessage(userMsg);
     setInput('');
     setIsLoading(true);
-    scrollToBottom();
+
+    // Seed an empty assistant bubble immediately
+    const assistantMsg: ChatMessage = {
+      role: 'assistant',
+      content: '',
+      timestamp: new Date().toISOString(),
+    };
+    appendChatMessage(assistantMsg);
+
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
 
     try {
-      // Use SSE streaming
-      let accumulated = '';
-      const assistantMsg: ChatMessage = {
-        role: 'assistant',
-        content: '',
-        timestamp: new Date().toISOString(),
-      };
-
-      // Try streaming via EventSource
-      const streamUrl = `/api/v1/ai/stream/chat?message=${encodeURIComponent(userMsg.content)}&mode=${ragMode}`;
-      const eventSource = new EventSource(streamUrl);
-
-      await new Promise<void>((resolve, reject) => {
-        eventSource.onmessage = (event) => {
-          if (event.data === '[DONE]') {
-            eventSource.close();
-            resolve();
-            return;
-          }
-          try {
-            const parsed = JSON.parse(event.data);
-            if (parsed.error) {
-              eventSource.close();
-              reject(new Error(parsed.error));
-              return;
-            }
-            accumulated += parsed.text || '';
-            assistantMsg.content = accumulated;
-          } catch {
-            // ignore parse errors
-          }
-        };
-        eventSource.onerror = () => {
-          eventSource.close();
-          resolve(); // fallback
-        };
+      const url = `/api/v1/ai/stream/chat?message=${encodeURIComponent(userMsg.content)}&mode=${ragMode}`;
+      const resp = await fetch(url, {
+        signal: ctrl.signal,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'text/event-stream',
+        },
       });
 
-      if (!accumulated) {
-        // Fallback to non-streaming
-        const resp = await api.chat(userMsg.content, ragMode, sessionId || undefined) as { answer: string };
-        assistantMsg.content = resp.answer;
+      if (!resp.ok || !resp.body) {
+        throw new Error(`HTTP ${resp.status}`);
       }
 
-      appendChatMessage(assistantMsg);
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let accumulated = '';
+      let buf = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop() ?? '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data:')) continue;
+          const raw = line.slice(5).trim();
+          if (raw === '[DONE]') break;
+          try {
+            const parsed = JSON.parse(raw);
+            if (parsed.error) throw new Error(parsed.error);
+            const chunk = parsed.token ?? parsed.text ?? '';
+            accumulated += chunk;
+            updateLastAssistantMessage(accumulated);
+          } catch {
+            // ignore malformed lines
+          }
+        }
+      }
+
+      // Fallback: if stream returned nothing, use POST endpoint
+      if (!accumulated) {
+        const resp2 = await api.chat(userMsg.content, ragMode, sessionId || undefined) as { answer: string };
+        updateLastAssistantMessage(resp2.answer);
+      }
     } catch (err) {
-      appendChatMessage({
-        role: 'assistant',
-        content: `Error: ${err instanceof Error ? err.message : 'Unknown error'}`,
-      });
+      if ((err as Error).name !== 'AbortError') {
+        updateLastAssistantMessage(
+          `Error: ${err instanceof Error ? err.message : 'Unknown error'}`
+        );
+      }
     } finally {
       setIsLoading(false);
+      abortRef.current = null;
       scrollToBottom();
     }
+  };
+
+  const handleStop = () => {
+    abortRef.current?.abort();
+    setIsLoading(false);
   };
 
   return (
@@ -121,15 +146,13 @@ export default function AIChat() {
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
         {chatMessages.length === 0 && (
           <div className="text-center text-text-muted text-sm py-12">
-            Ask anything about your knowledge base...
+            Ask anything about your knowledge base…
           </div>
         )}
         {chatMessages.map((msg, i) => (
           <div
             key={i}
-            className={`flex ${
-              msg.role === 'user' ? 'justify-end' : 'justify-start'
-            }`}
+            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
             <div
               className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
@@ -138,25 +161,16 @@ export default function AIChat() {
                   : 'bg-bg-tertiary text-text-primary'
               }`}
             >
-              <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+              <p className="whitespace-pre-wrap leading-relaxed">
+                {msg.content}
+                {/* blinking cursor on the last assistant bubble while streaming */}
+                {isLoading && i === chatMessages.length - 1 && msg.role === 'assistant' && (
+                  <span className="inline-block w-0.5 h-3.5 bg-current ml-0.5 animate-pulse align-middle" />
+                )}
+              </p>
             </div>
           </div>
         ))}
-        {isLoading && (
-          <div className="flex justify-start">
-            <div className="bg-bg-tertiary rounded-lg px-3 py-2">
-              <div className="flex gap-1">
-                {[0, 1, 2].map((i) => (
-                  <div
-                    key={i}
-                    className="w-1.5 h-1.5 rounded-full bg-text-muted animate-bounce"
-                    style={{ animationDelay: `${i * 150}ms` }}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
         <div ref={messagesEndRef} />
       </div>
 
@@ -172,18 +186,28 @@ export default function AIChat() {
                 handleSend();
               }
             }}
-            placeholder="Ask about your vault... (Enter to send, Shift+Enter for newline)"
+            placeholder="Ask about your vault… (Enter to send, Shift+Enter for newline)"
             className="flex-1 bg-bg-tertiary border border-border rounded px-3 py-2 text-sm text-text-primary placeholder-text-muted outline-none resize-none focus:border-accent-blue transition-colors min-h-[38px] max-h-32"
             rows={1}
             disabled={isLoading}
           />
-          <button
-            onClick={handleSend}
-            disabled={isLoading || !input.trim()}
-            className="p-2 bg-accent-blue hover:bg-blue-600 disabled:opacity-50 text-white rounded transition-colors flex-shrink-0"
-          >
-            <Send size={15} />
-          </button>
+          {isLoading ? (
+            <button
+              onClick={handleStop}
+              className="p-2 bg-red-500 hover:bg-red-600 text-white rounded transition-colors flex-shrink-0"
+              title="Stop"
+            >
+              <span className="w-3.5 h-3.5 block bg-white rounded-sm" />
+            </button>
+          ) : (
+            <button
+              onClick={handleSend}
+              disabled={!input.trim()}
+              className="p-2 bg-accent-blue hover:bg-blue-600 disabled:opacity-50 text-white rounded transition-colors flex-shrink-0"
+            >
+              <Send size={15} />
+            </button>
+          )}
         </div>
       </div>
     </div>
