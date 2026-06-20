@@ -76,6 +76,11 @@ def parse_note_file(path: Path) -> dict[str, Any]:
     }
 
 
+# Backward-compat alias — vault_sync.py and other callers written during
+# earlier build slices import `parse_markdown_file`. Both names are identical.
+parse_markdown_file = parse_note_file
+
+
 def extract_wikilinks(body: str) -> list[str]:
     """Extract all [[WikiLink]] targets from a Markdown body."""
     return list(dict.fromkeys(WIKILINK_RE.findall(body)))
