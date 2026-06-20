@@ -1,311 +1,367 @@
-"""Tests for gnosis/services/document_parser.py."""
+"""
+Unit tests for document_parser.py.
+
+Tests cover the pure-Python helpers and the format dispatcher.
+All heavy optional dependencies (fitz, docx, pptx, openpyxl, pytesseract)
+are mocked so no binaries are required.
+"""
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
+
+from gnosis.services.document_parser import (
+    ParsedDocument,
+    detect_format,
+    parse_file,
+)
 
 
 # ---------------------------------------------------------------------------
-# ParsedDocument
+# ParsedDocument dataclass
 # ---------------------------------------------------------------------------
 
 def test_parsed_document_defaults():
-    from gnosis.services.document_parser import ParsedDocument
     doc = ParsedDocument(title="T", text="body")
+    assert doc.source == ""
     assert doc.author == ""
     assert doc.page_count == 0
     assert doc.raw_format == ""
     assert doc.metadata == {}
-    assert doc.source == ""
 
 
-def test_parsed_document_full_fields():
-    from gnosis.services.document_parser import ParsedDocument
+def test_parsed_document_fields():
     doc = ParsedDocument(
-        title="T", text="b", source="s", author="A",
-        page_count=3, raw_format="pdf", metadata={"k": "v"}
+        title="My PDF",
+        text="hello world",
+        source="report.pdf",
+        author="Alice",
+        page_count=5,
+        raw_format="pdf",
+        metadata={"producer": "LaTeX"},
     )
-    assert doc.author == "A"
-    assert doc.page_count == 3
-    assert doc.metadata["k"] == "v"
+    assert doc.title == "My PDF"
+    assert doc.page_count == 5
+    assert doc.metadata["producer"] == "LaTeX"
 
 
 # ---------------------------------------------------------------------------
-# EXTENSION_MAP / detect_format
+# detect_format
 # ---------------------------------------------------------------------------
 
-def test_extension_map_contains_common_formats():
-    from gnosis.services.document_parser import EXTENSION_MAP
-    assert EXTENSION_MAP[".pdf"] == "pdf"
-    assert EXTENSION_MAP[".docx"] == "docx"
-    assert EXTENSION_MAP[".pptx"] == "pptx"
-    assert EXTENSION_MAP[".xlsx"] == "xlsx"
-    assert EXTENSION_MAP[".png"] == "image"
-
-
-def test_detect_format_pdf():
-    from gnosis.services.document_parser import detect_format
-    assert detect_format("report.pdf") == "pdf"
-
-
-def test_detect_format_docx():
-    from gnosis.services.document_parser import detect_format
-    assert detect_format("doc.docx") == "docx"
-    assert detect_format("doc.doc") == "docx"
-
-
-def test_detect_format_pptx():
-    from gnosis.services.document_parser import detect_format
-    assert detect_format("slides.pptx") == "pptx"
-
-
-def test_detect_format_xlsx():
-    from gnosis.services.document_parser import detect_format
-    assert detect_format("sheet.xlsx") == "xlsx"
-
-
-def test_detect_format_image():
-    from gnosis.services.document_parser import detect_format
-    assert detect_format("photo.png") == "image"
-    assert detect_format("photo.jpg") == "image"
-    assert detect_format("photo.webp") == "image"
-
-
-def test_detect_format_case_insensitive():
-    from gnosis.services.document_parser import detect_format
-    assert detect_format("DOC.PDF") == "pdf"
-    assert detect_format("PHOTO.JPG") == "image"
-
-
-def test_detect_format_unknown_returns_none():
-    from gnosis.services.document_parser import detect_format
-    assert detect_format("file.txt") is None
-    assert detect_format("note.md") is None
-    assert detect_format("archive.zip") is None
-
-
-def test_detect_format_no_extension_returns_none():
-    from gnosis.services.document_parser import detect_format
-    assert detect_format("Makefile") is None
+@pytest.mark.parametrize("filename,expected", [
+    ("report.pdf", "pdf"),
+    ("thesis.PDF", "pdf"),
+    ("notes.docx", "docx"),
+    ("notes.doc", "docx"),
+    ("deck.pptx", "pptx"),
+    ("deck.ppt", "pptx"),
+    ("data.xlsx", "xlsx"),
+    ("data.xls", "xlsx"),
+    ("photo.png", "image"),
+    ("photo.jpg", "image"),
+    ("photo.jpeg", "image"),
+    ("photo.webp", "image"),
+    ("scan.tiff", "image"),
+    ("scan.tif", "image"),
+    ("README.md", None),
+    ("archive.zip", None),
+    ("no_extension", None),
+])
+def test_detect_format(filename, expected):
+    assert detect_format(filename) == expected
 
 
 # ---------------------------------------------------------------------------
-# parse_pdf
+# parse_file dispatcher — unsupported raises ValueError
 # ---------------------------------------------------------------------------
 
-def test_parse_pdf_with_mocked_fitz(tmp_path):
-    from gnosis.services.document_parser import parse_pdf
+def test_parse_file_unsupported_raises():
+    with pytest.raises(ValueError, match="Unsupported file format"):
+        parse_file(Path("archive.zip"))
 
-    fake_page = MagicMock()
-    fake_page.get_text.return_value = "Page one content."
 
-    fake_doc = MagicMock()
-    fake_doc.__iter__ = MagicMock(return_value=iter([fake_page]))
-    fake_doc.__len__ = MagicMock(return_value=1)
-    fake_doc.metadata = {"title": "My PDF", "author": "Alice"}
+# ---------------------------------------------------------------------------
+# parse_pdf (mocked fitz)
+# ---------------------------------------------------------------------------
 
+def test_parse_pdf_uses_filename_as_title_when_no_meta():
+    import sys
     fake_fitz = MagicMock()
-    fake_fitz.open.return_value = fake_doc
-
-    f = tmp_path / "doc.pdf"
-    f.write_bytes(b"%PDF-1.4")
+    mock_doc = MagicMock()
+    mock_doc.metadata = {}
+    mock_doc.__iter__ = lambda self: iter([])
+    mock_doc.__len__ = lambda self: 0
+    fake_fitz.open.return_value = mock_doc
 
     with patch.dict(sys.modules, {"fitz": fake_fitz}):
-        doc = parse_pdf(f)
+        from gnosis.services import document_parser as dp
+        result = dp.parse_pdf(Path("/vault/my-great-report.pdf"))
 
-    assert doc.title == "My PDF"
-    assert "Page one" in doc.text
-    assert doc.raw_format == "pdf"
+    assert result.raw_format == "pdf"
+    assert result.title == "My Great Report"
+
+
+def test_parse_pdf_uses_metadata_title():
+    import sys
+    fake_fitz = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.metadata = {"title": "Executive Summary", "author": "Bob"}
+    mock_doc.__iter__ = lambda self: iter([])
+    mock_doc.__len__ = lambda self: 0
+    fake_fitz.open.return_value = mock_doc
+
+    with patch.dict(sys.modules, {"fitz": fake_fitz}):
+        from gnosis.services import document_parser as dp
+        result = dp.parse_pdf(Path("/vault/anything.pdf"))
+
+    assert result.title == "Executive Summary"
+    assert result.author == "Bob"
+
+
+def test_parse_pdf_missing_fitz_raises_runtime():
+    import sys
+    with patch.dict(sys.modules, {"fitz": None}):
+        from gnosis.services import document_parser as dp
+        with pytest.raises((RuntimeError, ImportError)):
+            dp.parse_pdf(Path("/vault/file.pdf"))
 
 
 # ---------------------------------------------------------------------------
-# parse_docx
+# parse_docx (mocked python-docx)
 # ---------------------------------------------------------------------------
 
-def test_parse_docx_with_mocked_docx(tmp_path):
-    from gnosis.services.document_parser import parse_docx
+def test_parse_docx_extracts_paragraphs():
+    import sys
 
-    fake_para1 = MagicMock()
-    fake_para1.text = "Introduction paragraph."
-    fake_para2 = MagicMock()
-    fake_para2.text = "Second paragraph."
-    fake_para_empty = MagicMock()
-    fake_para_empty.text = ""
+    p1, p2 = MagicMock(), MagicMock()
+    p1.text = "Introduction"
+    p2.text = "Body paragraph here."
 
-    fake_doc_obj = MagicMock()
-    fake_doc_obj.paragraphs = [fake_para1, fake_para2, fake_para_empty]
-    fake_doc_obj.sections = [MagicMock()]
+    mock_doc = MagicMock()
+    mock_doc.paragraphs = [p1, p2]
+    mock_doc.sections = [MagicMock()]  # 1 section
 
     fake_docx_module = MagicMock()
-    fake_docx_module.Document.return_value = fake_doc_obj
-
-    f = tmp_path / "doc.docx"
-    f.write_bytes(b"PK")
+    fake_docx_module.Document.return_value = mock_doc
 
     with patch.dict(sys.modules, {"docx": fake_docx_module}):
-        doc = parse_docx(f)
+        from gnosis.services import document_parser as dp
+        result = dp.parse_docx(Path("/vault/essay.docx"))
 
-    assert "Introduction" in doc.text
-    assert doc.raw_format == "docx"
+    assert result.raw_format == "docx"
+    assert "Introduction" in result.text
+    assert result.title == "Introduction"
+    assert result.page_count == 1
+
+
+def test_parse_docx_empty_doc_uses_stem_as_title():
+    import sys
+
+    mock_doc = MagicMock()
+    mock_doc.paragraphs = []
+    mock_doc.sections = []
+
+    fake_docx_module = MagicMock()
+    fake_docx_module.Document.return_value = mock_doc
+
+    with patch.dict(sys.modules, {"docx": fake_docx_module}):
+        from gnosis.services import document_parser as dp
+        result = dp.parse_docx(Path("/vault/my-notes.docx"))
+
+    assert result.title == "my-notes"
 
 
 # ---------------------------------------------------------------------------
-# parse_url — httpx AND bs4 both imported inside function body.
-# Both must be patched via sys.modules.
+# parse_pptx (mocked python-pptx)
 # ---------------------------------------------------------------------------
 
-def _make_fake_httpx(html: str = "", raise_on_get: bool = False):
-    fake_resp = MagicMock()
-    fake_resp.text = html
-    fake_resp.raise_for_status = MagicMock()
+def test_parse_pptx_extracts_slide_text():
+    import sys
 
-    fake_client = MagicMock()
-    if raise_on_get:
-        fake_client.get = AsyncMock(side_effect=Exception("connection refused"))
-    else:
-        fake_client.get = AsyncMock(return_value=fake_resp)
-    fake_client.__aenter__ = AsyncMock(return_value=fake_client)
-    fake_client.__aexit__ = AsyncMock(return_value=False)
+    shape = MagicMock()
+    shape.text = "  Hello Slide  "
+    slide = MagicMock()
+    slide.shapes = [shape]
 
-    fake_httpx = MagicMock()
-    fake_httpx.AsyncClient.return_value = fake_client
-    return fake_httpx
+    prs = MagicMock()
+    prs.slides = [slide]
 
+    fake_pptx = MagicMock()
+    fake_pptx.Presentation.return_value = prs
 
-def _make_fake_bs4(title_text: str, body_text: str):
-    """Build a bs4 mock.
+    with patch.dict(sys.modules, {"pptx": fake_pptx}):
+        from gnosis.services import document_parser as dp
+        result = dp.parse_pptx(Path("/vault/deck.pptx"))
 
-    soup.find() is called with BOTH positional ("title", "main", "body" …)
-    AND keyword-only (id="content", class_="content") arguments.  The
-    simplest approach is to return a real-looking mock for "title" and
-    a body-like mock for everything else so get_text() is always available.
-    """
-    fake_title_tag = MagicMock()
-    fake_title_tag.get_text.return_value = title_text
-
-    # Return None for semantic tags (main/article) so execution falls through
-    # to the "body" branch, which we DO return.
-    fake_body = MagicMock()
-    fake_body.get_text.return_value = body_text
-
-    def _find(*args, **kwargs):
-        # First positional arg is the tag name (or None for kw-only calls)
-        tag = args[0] if args else None
-        if tag == "title":
-            return fake_title_tag
-        if tag in ("main", "article"):
-            return None  # let it fall through
-        if tag == "body":
-            return fake_body
-        # keyword-only calls: id="content" or class_="content" → None (fall-through)
-        return None
-
-    fake_soup = MagicMock()
-    fake_soup.find = _find
-    fake_soup.find_all.return_value = []  # no tags to decompose
-    fake_soup.get_text.return_value = body_text
-
-    fake_bs4 = MagicMock()
-    fake_bs4.BeautifulSoup.return_value = fake_soup
-    return fake_bs4
+    assert result.raw_format == "pptx"
+    assert "Hello Slide" in result.text
+    assert result.page_count == 1
 
 
-@pytest.mark.asyncio
+# ---------------------------------------------------------------------------
+# parse_xlsx (mocked openpyxl)
+# ---------------------------------------------------------------------------
+
+def test_parse_xlsx_builds_markdown_table():
+    import sys
+
+    header_row = ("Name", "Age", "Score")
+    data_row = ("Alice", 30, 95)
+
+    ws = MagicMock()
+    ws.iter_rows.return_value = [header_row, data_row]
+
+    wb = MagicMock()
+    wb.sheetnames = ["Sheet1"]
+    wb.__getitem__ = lambda self, key: ws
+    wb.close = MagicMock()
+
+    fake_openpyxl = MagicMock()
+    fake_openpyxl.load_workbook.return_value = wb
+
+    with patch.dict(sys.modules, {"openpyxl": fake_openpyxl}):
+        from gnosis.services import document_parser as dp
+        result = dp.parse_xlsx(Path("/vault/data.xlsx"))
+
+    assert result.raw_format == "xlsx"
+    assert "Name" in result.text
+    assert "Alice" in result.text
+
+
+def test_parse_xlsx_skips_empty_sheet():
+    import sys
+
+    ws = MagicMock()
+    ws.iter_rows.return_value = []  # empty
+
+    wb = MagicMock()
+    wb.sheetnames = ["Empty"]
+    wb.__getitem__ = lambda self, key: ws
+    wb.close = MagicMock()
+
+    fake_openpyxl = MagicMock()
+    fake_openpyxl.load_workbook.return_value = wb
+
+    with patch.dict(sys.modules, {"openpyxl": fake_openpyxl}):
+        from gnosis.services import document_parser as dp
+        result = dp.parse_xlsx(Path("/vault/empty.xlsx"))
+
+    assert result.text == ""
+
+
+# ---------------------------------------------------------------------------
+# parse_image (mocked pytesseract / Pillow)
+# ---------------------------------------------------------------------------
+
+def test_parse_image_extracts_ocr_text():
+    import sys
+
+    fake_pil = MagicMock()
+    fake_pil.Image.open.return_value = MagicMock()
+
+    fake_pytesseract = MagicMock()
+    fake_pytesseract.image_to_string.return_value = "  Hello OCR  "
+
+    with patch.dict(sys.modules, {"pytesseract": fake_pytesseract, "PIL": fake_pil}):
+        from gnosis.services import document_parser as dp
+        result = dp.parse_image(Path("/vault/scan.png"))
+
+    assert result.raw_format == "image"
+    assert result.text == "Hello OCR"
+    assert result.page_count == 1
+
+
+# ---------------------------------------------------------------------------
+# parse_url (mocked httpx + bs4)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.anyio
 async def test_parse_url_extracts_title_and_text():
-    from gnosis.services.document_parser import parse_url
+    import sys
 
-    html = "<html><head><title>Test Page</title></head><body><p>Hello world.</p></body></html>"
-    fake_httpx = _make_fake_httpx(html)
-    fake_bs4 = _make_fake_bs4("Test Page", "Hello world.")
+    html = """<html><head><title>Test Page</title></head>
+    <body><main><p>Main content here.</p></main></body></html>"""
 
-    with patch.dict(sys.modules, {"httpx": fake_httpx, "bs4": fake_bs4}):
-        doc = await parse_url("https://example.com/page")
+    mock_resp = MagicMock()
+    mock_resp.text = html
+    mock_resp.raise_for_status = MagicMock()
 
-    assert doc.title == "Test Page"
-    assert "Hello world" in doc.text
-    assert doc.raw_format == "url"
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.get = AsyncMock(return_value=mock_resp)
 
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        from gnosis.services import document_parser as dp
+        result = await dp.parse_url("https://example.com")
 
-@pytest.mark.asyncio
-async def test_parse_url_handles_http_error():
-    from gnosis.services.document_parser import parse_url
-
-    fake_httpx = _make_fake_httpx("", raise_on_get=True)
-
-    with patch.dict(sys.modules, {"httpx": fake_httpx}):
-        with pytest.raises(Exception):
-            await parse_url("https://example.com/broken")
+    assert result.raw_format == "url"
+    assert result.title == "Test Page"
+    assert "content" in result.text.lower()
 
 
-@pytest.mark.asyncio
-async def test_parse_url_no_bs4_falls_back_to_raw_text():
-    from gnosis.services.document_parser import parse_url
+@pytest.mark.anyio
+async def test_parse_url_fallback_without_bs4():
+    import sys
 
-    html = "<html><body><p>Raw fallback.</p></body></html>"
-    fake_httpx = _make_fake_httpx(html)
+    html = "<html><body>raw html</body></html>"
+    mock_resp = MagicMock()
+    mock_resp.text = html
+    mock_resp.raise_for_status = MagicMock()
 
-    with patch.dict(sys.modules, {"httpx": fake_httpx, "bs4": None}):
-        doc = await parse_url("https://example.com/no-bs4")
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.get = AsyncMock(return_value=mock_resp)
 
-    assert doc.raw_format == "url"
-    assert isinstance(doc.title, str)
+    # Force bs4 import to fail
+    with patch("httpx.AsyncClient", return_value=mock_client), \
+         patch.dict(sys.modules, {"bs4": None}):
+        from gnosis.services import document_parser as dp
+        result = await dp.parse_url("https://example.com")
+
+    assert result.raw_format == "url"
+    assert result.source == "https://example.com"
 
 
 # ---------------------------------------------------------------------------
-# parse_file — sync dispatcher
+# parse_file dispatcher — routes to correct sub-parser
 # ---------------------------------------------------------------------------
 
-def test_parse_file_raises_on_unsupported_extension(tmp_path):
-    from gnosis.services.document_parser import parse_file
-    f = tmp_path / "file.xyz"
-    f.write_text("data")
-    with pytest.raises(ValueError):
-        parse_file(f)
+def test_parse_file_routes_pdf():
+    with patch("gnosis.services.document_parser.parse_pdf") as mock_pdf:
+        mock_pdf.return_value = ParsedDocument(title="T", text="t", raw_format="pdf")
+        result = parse_file(Path("/vault/file.pdf"))
+    mock_pdf.assert_called_once()
+    assert result.raw_format == "pdf"
 
 
-def test_parse_file_raises_on_txt(tmp_path):
-    from gnosis.services.document_parser import parse_file
-    f = tmp_path / "readme.txt"
-    f.write_text("hello")
-    with pytest.raises(ValueError):
-        parse_file(f)
+def test_parse_file_routes_docx():
+    with patch("gnosis.services.document_parser.parse_docx") as mock_docx:
+        mock_docx.return_value = ParsedDocument(title="T", text="t", raw_format="docx")
+        result = parse_file(Path("/vault/file.docx"))
+    mock_docx.assert_called_once()
 
 
-def test_parse_file_raises_on_markdown(tmp_path):
-    from gnosis.services.document_parser import parse_file
-    f = tmp_path / "note.md"
-    f.write_text("# heading")
-    with pytest.raises(ValueError):
-        parse_file(f)
+def test_parse_file_routes_pptx():
+    with patch("gnosis.services.document_parser.parse_pptx") as mock_pptx:
+        mock_pptx.return_value = ParsedDocument(title="T", text="t", raw_format="pptx")
+        parse_file(Path("/vault/file.pptx"))
+    mock_pptx.assert_called_once()
 
 
-def test_parse_file_dispatches_to_pdf(tmp_path):
-    from gnosis.services.document_parser import parse_file, ParsedDocument
-    f = tmp_path / "doc.pdf"
-    f.write_bytes(b"%PDF-1.4")
-    mock_result = ParsedDocument(title="PDF", text="content", raw_format="pdf")
-    with patch("gnosis.services.document_parser.parse_pdf", return_value=mock_result):
-        doc = parse_file(f)
-    assert doc.raw_format == "pdf"
+def test_parse_file_routes_xlsx():
+    with patch("gnosis.services.document_parser.parse_xlsx") as mock_xlsx:
+        mock_xlsx.return_value = ParsedDocument(title="T", text="t", raw_format="xlsx")
+        parse_file(Path("/vault/file.xlsx"))
+    mock_xlsx.assert_called_once()
 
 
-def test_parse_file_dispatches_to_docx(tmp_path):
-    from gnosis.services.document_parser import parse_file, ParsedDocument
-    f = tmp_path / "doc.docx"
-    f.write_bytes(b"PK")
-    mock_result = ParsedDocument(title="DOCX", text="content", raw_format="docx")
-    with patch("gnosis.services.document_parser.parse_docx", return_value=mock_result):
-        doc = parse_file(f)
-    assert doc.raw_format == "docx"
-
-
-def test_parse_file_dispatches_to_image(tmp_path):
-    from gnosis.services.document_parser import parse_file, ParsedDocument
-    f = tmp_path / "photo.png"
-    f.write_bytes(b"PNG")
-    mock_result = ParsedDocument(title="Image", text="ocr text", raw_format="image")
-    with patch("gnosis.services.document_parser.parse_image", return_value=mock_result):
-        doc = parse_file(f)
-    assert doc.raw_format == "image"
+def test_parse_file_routes_image():
+    with patch("gnosis.services.document_parser.parse_image") as mock_img:
+        mock_img.return_value = ParsedDocument(title="T", text="t", raw_format="image")
+        parse_file(Path("/vault/photo.png"))
+    mock_img.assert_called_once()
