@@ -16,7 +16,13 @@ from gnosis.routers.vault import router
 def _make_app(db_mock: AsyncMock, user_id: int = 1) -> FastAPI:
     app = FastAPI()
     app.include_router(router, prefix="/api/v1")
-    user = User(id=user_id, email="u@test.com", hashed_password="x")
+    user = User(
+        id=user_id,
+        email="u@test.com",
+        hashed_password="x",
+        is_active=True,
+        is_superuser=False,
+    )
 
     async def _db():
         yield db_mock
@@ -29,7 +35,11 @@ def _make_app(db_mock: AsyncMock, user_id: int = 1) -> FastAPI:
     return app
 
 
-# POST /vault/sync
+# ---------------------------------------------------------------------------
+# POST /vault/sync  — streams NDJSON via StreamingResponse
+# run_full_sync_for_user is an async generator
+# ---------------------------------------------------------------------------
+
 def test_vault_sync_returns_200():
     db = AsyncMock()
 
@@ -54,7 +64,10 @@ def test_vault_sync_error_still_returns_200():
     assert resp.status_code == 200
 
 
+# ---------------------------------------------------------------------------
 # POST /vault/sync/file
+# ---------------------------------------------------------------------------
+
 def test_vault_sync_file_returns_200():
     db = AsyncMock()
 
@@ -77,13 +90,18 @@ def test_vault_sync_file_not_found():
     assert resp.status_code == 200
 
 
-# GET /vault/status
+# ---------------------------------------------------------------------------
+# GET /vault/status  — executes two scalar queries
+# ---------------------------------------------------------------------------
+
 def test_vault_status_returns_200():
     db = AsyncMock()
-    r = MagicMock()
-    r.scalar.return_value = 42
-    db.execute.return_value = r
+    mock_r = MagicMock()
+    mock_r.scalar.return_value = 42
+    db.execute.return_value = mock_r
+    # Some implementations use db.scalar directly
     db.scalar = AsyncMock(return_value=42)
+
     client = TestClient(_make_app(db))
     resp = client.get("/api/v1/vault/status")
     assert resp.status_code == 200
