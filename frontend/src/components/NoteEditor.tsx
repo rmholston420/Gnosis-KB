@@ -4,21 +4,18 @@
  * CodeMirror 6 Markdown editor with:
  *   - [[wikilink]] autocomplete (built-in CM6 completions)
  *   - Split edit/preview/both modes
- *   - Auto-save with debounce
+ *   - Auto-save with debounce (Option C: tags included in every save)
+ *   - TagInput row between toolbar and CodeMirror (new in Slice 14)
  *   - BacklinkPanel showing incoming + outgoing links
  *   - Pre-fill title from ?title= query param (for broken-link creation)
  *
- * Props added in Slice 9
- * ----------------------
- * onBodyChange?: (value: string) => void
- *   Called on every body keystroke so NoteEditorPage can mirror the value
- *   for the wikilink detector without CodeMirror-level access.
- *
- * textareaRef?: React.RefObject<HTMLDivElement>
- *   Attached to the CodeMirror host div.  WikilinkAutocomplete in
- *   NoteEditorPage uses this ref to anchor its positioning.
- *   (CM6 renders a contenteditable div, not a <textarea>, so we expose
- *   the outer wrapper ref instead.)
+ * Props
+ * -----
+ * note          Note        The note to edit (required)
+ * onSave        function    Called with (body, title, tags) on auto-save
+ * isLoading     boolean?    Shows "Saving…" in status
+ * onBodyChange  function?   Mirror every body change to parent
+ * textareaRef   Ref?        Attached to CM wrapper for WikilinkAutocomplete
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -34,10 +31,12 @@ import type { Note, NoteListItem, NoteListResponse } from '../types';
 import { useAppStore } from '../store/useAppStore';
 import WikilinkPreview from './WikilinkPreview';
 import BacklinkPanel from './BacklinkPanel';
+import TagInput from './TagInput';
 
 interface NoteEditorProps {
   note: Note;
-  onSave: (body: string, title?: string) => Promise<void>;
+  /** Called with (body, title, tags) on every debounced save and title-blur. */
+  onSave: (body: string, title?: string, tags?: string[]) => Promise<void>;
   isLoading?: boolean;
   /** Mirror every body change to parent (used by wikilink detector). */
   onBodyChange?: (value: string) => void;
@@ -61,18 +60,23 @@ export default function NoteEditor({
 
   const prefillTitle = searchParams.get('title') ?? '';
 
-  const [body, setBody] = useState(note.body);
-  const [title, setTitle] = useState(note.title || prefillTitle);
-  const [isDirty, setIsDirty] = useState(!!prefillTitle && !note.id);
-  const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  const [body,     setBody]     = useState(note.body);
+  const [title,    setTitle]    = useState(note.title || prefillTitle);
+  // Option C: tags live in editor state alongside body/title
+  const [tags,     setTags]     = useState<string[]>(note.tags ?? []);
+  const [isDirty,  setIsDirty]  = useState(!!prefillTitle && !note.id);
+  const [lastSaved,setLastSaved]= useState<Date | null>(null);
   const saveTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
+  // Sync state when the note being edited changes (navigation between notes)
   useEffect(() => {
     setBody(note.body);
     setTitle(note.title || prefillTitle);
+    setTags(note.tags ?? []);
     setIsDirty(false);
-  }, [note.id, note.body, note.title, prefillTitle]);
+  }, [note.id, note.body, note.title, note.tags, prefillTitle]);
 
+  // ── Note-titles for [[wikilink]] autocomplete ───────────────────────────
   const { data: notesData } = useQuery<NoteListResponse>({
     queryKey: ['notes-titles'],
     queryFn: () => api.listNotes({ page_size: 200 }) as Promise<NoteListResponse>,
@@ -85,6 +89,7 @@ export default function NoteEditor({
     [noteList],
   );
 
+  // ── CodeMirror wikilink completion source ──────────────────────────────
   const wikilinkCompletion: CompletionSource = useCallback(
     (context) => {
       const before = context.matchBefore(/\[\[[^\]]*/
@@ -102,34 +107,49 @@ export default function NoteEditor({
     [noteTitles],
   );
 
+  // ── Shared save trigger ─────────────────────────────────────────────────
+  /**
+   * Executes the debounced save.  Accepts optional overrides so callers
+   * can pass the very latest value without waiting for state to flush.
+   */
+  const triggerSave = useCallback(
+    async (latestBody: string, latestTitle: string, latestTags: string[]) => {
+      try {
+        await onSave(latestBody, latestTitle, latestTags);
+        setLastSaved(new Date());
+        setIsDirty(false);
+      } catch {
+        // Silent — dirty indicator stays set
+      }
+    },
+    [onSave],
+  );
+
+  // ── Body changes (debounced 800 ms) ─────────────────────────────────────
   const handleBodyChange = (value: string) => {
     setBody(value);
     setIsDirty(true);
     onBodyChange?.(value);
     if (saveTimeout.current) clearTimeout(saveTimeout.current);
-    saveTimeout.current = setTimeout(async () => {
-      try {
-        await onSave(value, title);
-        setLastSaved(new Date());
-        setIsDirty(false);
-      } catch {
-        // Silent; dirty indicator stays
-      }
-    }, 800);
+    saveTimeout.current = setTimeout(() => triggerSave(value, title, tags), 800);
   };
 
+  // ── Title blur ──────────────────────────────────────────────────────────
   const handleTitleBlur = async () => {
     if (isDirty) {
-      try {
-        await onSave(body, title);
-        setLastSaved(new Date());
-        setIsDirty(false);
-      } catch {
-        // Silent
-      }
+      await triggerSave(body, title, tags);
     }
   };
 
+  // ── Tag changes: mark dirty + reschedule debounced save ─────────────────
+  const handleTagsChange = (newTags: string[]) => {
+    setTags(newTags);
+    setIsDirty(true);
+    if (saveTimeout.current) clearTimeout(saveTimeout.current);
+    saveTimeout.current = setTimeout(() => triggerSave(body, title, newTags), 800);
+  };
+
+  // Cleanup on unmount
   useEffect(() => () => {
     if (saveTimeout.current) clearTimeout(saveTimeout.current);
   }, []);
@@ -139,7 +159,8 @@ export default function NoteEditor({
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      {/* ---- Toolbar ---- */}
+
+      {/* ── Toolbar ───────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-border flex-shrink-0 bg-bg-primary">
         <input
           type="text"
@@ -151,7 +172,13 @@ export default function NoteEditor({
         />
         <div className="flex items-center gap-3 flex-shrink-0">
           <span className="text-xs text-text-muted">
-            {isLoading ? 'Saving…' : isDirty ? '● unsaved' : lastSaved ? `Saved ${lastSaved.toLocaleTimeString()}` : ''}
+            {isLoading
+              ? 'Saving…'
+              : isDirty
+                ? '● unsaved'
+                : lastSaved
+                  ? `Saved ${lastSaved.toLocaleTimeString()}`
+                  : ''}
           </span>
           <div className="flex rounded border border-border overflow-hidden text-xs">
             {(['edit', 'split', 'preview'] as const).map((mode) => (
@@ -171,15 +198,22 @@ export default function NoteEditor({
         </div>
       </div>
 
-      {/* ---- Editor + Preview panes ---- */}
+      {/* ── Tag input row ─────────────────────────────────────────────── */}
+      <TagInput
+        tags={tags}
+        onChange={handleTagsChange}
+        placeholder="Add tags (Enter or comma to confirm)…"
+        disabled={!note.id && !prefillTitle}
+      />
+
+      {/* ── Editor + Preview panes ───────────────────────────────────── */}
       <div className="flex-1 flex overflow-hidden min-h-0">
         {showEditor && (
-          // textareaRef is attached here — the CM6 wrapper div.
-          // WikilinkAutocomplete in NoteEditorPage positions itself
-          // relative to this element.
           <div
             ref={textareaRef as React.RefObject<HTMLDivElement>}
-            className={`overflow-auto ${showPreview ? 'w-1/2 border-r border-border' : 'w-full'}`}
+            className={`overflow-auto ${
+              showPreview ? 'w-1/2 border-r border-border' : 'w-full'
+            }`}
           >
             <CodeMirror
               value={body}
@@ -200,13 +234,13 @@ export default function NoteEditor({
         )}
 
         {showPreview && (
-          <div className={`overflow-auto p-6 ${showEditor ? 'w-1/2' : 'w-full'}`}>
+          <div className={`overflow-auto p-6 ${ showEditor ? 'w-1/2' : 'w-full' }`}>
             <WikilinkPreview body={body} notes={noteList} />
           </div>
         )}
       </div>
 
-      {/* ---- Backlink Panel ---- */}
+      {/* ── Backlink Panel ─────────────────────────────────────────────── */}
       {note.id && (
         <div className="flex-shrink-0">
           <BacklinkPanel
