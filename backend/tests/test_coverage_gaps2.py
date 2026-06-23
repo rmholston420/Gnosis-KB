@@ -2,29 +2,7 @@
 test_coverage_gaps2.py
 
 Surgical second-pass tests targeting every line/arc still uncovered after
-test_final_gaps.py:
-
-  gnosis/config.py              line 82     get_settings — cold-cache return path
-  gnosis/database.py            line 66     _AsyncSessionLocalProxy.__call__
-  gnosis/routers/admin.py       line 95     reindex_vault — non-admin user → 403
-  gnosis/routers/ai.py          lines/arcs:
-                                  129       summarize_note — LLM unavailable 503
-                                  138->142  _parse_json_list bracket+invalid JSON
-                                  211->221  suggest_links — no arrays in raw
-                                  215->221  suggest_links — first array invalid JSON
-                                  243-244   suggest_links — second array invalid JSON
-                                  297-303   set_model — Ollama not available 400
-                                  343-344   critique_note — no JSON braces in raw
-                                  411-412   orphan_audit — no JSON array in raw
-                                  450       daily_review — notes exist but LLM unavailable
-                                  467->483  daily_review — valid JSON path
-                                  481-482   daily_review — brace+invalid JSON
-                                  634-635   ingest_note — exception → 500
-                                  670       _LIGHTRAG_AVAILABLE_CHECK — ImportError path
-                                  709-710   generate_moc — JSON decode error in sections
-  gnosis/routers/export.py      line 237    export_note_pdf — note not found 404
-  gnosis/routers/notes.py       52->exit, 54-57   list_notes — body_snippet truncation
-  gnosis/routers/review.py      146-154,157,188-189  review session edge cases
+test_final_gaps.py.
 """
 from __future__ import annotations
 
@@ -48,10 +26,14 @@ async def _create_note(client, note_id: str, title: str, body: str = "Test body.
 
 
 async def _enroll_review_card(client, note_id: str) -> None:
-    """Enroll a note into the SM-2 review queue via POST /api/v1/review/{note_id}/enroll."""
+    """Enroll a note into the SM-2 review queue.
+
+    The endpoint is POST /api/v1/review/{note_id}/enroll.
+    ReviewEnroll schema requires note_id in the JSON body too.
+    """
     resp = await client.post(
         f"/api/v1/review/{note_id}/enroll",
-        json={"due_today": True},
+        json={"note_id": note_id, "due_today": True},
     )
     assert resp.status_code in (200, 201), (
         f"review card enrollment failed {resp.status_code}: {resp.text}"
@@ -62,14 +44,13 @@ async def _enroll_review_card(client, note_id: str) -> None:
 # gnosis/config.py  line 82 — get_settings cold-cache return path
 # ---------------------------------------------------------------------------
 
-class TestConfigEnvOverride:
+class TestConfigColdCache:
     def test_get_settings_cold_cache_returns_settings(self):
         """Clear lru_cache so get_settings() executes line 82 (return settings) fresh."""
         from gnosis.config import get_settings, settings
         get_settings.cache_clear()
         try:
             result = get_settings()
-            # Must return the module-level singleton
             assert result is settings
         finally:
             get_settings.cache_clear()
@@ -91,36 +72,75 @@ class TestAsyncSessionLocalProxyCall:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/admin.py  line 95 — non-admin user triggers 403 branch
+# gnosis/routers/admin.py  line 95 — non-admin user triggers 403
 #
-# Line 95 is: if current_user.id != 1: raise HTTPException(403)
-# conftest's require_user override returns a user with id=1 by default.
-# We override it here to return id=2 so the 403 branch executes.
+# Line 95: if current_user.id != 1: raise HTTPException(403)
+#
+# We spin up a dedicated test client whose require_user + get_current_user
+# overrides return a user with id=2, exercising the 403 branch.
 # ---------------------------------------------------------------------------
 
 class TestAdminReindexNonAdmin:
-    async def test_reindex_returns_403_for_non_admin(self, async_client):
-        from gnosis.core.auth import require_user
-        from gnosis.models.user import User
-        from gnosis.main import app
+    async def test_reindex_returns_403_for_non_admin(self, test_engine, vault_dir):
+        from dataclasses import dataclass
+        from unittest.mock import AsyncMock, patch
 
-        non_admin = User(id=2, email="other@gnosis.local", hashed_password="x", is_active=True)
+        from httpx import ASGITransport, AsyncClient
+        from sqlalchemy.ext.asyncio import async_sessionmaker
 
-        app.dependency_overrides[require_user] = lambda: non_admin
-        try:
-            resp = await async_client.post("/api/v1/admin/reindex")
-        finally:
-            # Restore the original override set by conftest
-            from tests.conftest import _get_test_user  # noqa: PLC0415
-            app.dependency_overrides[require_user] = _get_test_user
+        from gnosis.core.auth import get_current_user, require_user
+        from gnosis.database import get_db
+        from gnosis.main import create_app
+
+        @dataclass
+        class _NonAdmin:
+            id: int = 2
+            email: str = "other@gnosis.local"
+            full_name: str | None = "Other"
+            vault_slug: str | None = "other"
+            vault_path: str | None = None
+            vault_display_name: str | None = None
+            is_active: bool = True
+            is_superuser: bool = False
+
+        async def _non_admin_user():
+            return _NonAdmin()
+
+        p1 = patch("gnosis.services.vector_store.ensure_collection", return_value=None)
+        p2 = patch("gnosis.services.vault_sync.start_vault_watcher",
+                   new=AsyncMock(return_value=MagicMock(stop=lambda: None, join=lambda: None)))
+        p3 = patch("gnosis.services.graph_rag.graph_rag.initialize",
+                   new=AsyncMock(return_value=None))
+
+        with p1, p2, p3:
+            from gnosis import config
+            settings = config.get_settings()
+            settings.vault_path = str(vault_dir)
+
+            app = create_app()
+            session_factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+
+            async def override_get_db():
+                async with session_factory() as session:
+                    yield session
+
+            app.dependency_overrides[get_db] = override_get_db
+            app.dependency_overrides[require_user] = _non_admin_user
+            app.dependency_overrides[get_current_user] = _non_admin_user
+
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as c:
+                resp = await c.post("/api/v1/admin/reindex")
+
+            app.dependency_overrides.clear()
 
         assert resp.status_code == 403
         assert "Admin-only" in resp.json()["detail"]
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py  line 129
-# summarize_note — LLM not available → 503
+# gnosis/routers/ai.py  line 129 — summarize_note LLM unavailable → 503
 # ---------------------------------------------------------------------------
 
 class TestSummarizeNoteLlmUnavailable:
@@ -133,16 +153,14 @@ class TestSummarizeNoteLlmUnavailable:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py  138->142
-# _parse_json_list — bracket matched but body is invalid JSON → line-split fallback
+# gnosis/routers/ai.py  138->142 — _parse_json_list bracket+invalid JSON
 # ---------------------------------------------------------------------------
 
 class TestParseJsonListBracketInvalidJson:
     def test_bracket_invalid_json_falls_back_to_lines(self):
         from gnosis.routers.ai import _parse_json_list
         raw = "Here are items: [not: valid, json] and more text after"
-        result = _parse_json_list(raw)
-        assert isinstance(result, list)
+        assert isinstance(_parse_json_list(raw), list)
 
     def test_valid_json_list_returned_directly(self):
         from gnosis.routers.ai import _parse_json_list
@@ -156,36 +174,29 @@ class TestParseJsonListBracketInvalidJson:
 
 # ---------------------------------------------------------------------------
 # gnosis/routers/ai.py  arcs 211->221, 215->221, 243-244
-# suggest_links edge cases
 # ---------------------------------------------------------------------------
 
 class TestSuggestLinksEdgeCases:
     async def test_no_arrays_in_raw_returns_empty(self, async_client):
-        """arc 211->221: re.findall finds no [...] — suggestions and rationale are []."""
         note_id = await _create_note(async_client, "sl-no-arr-001", "SL No Arrays")
         with patch("gnosis.routers.ai.llm_provider") as mock_llm:
             mock_llm.is_available = True
             mock_llm.complete = AsyncMock(return_value="No structured output at all.")
             resp = await async_client.post(f"/api/v1/ai/suggest-links/{note_id}")
         assert resp.status_code == 200
-        data = resp.json()
-        assert data["suggestions"] == []
-        assert data["rationale"] == []
+        assert resp.json()["suggestions"] == []
+        assert resp.json()["rationale"] == []
 
     async def test_first_array_invalid_json_uses_parse_fallback(self, async_client):
-        """arc 215->221: arrays[0] is invalid JSON → _parse_json_list fallback."""
         note_id = await _create_note(async_client, "sl-bad-arr-001", "SL Bad First Array")
         with patch("gnosis.routers.ai.llm_provider") as mock_llm:
             mock_llm.is_available = True
-            mock_llm.complete = AsyncMock(
-                return_value="[Note Alpha, Note Beta, Note Gamma]"
-            )
+            mock_llm.complete = AsyncMock(return_value="[Note Alpha, Note Beta, Note Gamma]")
             resp = await async_client.post(f"/api/v1/ai/suggest-links/{note_id}")
         assert resp.status_code == 200
         assert isinstance(resp.json()["suggestions"], list)
 
     async def test_second_array_invalid_json_rationale_fallback(self, async_client):
-        """arcs 243-244: arrays[1] is invalid JSON → rationale uses _parse_json_list."""
         note_id = await _create_note(async_client, "sl-bad-rat-001", "SL Bad Rationale")
         with patch("gnosis.routers.ai.llm_provider") as mock_llm:
             mock_llm.is_available = True
@@ -199,14 +210,13 @@ class TestSuggestLinksEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py  lines 297-303
-# set_model — Ollama not an available provider → 400
+# gnosis/routers/ai.py  lines 297-303 — set_model Ollama unavailable → 400
 # ---------------------------------------------------------------------------
 
 class TestSetModelOllamaUnavailable:
     async def test_set_model_400_when_ollama_unavailable(self, async_client):
         with patch("gnosis.routers.ai.llm_provider") as mock_llm:
-            mock_llm._available = {}  # Ollama not in available providers
+            mock_llm._available = {}
             resp = await async_client.post(
                 "/api/v1/ai/providers/model", json={"model": "llama3"}
             )
@@ -215,13 +225,11 @@ class TestSetModelOllamaUnavailable:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py  lines 343-344
-# critique_note — no JSON braces at all in raw response → fallback path
+# gnosis/routers/ai.py  lines 343-344 — critique_note no JSON braces
 # ---------------------------------------------------------------------------
 
 class TestCritiqueNoteNoBraces:
     async def test_critique_plain_text_no_json(self, async_client):
-        """json_match is None → critique_data stays {} → atomicity=raw, rest empty."""
         note_id = await _create_note(async_client, "crit-plain-001", "Critique Plain Text")
         with patch("gnosis.routers.ai.llm_provider") as mock_llm:
             mock_llm.is_available = True
@@ -230,20 +238,17 @@ class TestCritiqueNoteNoBraces:
             )
             resp = await async_client.post(f"/api/v1/ai/critique/{note_id}")
         assert resp.status_code == 200
-        data = resp.json()
-        assert "dependent origination" in data["atomicity"]
-        assert data["connectivity"] == ""
-        assert data["overall"] == ""
+        assert "dependent origination" in resp.json()["atomicity"]
+        assert resp.json()["connectivity"] == ""
+        assert resp.json()["overall"] == ""
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py  lines 411-412
-# orphan_audit — LLM returns text with no JSON array → items stays []
+# gnosis/routers/ai.py  lines 411-412 — orphan_audit no JSON array
 # ---------------------------------------------------------------------------
 
 class TestOrphanAuditNoJsonArray:
     async def test_orphan_audit_plain_prose_response(self, async_client):
-        """json_match is None → items stays [] → OrphanAuditResponse with empty items."""
         await _create_note(async_client, "orphan-plain-001", "Orphan Plain Prose")
         with patch("gnosis.routers.ai.llm_provider") as mock_llm:
             mock_llm.is_available = True
@@ -252,42 +257,33 @@ class TestOrphanAuditNoJsonArray:
             )
             resp = await async_client.get("/api/v1/ai/orphan-audit?limit=5")
         assert resp.status_code == 200
-        data = resp.json()
-        assert isinstance(data["items"], list)
+        assert isinstance(resp.json()["items"], list)
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py  line 450
-# daily_review — notes exist today but LLM is unavailable → early return
+# gnosis/routers/ai.py  line 450 — daily_review notes exist but no LLM
 # ---------------------------------------------------------------------------
 
 class TestDailyReviewNotesButNoLlm:
     async def test_daily_review_early_return_no_llm(self, async_client):
-        """Branch: notes exist but llm_provider.is_available is False → early return."""
         import datetime
         today = datetime.date.today().isoformat()
         note_id = f"dr-nollm-{today.replace('-', '')}"
         await async_client.post(
             "/api/v1/notes/",
-            json={
-                "id": note_id,
-                "title": "Daily Review No LLM",
-                "body": "Content about impermanence.",
-                "folder": "00-inbox",
-            },
+            json={"id": note_id, "title": "Daily Review No LLM",
+                  "body": "Content about impermanence.", "folder": "00-inbox"},
         )
         with patch("gnosis.routers.ai.llm_provider") as mock_llm:
             mock_llm.is_available = False
             resp = await async_client.post("/api/v1/ai/daily-review")
         assert resp.status_code == 200
-        data = resp.json()
-        assert data["summary"] == "No inbox notes today."
-        assert data["action_items"] == []
+        assert resp.json()["summary"] == "No inbox notes today."
+        assert resp.json()["action_items"] == []
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py  arcs 467->483  (valid JSON path)
-# daily_review — LLM returns valid JSON with summary + action_items
+# gnosis/routers/ai.py  arcs 467->483 — daily_review valid JSON
 # ---------------------------------------------------------------------------
 
 class TestDailyReviewValidJson:
@@ -297,12 +293,8 @@ class TestDailyReviewValidJson:
         note_id = f"dr-json-{today.replace('-', '')}"
         await async_client.post(
             "/api/v1/notes/",
-            json={
-                "id": note_id,
-                "title": "Daily Review JSON Note",
-                "body": "Captured insight about the nature of mind.",
-                "folder": "00-inbox",
-            },
+            json={"id": note_id, "title": "Daily Review JSON Note",
+                  "body": "Captured insight about the nature of mind.", "folder": "00-inbox"},
         )
         with patch("gnosis.routers.ai.llm_provider") as mock_llm:
             mock_llm.is_available = True
@@ -312,14 +304,12 @@ class TestDailyReviewValidJson:
             )
             resp = await async_client.post("/api/v1/ai/daily-review")
         assert resp.status_code == 200
-        data = resp.json()
-        assert data["summary"] == "Today was productive."
-        assert "Process inbox" in data["action_items"]
+        assert resp.json()["summary"] == "Today was productive."
+        assert "Process inbox" in resp.json()["action_items"]
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py  arcs 481-482
-# daily_review — brace-match succeeds but JSON is invalid → summary stays as raw
+# gnosis/routers/ai.py  arcs 481-482 — daily_review invalid JSON fallback
 # ---------------------------------------------------------------------------
 
 class TestDailyReviewInvalidJson:
@@ -329,12 +319,8 @@ class TestDailyReviewInvalidJson:
         note_id = f"dr-badjson-{today.replace('-', '')}"
         await async_client.post(
             "/api/v1/notes/",
-            json={
-                "id": note_id,
-                "title": "Daily Review Bad JSON",
-                "body": "Studying the aggregates today.",
-                "folder": "00-inbox",
-            },
+            json={"id": note_id, "title": "Daily Review Bad JSON",
+                  "body": "Studying the aggregates today.", "folder": "00-inbox"},
         )
         with patch("gnosis.routers.ai.llm_provider") as mock_llm:
             mock_llm.is_available = True
@@ -343,14 +329,12 @@ class TestDailyReviewInvalidJson:
             )
             resp = await async_client.post("/api/v1/ai/daily-review")
         assert resp.status_code == 200
-        data = resp.json()
-        assert isinstance(data["summary"], str)
-        assert isinstance(data["action_items"], list)
+        assert isinstance(resp.json()["summary"], str)
+        assert isinstance(resp.json()["action_items"], list)
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py  arcs 634-635
-# ingest_note — graph_rag.ingest_note raises → 500
+# gnosis/routers/ai.py  arcs 634-635 — ingest_note exception → 500
 # ---------------------------------------------------------------------------
 
 class TestIngestNoteRaises500:
@@ -367,11 +351,7 @@ class TestIngestNoteRaises500:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py  line 670
-# _LIGHTRAG_AVAILABLE_CHECK — ImportError path returns False
-#
-# patch.dict with None as the module value causes `import lightrag` to raise
-# ImportError, which is exactly the branch being tested.
+# gnosis/routers/ai.py  line 670 — _LIGHTRAG_AVAILABLE_CHECK ImportError path
 # ---------------------------------------------------------------------------
 
 class TestLightragAvailableCheckFalse:
@@ -383,17 +363,14 @@ class TestLightragAvailableCheckFalse:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py  lines 709-710
-# generate_moc — sections JSON decode error → sections=[]
+# gnosis/routers/ai.py  lines 709-710 — generate_moc JSON decode error
 # ---------------------------------------------------------------------------
 
 class TestGenerateMocJsonDecodeError:
     async def test_generate_moc_invalid_json_sections(self, async_client):
         for i in range(3):
             await _create_note(
-                async_client,
-                f"moc-gaps2-{i}",
-                f"Gaps2 Dharma Seed {i}",
+                async_client, f"moc-gaps2-{i}", f"Gaps2 Dharma Seed {i}",
                 body=f"dharma content {i} about the three marks of existence.",
             )
         with patch("gnosis.routers.ai.llm_provider") as mock_llm:
@@ -402,18 +379,15 @@ class TestGenerateMocJsonDecodeError:
                 return_value="[{heading: no-quotes, summary: bad, wikilinks: not-array}]"
             )
             resp = await async_client.post(
-                "/api/v1/ai/generate-moc",
-                json={"topic": "dharma", "max_notes": 10},
+                "/api/v1/ai/generate-moc", json={"topic": "dharma", "max_notes": 10},
             )
         assert resp.status_code == 200
-        data = resp.json()
-        assert data["sections"] == []
-        assert "dharma" in data["topic"].lower()
+        assert resp.json()["sections"] == []
+        assert "dharma" in resp.json()["topic"].lower()
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/export.py  line 237
-# export_note_pdf — note not found → 404
+# gnosis/routers/export.py  line 237 — export_note_pdf note not found → 404
 # ---------------------------------------------------------------------------
 
 class TestExportPdfNoteNotFound:
@@ -431,16 +405,13 @@ class TestExportPdfNoteNotFound:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/notes.py  lines 54-57  (body_snippet truncation)
-# list_notes returns body_snippet truncated to 200 chars when body > 200 chars
+# gnosis/routers/notes.py  lines 54-57 — body_snippet truncation
 # ---------------------------------------------------------------------------
 
 class TestNoteBodySnippet:
     async def test_body_snippet_truncated_to_200(self, async_client):
         long_body = "A" * 300
-        note_id = await _create_note(
-            async_client, "snip-001", "Long Body Note", body=long_body
-        )
+        note_id = await _create_note(async_client, "snip-001", "Long Body Note", body=long_body)
         resp = await async_client.get("/api/v1/notes/")
         assert resp.status_code == 200
         items = resp.json()["items"] if "items" in resp.json() else resp.json()
@@ -476,8 +447,8 @@ class TestDeleteReviewCardNotFound:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/review.py  lines 146-154  (full submit path)
-# submit_review — happy path: enroll via /{note_id}/enroll, then POST /{note_id}
+# gnosis/routers/review.py  lines 146-154 (full submit path)
+# submit_review — happy path: enroll then POST /{note_id} to advance SM-2
 # ---------------------------------------------------------------------------
 
 class TestSubmitReviewHappyPath:
@@ -486,7 +457,7 @@ class TestSubmitReviewHappyPath:
             async_client, "rev-submit-001", "Review Submit Note"
         )
         await _enroll_review_card(async_client, note_id)
-        # The submit endpoint is POST /{note_id}, not /{note_id}/submit
+        # Submit endpoint: POST /api/v1/review/{note_id}
         resp = await async_client.post(
             f"/api/v1/review/{note_id}",
             json={"quality": 4},
