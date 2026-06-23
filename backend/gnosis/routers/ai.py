@@ -596,7 +596,7 @@ async def ingest_note(
     """Ingest a single vault note into the LightRAG knowledge graph."""
     note = await _get_note_or_404(note_id, session, owner_ids)
 
-    if not graph_rag or not _LIGHTRAG_AVAILABLE_CHECK():
+    if not graph_rag or not _lightrag_available():
         return IngestNoteResponse(
             note_id=note_id,
             title=note.title,
@@ -626,7 +626,7 @@ async def ingest_note(
         raise HTTPException(status_code=500, detail=f"LightRAG ingest failed: {exc}") from exc
 
 
-def _LIGHTRAG_AVAILABLE_CHECK() -> bool:
+def _lightrag_available() -> bool:
     """Runtime check for LightRAG availability without importing at module level."""
     try:
         import lightrag  # noqa: F401

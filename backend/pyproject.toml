@@ -96,6 +96,13 @@ target-version = "py312"
 select = ["E", "F", "I", "N", "W", "UP"]
 ignore = ["E501"]
 
+[tool.ruff.lint.per-file-ignores]
+# Test files — semicolon-separated one-liners, mid-file imports, ambiguous
+# loop variable `l`, and helper class/function naming conventions are all
+# deliberate patterns in the test suite and are not bugs.
+"tests/*.py" = ["E702", "E701", "E402", "E741", "N801", "N802", "N803", "F841", "I001"]
+"scripts/*.py" = ["F841"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = false

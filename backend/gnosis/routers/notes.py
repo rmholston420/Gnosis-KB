@@ -329,7 +329,6 @@ async def create_note(
     fm.update(data.frontmatter)
 
     vault_root = resolve_vault_path(current_user)
-    vault_dir = vault_root / data.folder
     filename = f"{note_id}-{slug[:50]}.md"
     vault_path_rel = f"{data.folder}/{filename}"
 
