@@ -5,17 +5,19 @@ Files / lines addressed:
                                    189-190 (submit_review sets last_reviewed)
   gnosis/routers/notes.py   97% → lines 52→exit (empty tag list arc),
                                    54-57 (new Tag creation inside _upsert_tags)
-  gnosis/routers/ai.py      93% → lines 129 (404 helper raise), 243-244 (chat 503),
-                                   297-303 (suggest-links 503 + rationale fallback),
+  gnosis/routers/ai.py      93% → lines 129 (404 helper raise), 138-142 (providers no-op),
+                                   211-221 (set_model 400 + swap path),
+                                   243-244 (chat 503), 297-303 (suggest-links 503 + fallback),
                                    343-344 (suggest-tags 503), 411-412 (critique 503),
                                    450 (orphan-audit empty/no-provider fast-return),
+                                   467-483 (SSE stream exception handler),
                                    670 (generate-moc empty topic 422),
                                    709-710 (generate-moc no notes 404)
 """
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock, patch, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 
 from gnosis.services.llm_provider import llm_provider
 from gnosis.services.graph_rag import graph_rag
@@ -62,7 +64,6 @@ class TestReviewEnroll:
     @pytest.mark.asyncio
     async def test_enroll_already_enrolled_returns_existing_card(self, client, vault_dir):
         """Enrolling a note that is already enrolled must return the existing card."""
-        # Create a note via the notes router
         create_resp = await client.post(
             "/api/v1/notes/",
             json={
@@ -75,7 +76,6 @@ class TestReviewEnroll:
         assert create_resp.status_code == 201
         note_id = create_resp.json()["id"]
 
-        # First enroll — 201
         r1 = await client.post(
             f"/api/v1/review/{note_id}/enroll",
             json={"note_id": note_id, "due_today": False},
@@ -97,7 +97,6 @@ class TestReviewSubmitLastReviewed:
     @pytest.mark.asyncio
     async def test_submit_review_updates_last_reviewed(self, client, vault_dir):
         """Submitting a review must touch note.last_reviewed (lines 189-190)."""
-        # Create + enroll a note
         cr = await client.post(
             "/api/v1/notes/",
             json={
@@ -116,7 +115,6 @@ class TestReviewSubmitLastReviewed:
         )
         assert er.status_code == 201
 
-        # Submit a review — quality 4 (good recall)
         sr = await client.post(f"/api/v1/review/{note_id}", json={"quality": 4})
         assert sr.status_code == 200
         data = sr.json()
@@ -177,6 +175,75 @@ class TestAiGetNoteOr404:
         assert resp.status_code == 404
 
 
+class TestAiProviders:
+    """ai.py lines 138-142: GET /providers returns available=False when no provider."""
+
+    @pytest.mark.asyncio
+    async def test_get_providers_no_provider_returns_unavailable(self, client):
+        """Lines 138-142: early return with available=False when llm_provider unavailable."""
+        with _unavailable_provider():
+            resp = await client.get("/api/v1/ai/providers")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["available"] is False
+        assert data["provider"] == "none"
+        assert data["models"] == []
+
+
+class TestAiSetModel:
+    """ai.py lines 211-221: POST /providers/model — ollama-absent 400 and swap path."""
+
+    @pytest.mark.asyncio
+    async def test_set_model_ollama_unavailable_returns_400(self, client):
+        """Line 211: ollama not in _available → 400 Bad Request."""
+        # Ensure ollama is NOT in the available list
+        original = list(llm_provider._available)  # noqa: SLF001
+        llm_provider._available.clear()  # noqa: SLF001
+        try:
+            resp = await client.post(
+                "/api/v1/ai/providers/model",
+                json={"model": "llama3:8b"},
+            )
+        finally:
+            llm_provider._available.extend(original)  # noqa: SLF001
+        assert resp.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_set_model_ollama_available_swaps_and_returns_info(self, client):
+        """Lines 215-221: ollama present → swap_model called, 200 with provider info."""
+        original = list(llm_provider._available)  # noqa: SLF001
+        # Ensure ollama is registered
+        if "ollama" not in llm_provider._available:  # noqa: SLF001
+            llm_provider._available.append("ollama")  # noqa: SLF001
+        try:
+            with (
+                patch.object(llm_provider, "swap_model") as mock_swap,
+                patch("gnosis.routers.ai.httpx.AsyncClient") as mock_client_cls,
+            ):
+                # Mock httpx so we don't need Ollama running
+                mock_resp = MagicMock()
+                mock_resp.status_code = 200
+                mock_resp.json.return_value = {"models": [{"name": "llama3:8b"}]}
+                mock_async_client = AsyncMock()
+                mock_async_client.__aenter__ = AsyncMock(return_value=mock_async_client)
+                mock_async_client.__aexit__ = AsyncMock(return_value=False)
+                mock_async_client.get = AsyncMock(return_value=mock_resp)
+                mock_client_cls.return_value = mock_async_client
+
+                resp = await client.post(
+                    "/api/v1/ai/providers/model",
+                    json={"model": "llama3:8b"},
+                )
+        finally:
+            llm_provider._available[:] = original  # noqa: SLF001
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["provider"] == "ollama"
+        assert data["model"] == "llama3:8b"
+        mock_swap.assert_called_once_with("llama3:8b")
+
+
 class TestAiChat503:
     """ai.py lines 243-244: chat raises 503 when no provider is available."""
 
@@ -214,7 +281,6 @@ class TestAiSuggestLinks:
         assert cr.status_code == 201
         note_id = cr.json()["id"]
 
-        # LLM returns two arrays; second is invalid JSON → fallback parse
         fake_llm_output = '["Title A"]\n[not valid json]'
         with (
             _available_provider(),
@@ -257,6 +323,37 @@ class TestAiOrphanAudit:
         assert resp.status_code == 200
         data = resp.json()
         assert data["items"] == []
+
+
+class TestAiStreamChat:
+    """ai.py lines 467-483, 481-482: SSE stream/chat error handler."""
+
+    @pytest.mark.asyncio
+    async def test_stream_chat_exception_yields_error_event(self, client):
+        """Lines 467-483: when the stream raises mid-flight, the except block
+        must yield a JSON error event then still emit the meta and [DONE] events."""
+        # Make graph_rag unavailable so we fall through to the qdrant path,
+        # then make _qdrant_rag_stream raise to exercise lines 481-482.
+        async def _boom(*args, **kwargs):
+            raise RuntimeError("injected stream failure")
+            yield  # make it an async generator
+
+        with (
+            _graph_rag_unavailable(),
+            _available_provider(),
+            patch("gnosis.routers.ai._qdrant_rag_stream", side_effect=_boom),
+        ):
+            resp = await client.get(
+                "/api/v1/ai/stream/chat",
+                params={"message": "hello", "mode": "hybrid"},
+            )
+        assert resp.status_code == 200
+        body = resp.text
+        # Error event must be present
+        assert '"error"' in body
+        # Meta and DONE sentinel must always be emitted
+        assert '"meta"' in body
+        assert "[DONE]" in body
 
 
 class TestAiGenerateMoc:
