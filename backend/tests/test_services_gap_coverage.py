@@ -1,31 +1,22 @@
 """
-Definitive gap coverage — every arc mapped to its exact source line.
+Definitive gap coverage.
 
-Verified line numbers (from raw source fetch 2026-06-22)
----------------------------------------------------------
-graph_rag.py
-  50-52   : except ImportError block (sys.modules reload)
-  187     : query() `if len(answers)==1: return answers[0].split('\\n',1)[1]`
-            — exactly one non-empty shared-vault answer
-  288->286: stream() False branch of `if not shared_ids`
-  291->exit: yield synthesis then generator ends
+graph_rag.py stream() arcs
+--------------------------
+288->286 : `if answer and not answer.startswith(...)` False branch.
+           The shared vault returns an unavailability string so it is
+           filtered out; shared_answers stays empty; `if shared_answers:`
+           is False; generator ends without yielding synthesis.
+           This arc is 288->286 because `if answer ...` is False so
+           execution skips the append and loops back to `for uid` at 286.
 
-llm_provider.py
-  112     : _get_client_and_model() groq return
-  114     : _get_client_and_model() openai return
-  125     : _get_client_for() raise ValueError (valid name but _client is None)
-  181->179: `if delta:` False branch (empty delta, no yield, loop continues)
+291->exit: `if shared_answers:` True -> yield separator -> yield synthesis
+           -> generator falls off the end.
+           Need shared vault returning a GOOD answer so shared_answers is
+           non-empty and both yield statements at 292-294 execute.
 
-vault_sync.py
-  152->156: `if tag is None:` False branch (tag already in DB)
-  168->163: `if target:` False branch in wikilinks loop
-            — wikilink target note NOT found -> no db.add -> loop continues
-  254-259 : _get_loop() `if self._loop is None` + except RuntimeError
-  311-312 : _handle_delete() `except ValueError` (path outside vault root)
-
-vector_store.py
-  156->158: `if include_legacy and sentinel not in allowed_ids:` False branch
-            — triggered when include_legacy=False
+The existing test_stream_shared_ids_appends_synthesis already hits 291->exit
+but may not hit 288->286.  We add a dedicated test for the filter-out case.
 """
 from __future__ import annotations
 
@@ -69,20 +60,11 @@ class TestGraphRAGImportError:
 # ===========================================================================
 
 class TestGraphRAGQuerySingleAnswer:
-    """
-    Line 187: `return answers[0].split('\n', 1)[1]`
-    This branch fires inside query() when the multi-graph fan-out collects
-    exactly ONE valid answer (after filtering out unavailability strings).
-    The [Vault N] header is stripped from the single answer.
-    """
-
     @pytest.mark.asyncio
     async def test_query_one_valid_answer_strips_vault_header(self):
         from gnosis.services.graph_rag import GraphRAGService
         svc = GraphRAGService()
 
-        # user_id=1, owner_ids={1,2} — two targets
-        # uid=1 returns a good answer, uid=2 returns unavailability string
         async def _fake_query_single(uid, question, mode):
             if uid == 1:
                 return "real answer from vault 1"
@@ -91,7 +73,6 @@ class TestGraphRAGQuerySingleAnswer:
         with patch.object(svc, "_query_single", side_effect=_fake_query_single):
             result = await svc.query("q?", user_id=1, owner_ids={1, 2})
 
-        # The single answer has its [Vault N] header stripped
         assert "real answer from vault 1" in result
         assert "[Vault" not in result
 
@@ -150,7 +131,7 @@ class TestGraphRAGSynthesise:
 
 
 # ===========================================================================
-# graph_rag.py  288->286 and 291->exit  (stream shared-vault path)
+# graph_rag.py  stream() arcs
 # ===========================================================================
 
 class TestGraphRAGStream:
@@ -189,22 +170,62 @@ class TestGraphRAGStream:
         assert any("error" in t.lower() for t in tokens)
 
     @pytest.mark.asyncio
-    async def test_stream_shared_ids_appends_synthesis(self):
-        """288->286 (shared_ids non-empty) and 291->exit (yield synthesis)."""
+    async def test_stream_shared_answer_filtered_out_288_286(self):
+        """
+        288->286: `if answer and not answer.startswith(...)` False branch.
+        The shared vault (uid=2) returns an unavailability string, so the
+        `if` condition is False, shared_answers stays empty, `if shared_answers:`
+        is False, generator ends without yielding synthesis.
+        """
+        from gnosis.services.graph_rag import GraphRAGService
+        svc = GraphRAGService()
+
+        # Primary instance (uid=1): no astream_query, returns single token
+        mock_primary = MagicMock(spec=[])
+        mock_primary.aquery = AsyncMock(return_value="primary answer")
+
+        # Shared instance (uid=2): returns unavailability string -> filtered out
+        mock_shared = MagicMock(spec=[])
+        mock_shared.aquery = AsyncMock(
+            return_value="Graph-RAG is unavailable (LightRAG not initialised). "
+                         "Ensure Ollama is running and lightrag-hku is installed."
+        )
+
+        async def _fake_get_instance(uid):
+            return mock_primary if uid == 1 else mock_shared
+
+        tokens = []
+        with patch.object(svc, "_get_instance", side_effect=_fake_get_instance):
+            async for tok in svc.stream("q", user_id=1, owner_ids={1, 2}):
+                tokens.append(tok)
+
+        # Primary answer yielded; no synthesis block appended
+        assert "primary answer" in tokens
+        assert not any("context from shared" in t for t in tokens)
+        assert not any("---" in t for t in tokens)
+
+    @pytest.mark.asyncio
+    async def test_stream_shared_ids_appends_synthesis_291_exit(self):
+        """
+        291->exit: `if shared_answers:` True -> yield separator -> yield synthesis
+        -> generator falls off the end.
+        Need shared vault to return a GOOD (non-filtered) answer.
+        """
         from gnosis.services.graph_rag import GraphRAGService
         import gnosis.services.llm_provider as llm_mod
         svc = GraphRAGService()
+
         mock_primary = MagicMock(spec=[])
         mock_primary.aquery = AsyncMock(return_value="primary answer")
         mock_shared = MagicMock(spec=[])
-        mock_shared.aquery = AsyncMock(return_value="shared answer")
+        mock_shared.aquery = AsyncMock(return_value="shared vault answer")
 
         async def _fake_get_instance(uid):
             return mock_primary if uid == 1 else mock_shared
 
         real = llm_mod.llm_provider
         mock_llm = MagicMock()
-        mock_llm.is_available = False
+        mock_llm.is_available = False  # _synthesise join fallback
         llm_mod.llm_provider = mock_llm
         tokens = []
         try:
@@ -213,8 +234,10 @@ class TestGraphRAGStream:
                     tokens.append(tok)
         finally:
             llm_mod.llm_provider = real
+
         assert "primary answer" in tokens
-        assert any("shared" in t or "---" in t or "context" in t for t in tokens)
+        assert any("shared vault answer" in t or "---" in t or "context" in t
+                   for t in tokens)
 
     @pytest.mark.asyncio
     async def test_stream_exception_via_astream_query(self):
@@ -347,7 +370,6 @@ class TestLLMProviderInitialize:
 class TestLLMProviderStream:
     @pytest.mark.asyncio
     async def test_stream_empty_delta_skips_yield(self):
-        """181->179: empty delta -> False branch -> loop continues."""
         from gnosis.services.llm_provider import LLMProvider
         p = LLMProvider()
         p._available = ["openai"]
@@ -410,8 +432,6 @@ class TestLLMProviderStream:
 # ===========================================================================
 
 class TestVaultSyncTagExists:
-    """Line 152->156: tag already in DB, `if tag is None` is False."""
-
     @pytest.mark.asyncio
     async def test_sync_file_existing_tag_skips_creation(self, tmp_path):
         from gnosis.services.vault_sync import _sync_file
@@ -445,53 +465,31 @@ class TestVaultSyncTagExists:
 
 
 class TestVaultSyncWikilinkTargetNotFound:
-    """
-    Line 168->163: `if target:` False branch in wikilinks for-loop.
-    When the linked note title is NOT in the DB, target is None so
-    db.add(link) is skipped and the loop continues to the next wikilink.
-    """
-
     @pytest.mark.asyncio
     async def test_sync_file_wikilink_target_not_found(self, tmp_path):
         from gnosis.services.vault_sync import _sync_file
-
-        # Note body has a wikilink [[Missing Note]]
         md = tmp_path / "note.md"
         md.write_text("---\ntitle: Source\nid: src\n---\n[[Missing Note]]")
-
         db = AsyncMock()
         db.flush = AsyncMock()
         db.commit = AsyncMock()
         db.add = MagicMock()
-
         note_result = MagicMock()
-        note_result.scalar_one_or_none = MagicMock(return_value=None)  # note not in DB
-
+        note_result.scalar_one_or_none = MagicMock(return_value=None)
         link_delete_result = MagicMock()
-
-        # Wikilink target lookup returns None — triggers 168->163 False branch
         target_result = MagicMock()
         target_result.scalar_one_or_none = MagicMock(return_value=None)
-
-        # execute() call order:
-        # 1: select(Note) for note upsert
-        # 2: delete(NoteTag)  (no tags, but delete still called)
-        # 3: delete(Link)
-        # 4: select(Note) for wikilink target lookup -> None
         db.execute = AsyncMock(side_effect=[
-            note_result,      # 1: note lookup
-            link_delete_result,  # 2: delete(NoteTag) - no tags so just one call here
-            link_delete_result,  # 3: delete(Link)
-            target_result,    # 4: wikilink target lookup
+            note_result,
+            link_delete_result,
+            link_delete_result,
+            target_result,
         ])
-
         with patch("gnosis.services.vault_sync.get_settings",
                    return_value=MagicMock(vault_path=str(tmp_path))), \
              patch("gnosis.services.vault_sync.upsert_note"):
             line = await _sync_file(md, owner_id=1, db_session=db)
-
         assert line.startswith("synced:")
-        # db.add should NOT have been called with a Link object
         from gnosis.models.link import Link
         link_adds = [c for c in db.add.call_args_list
                      if isinstance(c.args[0], Link)]
@@ -619,7 +617,7 @@ class TestStartVaultWatcherException:
 
 
 # ===========================================================================
-# vector_store.py  line 156->158
+# vector_store.py
 # ===========================================================================
 
 class TestVectorStoreClientCache:
@@ -651,20 +649,12 @@ class TestVectorStoreClientCache:
 
 
 class TestVectorStoreHybridSearchIncludeLegacy:
-    """
-    Line 156->158: `if include_legacy and sentinel not in allowed_ids:` False branch.
-    When include_legacy=False the sentinel append is skipped (156->158 arc).
-    """
-
     def test_hybrid_search_include_legacy_false_skips_sentinel(self):
         import gnosis.services.vector_store as vs
         mock_client = MagicMock()
-        # query_points returns empty results
         mock_client.query_points.return_value = MagicMock(points=[])
-
         mock_settings = MagicMock()
         mock_settings.qdrant_collection_name = "gnosis"
-
         with patch("gnosis.services.vector_store.get_qdrant_client",
                    return_value=mock_client), \
              patch("gnosis.services.vector_store.get_settings",
@@ -674,15 +664,9 @@ class TestVectorStoreHybridSearchIncludeLegacy:
             result = vs.hybrid_search(
                 "test query",
                 owner_ids={1},
-                include_legacy=False,  # <-- False branch: skip sentinel append
+                include_legacy=False,
             )
-
         assert isinstance(result, list)
-        # Verify sentinel was NOT appended
-        call_kwargs = mock_client.query_points.call_args
-        if call_kwargs:
-            filter_arg = call_kwargs.kwargs.get("query_filter") or call_kwargs.kwargs.get("filter")
-            # Just assert the call was made without raising
         assert mock_client.query_points.called
 
     def test_hybrid_search_include_legacy_true_appends_sentinel(self):
@@ -700,6 +684,6 @@ class TestVectorStoreHybridSearchIncludeLegacy:
             result = vs.hybrid_search(
                 "test query",
                 owner_ids={1},
-                include_legacy=True,   # True branch: sentinel IS appended
+                include_legacy=True,
             )
         assert isinstance(result, list)
