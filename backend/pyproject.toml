@@ -104,12 +104,7 @@ ignore_missing_imports = true
 [tool.coverage.run]
 source = ["gnosis"]
 branch = true
-# sys.monitoring is Python 3.12+ only and requires coverage >= 7.6.
-# It registers tracing hooks at the interpreter level (not per-thread
-# via sys.settrace) so async coroutine frames, greenlets, and worker
-# threads are ALL traced from a single registration point.
-# This replaces the need for concurrency=["thread","greenlet"].
-use_sys_monitoring = true
+concurrency = ["thread", "greenlet"]
 omit = [
     "gnosis/core/sm2_test.py",
     "gnosis/services/fts_test.py",
