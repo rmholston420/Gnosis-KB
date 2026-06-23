@@ -104,7 +104,6 @@ ignore_missing_imports = true
 [tool.coverage.run]
 source = ["gnosis"]
 branch = true
-concurrency = ["asyncio", "thread"]
 omit = [
     "gnosis/core/sm2_test.py",
     "gnosis/services/fts_test.py",
