@@ -14,7 +14,7 @@ Targets:
 from __future__ import annotations
 
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -88,11 +88,8 @@ def test_database_url_sync_is_a_string_url():
 # export.py line 237 – WeasyPrint ImportError → 501
 #
 # The `from weasyprint import HTML` is inside the endpoint body (lazy import),
-# so we must block it at call time.  We patch builtins.__import__ to raise
-# ImportError for 'weasyprint', and patch settings.enable_pdf_export=True so
-# the guard before the import is satisfied.
-#
-# Correct endpoint URL: GET /api/v1/export/note/{note_id}.pdf
+# so we block it via builtins.__import__ at request dispatch time.
+# Correct endpoint: GET /api/v1/export/note/{note_id}.pdf
 # ---------------------------------------------------------------------------
 
 
@@ -106,11 +103,9 @@ async def test_pdf_export_returns_501_when_weasyprint_missing(async_client):
     assert resp.status_code == 201
     note_id = resp.json()["id"]
 
-    # Stash and evict any real weasyprint so our blocking import is authoritative
     _saved_wp = sys.modules.pop("weasyprint", None)
 
     import builtins
-
     _real_import = builtins.__import__
 
     def _blocking_import(name, *args, **kwargs):
@@ -126,7 +121,6 @@ async def test_pdf_export_returns_501_when_weasyprint_missing(async_client):
             mock_settings.enable_pdf_export = True
             resp2 = await async_client.get(f"/api/v1/export/note/{note_id}.pdf")
     finally:
-        # Always restore sys.modules state
         if _saved_wp is not None:
             sys.modules["weasyprint"] = _saved_wp
 
@@ -136,15 +130,15 @@ async def test_pdf_export_returns_501_when_weasyprint_missing(async_client):
 # ---------------------------------------------------------------------------
 # review.py lines 189-190 – unenroll_note DELETE
 #
-# The enroll endpoint (POST /{note_id}/enroll) takes a ReviewEnroll body.
-# Without the body the router returns 422, so the enroll assert fails before
-# we ever reach the DELETE.  Pass due_today=True to satisfy the schema.
+# ReviewEnroll schema has two required fields: note_id (str) AND due_today (bool).
+# Missing note_id returns 422, which then causes the enroll assert to fail
+# before the DELETE is ever reached.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_review_unenroll_note(async_client):
-    """Create a note, enroll it, then unenroll via DELETE – covers lines 189-190."""
+    """Create a note, enroll it (with full ReviewEnroll body), then unenroll."""
     # 1. Create note
     resp = await async_client.post(
         "/api/v1/notes/",
@@ -153,16 +147,16 @@ async def test_review_unenroll_note(async_client):
     assert resp.status_code == 201
     note_id = resp.json()["id"]
 
-    # 2. Enroll – must supply ReviewEnroll body
+    # 2. Enroll – ReviewEnroll requires note_id AND due_today
     enroll = await async_client.post(
         f"/api/v1/review/{note_id}/enroll",
-        json={"due_today": True},
+        json={"note_id": note_id, "due_today": True},
     )
     assert enroll.status_code in (200, 201), (
         f"Enroll failed: {enroll.status_code} {enroll.text}"
     )
 
-    # 3. Unenroll – DELETE /api/v1/review/{note_id}
+    # 3. Unenroll – DELETE /api/v1/review/{note_id} → 204
     unenroll = await async_client.delete(f"/api/v1/review/{note_id}")
     assert unenroll.status_code in (200, 204), (
         f"Unenroll failed: {unenroll.status_code} {unenroll.text}"
