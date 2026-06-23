@@ -3,12 +3,15 @@ test_final_gaps.py
 
 Surgical tests for every remaining uncovered line/arc:
 
-  gnosis/models/link.py          line 43  Link.__repr__
-  gnosis/models/review.py        line 57  ReviewCard.__repr__
-  gnosis/models/shared_vault.py  line 74  SharedVault.can_write
-  gnosis/models/tag.py           line 39  Tag.__repr__
-  gnosis/routers/export.py       line 237 export_note_pdf note-not-found
-  gnosis/routers/ingest.py       lines 143-144  _ai_enrich invalid-JSON fallback
+  gnosis/models/attachment.py    line 36   Attachment.__repr__
+  gnosis/models/link.py          line 43   Link.__repr__
+  gnosis/models/review.py        line 57   ReviewCard.__repr__
+  gnosis/models/shared_vault.py  line 74   SharedVault.can_write
+  gnosis/models/tag.py           line 39   Tag.__repr__
+  gnosis/database.py             lines 66,83,86  _AsyncSessionLocalProxy.__call__/__aenter__/__aexit__
+  gnosis/main.py                 lines 86-88     lifespan graph_rag.initialize warning path
+  gnosis/routers/export.py       line 237  export_note_pdf note-not-found
+  gnosis/routers/ingest.py       lines 143-144   _ai_enrich invalid-JSON fallback
   gnosis/routers/ai.py           arcs 138->142, 211->221, 215->221, 243-244,
                                        343-344, 467->483, 481-482, 534-535, 634-635
 
@@ -91,6 +94,127 @@ class TestSharedVaultCanWrite:
 
 
 # ---------------------------------------------------------------------------
+# gnosis/models/attachment.py  line 36 — Attachment.__repr__
+# ---------------------------------------------------------------------------
+
+class TestAttachmentRepr:
+    def test_repr(self):
+        from gnosis.models.attachment import Attachment
+        a = Attachment(note_id="note-001", filename="photo.jpg",
+                       original_filename="photo.jpg", file_path="/vault/attachments/photo.jpg")
+        r = repr(a)
+        assert "photo.jpg" in r
+        # id is None before DB flush — repr still formats cleanly
+        assert "Attachment" in r
+
+
+# ---------------------------------------------------------------------------
+# gnosis/database.py  lines 66, 83, 86
+# _AsyncSessionLocalProxy.__call__ / __aenter__ / __aexit__
+#
+# These are exercised by using AsyncSessionLocal directly as:
+#   session = AsyncSessionLocal()          -> __call__ (line 66)
+#   async with AsyncSessionLocal() as s:   -> __aenter__ (line 83)
+#                                          -> __aexit__  (line 86)
+#
+# We must NOT touch the live engine during unit tests, so we patch
+# get_session_factory() to return a fake async_sessionmaker-like object.
+# ---------------------------------------------------------------------------
+
+class TestAsyncSessionLocalProxy:
+    def test_call_returns_session(self):
+        """__call__ (line 66): AsyncSessionLocal() delegates to get_session_factory()()."""
+        from gnosis.database import AsyncSessionLocal
+
+        fake_session = MagicMock()
+        fake_factory = MagicMock(return_value=fake_session)
+
+        with patch("gnosis.database.get_session_factory", return_value=fake_factory):
+            result = AsyncSessionLocal()
+
+        fake_factory.assert_called_once()
+        assert result is fake_session
+
+    @pytest.mark.anyio
+    async def test_aenter_aexit(self):
+        """__aenter__ (line 83) and __aexit__ (line 86): async context manager path."""
+        from gnosis.database import AsyncSessionLocal
+
+        fake_session = MagicMock()
+        # The factory's __aenter__ must be an AsyncMock returning fake_session
+        fake_factory = MagicMock()
+        fake_factory.__aenter__ = AsyncMock(return_value=fake_session)
+        fake_factory.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("gnosis.database.get_session_factory", return_value=fake_factory):
+            async with AsyncSessionLocal as session:
+                assert session is fake_session
+
+        fake_factory.__aenter__.assert_called_once()
+        fake_factory.__aexit__.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# gnosis/main.py  lines 86-88
+# lifespan: graph_rag.initialize(user_id=1) raises -> logger.warning fires.
+#
+# We invoke create_app()'s lifespan by making a real test HTTP request through
+# an app instance whose lifespan is activated.  However the conftest app skips
+# the full lifespan startup.  Instead we call the lifespan coroutine directly
+# via its async generator interface, patching only graph_rag.initialize.
+# ---------------------------------------------------------------------------
+
+class TestMainLifespanWarning:
+    @pytest.mark.anyio
+    async def test_lifespan_graphrag_init_warning(self):
+        """When graph_rag.initialize raises, lifespan logs a warning and continues."""
+        from gnosis.main import lifespan
+        from fastapi import FastAPI
+
+        app = FastAPI()
+
+        # Patch every I/O call inside lifespan except graph_rag.initialize
+        with (
+            patch("gnosis.main.get_engine") as mock_engine,
+            patch("gnosis.main.llm_provider") as mock_llm,
+            patch("gnosis.main.ensure_collection"),
+            patch("gnosis.main.start_vault_watcher") as mock_watcher,
+            patch("gnosis.main.graph_rag") as mock_rag,
+        ):
+            # Engine: conn.run_sync must be awaitable
+            mock_conn = MagicMock()
+            mock_conn.run_sync = AsyncMock()
+            mock_engine.return_value.begin.return_value.__aenter__ = AsyncMock(
+                return_value=mock_conn
+            )
+            mock_engine.return_value.begin.return_value.__aexit__ = AsyncMock(
+                return_value=False
+            )
+
+            mock_llm.initialize = AsyncMock()
+
+            # Observer returned by start_vault_watcher
+            mock_obs = MagicMock()
+            mock_obs.stop = MagicMock()
+            mock_obs.join = MagicMock()
+            mock_watcher.return_value = mock_obs
+
+            # graph_rag.initialize raises — this is the branch we want to cover
+            mock_rag.initialize = AsyncMock(side_effect=RuntimeError("no ollama"))
+
+            # Drive the async generator through startup and shutdown
+            gen = lifespan(app)
+            await gen.__anext__()      # runs startup; hits except -> logger.warning
+            try:
+                await gen.__anext__()  # runs shutdown (after yield)
+            except StopAsyncIteration:
+                pass
+
+        # If we reach here without an unhandled exception, the warning path ran cleanly
+        mock_rag.initialize.assert_called_once_with(user_id=1)
+
+
+# ---------------------------------------------------------------------------
 # gnosis/routers/ai.py — _parse_json_list  (arcs 138->142, 140-141)
 # Pure unit tests — no DB, no HTTP.
 # ---------------------------------------------------------------------------
@@ -118,14 +242,11 @@ class TestParseJsonList:
 
 # ---------------------------------------------------------------------------
 # gnosis/routers/ingest.py  lines 143-144 — _ai_enrich invalid-JSON fallback
-# _ai_enrich is a pure async helper — call it directly.
-# ParsedDocument field is `raw_format` (verified from document_parser.py).
 # ---------------------------------------------------------------------------
 
 class TestAiEnrichInvalidJson:
     @pytest.mark.anyio
     async def test_ai_enrich_brace_match_invalid_json_fallback(self):
-        """regex matches braces but json.loads raises -> fallback to parsed values."""
         from gnosis.routers.ingest import _ai_enrich
         from gnosis.services.document_parser import ParsedDocument
 
@@ -147,7 +268,6 @@ class TestAiEnrichInvalidJson:
 
     @pytest.mark.anyio
     async def test_ai_enrich_no_brace_match_fallback(self):
-        """No brace group in LLM response -> fallback."""
         from gnosis.routers.ingest import _ai_enrich
         from gnosis.services.document_parser import ParsedDocument
 
@@ -169,14 +289,11 @@ class TestAiEnrichInvalidJson:
 
 # ---------------------------------------------------------------------------
 # gnosis/routers/export.py  line 237 — PDF export note-not-found
-# Patch the module-level bound name `gnosis.routers.export.settings`.
-# Inject a weasyprint stub via sys.modules so the ImportError branch is skipped.
 # ---------------------------------------------------------------------------
 
 class TestExportPdfNotFound:
     @pytest.mark.anyio
     async def test_export_pdf_note_not_found(self, async_client):
-        """PDF enabled, weasyprint stub present, note missing -> 404."""
         fake_wp = types.ModuleType("weasyprint")
         fake_wp.HTML = MagicMock()
 
@@ -191,7 +308,7 @@ class TestExportPdfNotFound:
 
 
 # ---------------------------------------------------------------------------
-# Helper: create a note via the notes router
+# Helper
 # ---------------------------------------------------------------------------
 
 async def _create_note(
@@ -209,17 +326,11 @@ async def _create_note(
 
 # ---------------------------------------------------------------------------
 # gnosis/routers/ai.py — suggest_links  (arcs 211->221, 215->221, 243-244)
-#
-# Arc 211->221: re.findall returns empty list (arrays=[]) -> both suggestions
-#               and rationale remain [] and the if/len blocks are skipped.
-# Arc 215->221: arrays[0] json.loads raises -> _parse_json_list fallback.
-# Arc 243-244:  len(arrays)>=2 AND arrays[1] json.loads raises.
 # ---------------------------------------------------------------------------
 
 class TestSuggestLinksEdgeCases:
     @pytest.mark.anyio
     async def test_suggest_links_no_brackets(self, async_client):
-        """LLM returns no bracket arrays (arc 211->221) -> empty suggestions/rationale."""
         note_id = await _create_note(async_client, "sl-no-brackets", "SL No Brackets")
         with patch("gnosis.routers.ai.llm_provider") as mock_llm:
             mock_llm.is_available = True
@@ -232,48 +343,38 @@ class TestSuggestLinksEdgeCases:
 
     @pytest.mark.anyio
     async def test_suggest_links_first_array_invalid_json(self, async_client):
-        """One bracket group, invalid JSON (arc 215->221) -> _parse_json_list fallback."""
         note_id = await _create_note(async_client, "sl-bad-first", "SL Bad First Array")
         with patch("gnosis.routers.ai.llm_provider") as mock_llm:
             mock_llm.is_available = True
-            # Single array with invalid JSON so arrays[0] parse fails
             mock_llm.complete = AsyncMock(
                 return_value="[Note Alpha, Note Beta, Note Gamma]"
             )
             resp = await async_client.post(f"/api/v1/ai/suggest-links/{note_id}")
         assert resp.status_code == 200
-        data = resp.json()
-        assert isinstance(data["suggestions"], list)
-        assert data["rationale"] == []
+        assert isinstance(resp.json()["suggestions"], list)
+        assert resp.json()["rationale"] == []
 
     @pytest.mark.anyio
     async def test_suggest_links_invalid_rationale_json(self, async_client):
-        """Two bracket groups, second invalid JSON (arc 243-244) -> rationale fallback."""
         note_id = await _create_note(async_client, "sl-bad-rationale", "SL Bad Rationale")
         with patch("gnosis.routers.ai.llm_provider") as mock_llm:
             mock_llm.is_available = True
-            # First array is valid JSON, second is not
             mock_llm.complete = AsyncMock(
                 return_value='["Note A", "Note B"] then [not: valid json at all]'
             )
             resp = await async_client.post(f"/api/v1/ai/suggest-links/{note_id}")
         assert resp.status_code == 200
-        data = resp.json()
-        assert "Note A" in data["suggestions"]
-        assert isinstance(data["rationale"], list)
+        assert "Note A" in resp.json()["suggestions"]
+        assert isinstance(resp.json()["rationale"], list)
 
 
 # ---------------------------------------------------------------------------
 # gnosis/routers/ai.py — critique_note  (arc 343-344)
-#
-# Brace group matched but json.loads raises -> critique_data stays {}.
-# CritiqueResponse.atomicity falls back to raw string.
 # ---------------------------------------------------------------------------
 
 class TestCritiqueEdgeCases:
     @pytest.mark.anyio
     async def test_critique_no_json(self, async_client):
-        """LLM returns plain prose -> atomicity=raw, connectivity/overall empty."""
         note_id = await _create_note(async_client, "crit-no-json", "Critique No JSON")
         with patch("gnosis.routers.ai.llm_provider") as mock_llm:
             mock_llm.is_available = True
@@ -289,16 +390,14 @@ class TestCritiqueEdgeCases:
 
     @pytest.mark.anyio
     async def test_critique_invalid_json_braces(self, async_client):
-        """Brace group matched, json.loads raises (arc 343-344) -> empty fallback."""
         note_id = await _create_note(async_client, "crit-bad-json", "Critique Bad JSON")
         with patch("gnosis.routers.ai.llm_provider") as mock_llm:
             mock_llm.is_available = True
             mock_llm.complete = AsyncMock(
-                return_value="{atomicity: good, connectivity: moderate — not valid JSON}"
+                return_value="{atomicity: good, connectivity: moderate - not valid JSON}"
             )
             resp = await async_client.post(f"/api/v1/ai/critique/{note_id}")
         assert resp.status_code == 200
-        # atomicity falls back to the raw string; connectivity/overall empty
         data = resp.json()
         assert isinstance(data["atomicity"], str)
         assert len(data["atomicity"]) > 0
@@ -313,7 +412,6 @@ class TestCritiqueEdgeCases:
 class TestOrphanAuditJsonDecodeError:
     @pytest.mark.anyio
     async def test_orphan_audit_invalid_json(self, async_client):
-        """LLM returns bracket-matched but invalid JSON -> items stays []."""
         with patch("gnosis.routers.ai.llm_provider") as mock_llm:
             mock_llm.is_available = True
             mock_llm.complete = AsyncMock(
@@ -326,31 +424,19 @@ class TestOrphanAuditJsonDecodeError:
 
 # ---------------------------------------------------------------------------
 # gnosis/routers/ai.py — daily_review  (arcs 467->483, 481-482)
-#
-# Arc 467->483: no inbox notes today (or llm unavailable) -> early return.
-# Arc 481-482:  brace matched but json.loads raises -> summary=raw, items=[].
-#
-# For arc 467->483 we rely on there being no 00-inbox notes with today's date
-# in the test DB — which is always true unless the test suite itself created them.
-# For arc 481-482 we patch llm_provider to return invalid JSON AND ensure at
-# least one inbox note exists so the early-return branch is NOT taken.
 # ---------------------------------------------------------------------------
 
 class TestDailyReviewEdgeCases:
     @pytest.mark.anyio
     async def test_daily_review_no_notes_today(self, async_client):
-        """No today inbox notes -> early return with 'No inbox notes today.' (arc 467->483)."""
         resp = await async_client.post("/api/v1/ai/daily-review")
         assert resp.status_code == 200
         data = resp.json()
-        # Either no notes exist at all, or LLM unavailable — both hit the early path
         assert isinstance(data["summary"], str)
         assert isinstance(data["action_items"], list)
 
     @pytest.mark.anyio
     async def test_daily_review_invalid_json(self, async_client):
-        """Brace matched but json.loads raises (arc 481-482) -> summary=raw, items=[]."""
-        # Create an inbox note with today's date so the early-return is skipped
         import datetime
         today = datetime.date.today().isoformat()
         note_id = f"dr-test-{today.replace('-', '')}"
@@ -363,7 +449,6 @@ class TestDailyReviewEdgeCases:
                 "folder": "00-inbox",
             },
         )
-        # If note already exists (409) that's fine — the note is there
         assert resp.status_code in (200, 201, 409)
 
         with patch("gnosis.routers.ai.llm_provider") as mock_llm:
@@ -380,20 +465,15 @@ class TestDailyReviewEdgeCases:
 
 # ---------------------------------------------------------------------------
 # gnosis/routers/ai.py — stream_chat SSE exception path  (arcs 534-535)
-#
-# graph_rag.is_available is called as: await graph_rag.is_available(user_id)
-# So we patch it as an AsyncMock with side_effect to raise inside the generator.
 # ---------------------------------------------------------------------------
 
 class TestStreamChatException:
     @pytest.mark.anyio
     async def test_stream_chat_sse_exception_path(self, async_client):
-        """graph_rag.is_available raises -> SSE error event emitted, response 200."""
         with (
             patch("gnosis.routers.ai.graph_rag") as mock_rag,
             patch("gnosis.routers.ai.llm_provider") as mock_llm,
         ):
-            # is_available is awaited so must be an AsyncMock
             mock_rag.is_available = AsyncMock(side_effect=RuntimeError("rag exploded"))
             mock_llm.is_available = False
             resp = await async_client.get(
@@ -406,30 +486,26 @@ class TestStreamChatException:
 # ---------------------------------------------------------------------------
 # gnosis/routers/ai.py — ingest_note LightRAG exception  (arcs 634-635)
 #
-# _LIGHTRAG_AVAILABLE_CHECK is a module-level function called as
-# `_LIGHTRAG_AVAILABLE_CHECK()` inside the endpoint.  We must patch it as
-# a callable (not a return_value), and graph_rag.ingest_note as an AsyncMock.
+# _LIGHTRAG_AVAILABLE_CHECK is called as _LIGHTRAG_AVAILABLE_CHECK() — it is
+# a regular function, not a coroutine.  patch() replaces it with a MagicMock;
+# when the endpoint does `_LIGHTRAG_AVAILABLE_CHECK()` the MagicMock is called
+# and returns its return_value (True).  graph_rag must also be truthy so the
+# `if not graph_rag or not _LIGHTRAG_AVAILABLE_CHECK():` guard is False.
 # ---------------------------------------------------------------------------
 
 class TestIngestNoteException:
     @pytest.mark.anyio
     async def test_ingest_note_lightrag_raises(self, async_client):
-        """graph_rag.ingest_note raises RuntimeError -> HTTP 500 with detail."""
         note_id = await _create_note(async_client, "ingest-exc-001", "Ingest Exception Note")
         with (
             patch("gnosis.routers.ai.graph_rag") as mock_rag,
-            patch(
-                "gnosis.routers.ai._LIGHTRAG_AVAILABLE_CHECK",
-                return_value=True,   # the patch replaces the function object;
-                                     # endpoint calls it as _LIGHTRAG_AVAILABLE_CHECK()
-                                     # which returns the mock — truthy, so branch taken
-            ),
+            patch("gnosis.routers.ai._LIGHTRAG_AVAILABLE_CHECK") as mock_check,
         ):
-            # Make graph_rag truthy and ingest_note an AsyncMock that raises
-            mock_rag.__bool__ = lambda self: True
+            # graph_rag is truthy (MagicMock is truthy by default)
+            # _LIGHTRAG_AVAILABLE_CHECK() returns True -> guard is False -> try block entered
+            mock_check.return_value = True
             mock_rag.ingest_note = AsyncMock(side_effect=RuntimeError("lightrag down"))
             resp = await async_client.post(f"/api/v1/ai/ingest-note/{note_id}")
-        # The endpoint catches the exception and raises HTTPException(500)
         assert resp.status_code == 500
         assert "lightrag down" in resp.json()["detail"]
 
@@ -441,7 +517,6 @@ class TestIngestNoteException:
 class TestGenerateMocJsonDecodeFallback:
     @pytest.mark.anyio
     async def test_generate_moc_invalid_json_sections(self, async_client):
-        """LLM returns bracket group with invalid JSON -> sections=[], markdown built."""
         for i in range(3):
             await _create_note(
                 async_client,
