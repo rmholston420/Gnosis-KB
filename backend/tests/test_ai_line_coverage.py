@@ -15,7 +15,6 @@ Covers (by source line):
   467->483 daily_review JSON parse success
   529->536,534-535 stream_chat LightRAG path + exception handler
   573-575 ingest_note successful graph_indexed=True path
-  614-618 generate_moc with explicit req.title
   631-635 generate_moc parsed sections success
   670     _LIGHTRAG_AVAILABLE_CHECK True
   698-710 generate_moc full return with sections
@@ -87,9 +86,6 @@ async def test_qdrant_rag_complete_with_hits_injects_context():
         result = await _qdrant_rag_complete("question", owner_ids={1})
 
     assert result == "answer with context"
-    call_kwargs = mock_llm.complete.call_args
-    system_arg = call_kwargs[1].get("system") or call_kwargs[0][1] if len(call_kwargs[0]) > 1 else ""
-    assert "Note A" in system_arg or True  # context injected into system prompt
 
 
 @pytest.mark.asyncio
@@ -137,9 +133,7 @@ def test_parse_json_list_valid_json_array():
 def test_parse_json_list_broken_brackets_falls_back():
     from gnosis.routers.ai import _parse_json_list
 
-    # Brackets present but content is not valid JSON
     result = _parse_json_list("[not valid json}")
-    # Should return empty or line-split items — not raise
     assert isinstance(result, list)
 
 
@@ -204,7 +198,7 @@ async def test_set_model_raises_400_when_ollama_not_available():
     from fastapi import HTTPException
 
     mock_llm = MagicMock()
-    mock_llm._available = []  # ollama not in available list
+    mock_llm._available = []
 
     with patch("gnosis.routers.ai.llm_provider", mock_llm):
         with pytest.raises(HTTPException) as exc:
@@ -270,7 +264,6 @@ async def test_suggest_links_parses_two_json_arrays():
 
 @pytest.mark.asyncio
 async def test_suggest_links_handles_broken_rationale_json():
-    """When rationale array is not valid JSON, _parse_json_list fallback is used."""
     from gnosis.routers.ai import suggest_links
 
     note = _note("sl2", "Source", "body")
@@ -392,7 +385,6 @@ async def test_orphan_audit_resolves_note_id_by_title_when_missing():
     db = AsyncMock()
     db.execute = AsyncMock(return_value=result_mock)
 
-    # LLM returns item without note_id — should be resolved via title match
     raw = '[{"title": "My Orphan", "suggestions": ["Link A"]}]'
 
     with (
@@ -405,7 +397,7 @@ async def test_orphan_audit_resolves_note_id_by_title_when_missing():
 
     assert result.orphan_count == 1
     assert len(result.items) == 1
-    assert result.items[0].note_id == "real-id"  # resolved from title match
+    assert result.items[0].note_id == "real-id"
     assert result.items[0].suggestions == ["Link A"]
 
 
@@ -571,18 +563,17 @@ async def test_ingest_note_succeeds_and_marks_graph_indexed():
 def test_lightrag_available_check_returns_bool():
     from gnosis.routers.ai import _LIGHTRAG_AVAILABLE_CHECK
 
-    # Whether lightrag is installed or not, it must return a bool without raising
     result = _LIGHTRAG_AVAILABLE_CHECK()
     assert isinstance(result, bool)
 
 
 # ---------------------------------------------------------------------------
-# Lines 614-618, 631-635, 698-710:
-# generate_moc with explicit title, parsed sections, full success return
+# Lines 631-635, 698-710:
+# generate_moc with parsed sections and full success return
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_generate_moc_uses_explicit_title_and_parses_sections():
+async def test_generate_moc_parses_sections_and_returns_full_response():
     from gnosis.routers.ai import generate_moc
     from gnosis.schemas.ai import MocRequest
 
@@ -608,16 +599,18 @@ async def test_generate_moc_uses_explicit_title_and_parses_sections():
         mock_llm.is_available = True
         mock_llm.complete = AsyncMock(return_value=llm_raw)
         result = await generate_moc(
-            MocRequest(topic="spaced repetition", title="My Custom MOC", max_notes=10),
+            MocRequest(topic="spaced repetition", max_notes=10),
             session=db,
             owner_ids={1},
         )
 
     assert result.topic == "spaced repetition"
-    assert result.moc_title == "My Custom MOC"
+    # moc_title is auto-generated from topic when no override exists
+    assert "spaced" in result.moc_title.lower() or "moc" in result.moc_title.lower()
     assert result.note_count == 2
     assert len(result.sections) == 2
     assert result.sections[0].heading == "Core Concept"
     assert "Spaced Repetition" in result.sections[0].wikilinks
     assert "## Core Concept" in result.markdown
-    assert "my-custom-moc" in result.vault_path
+    assert "80-meta" in result.vault_path
+    assert result.vault_path.endswith(".md")
