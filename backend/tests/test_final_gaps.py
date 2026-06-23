@@ -16,19 +16,19 @@ Surgical tests for the exact remaining uncovered lines/arcs:
                              634-635           ingest_note LightRAG exception
                              709-710           generate_moc json-decode fallback
 
-All HTTP tests use the `async_client` fixture from conftest.py which wires
-up an isolated SQLite DB and pre-authenticates as FakeUser(id=1). No login
-calls are needed.
+All HTTP tests use the `async_client` fixture from conftest.py.
 """
 from __future__ import annotations
 
+import sys
+import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 
 # ---------------------------------------------------------------------------
-# gnosis/models/tag.py  line 39 — Tag.__repr__  (pure unit test, no DB)
+# gnosis/models/tag.py  line 39 — Tag.__repr__  (pure unit test)
 # ---------------------------------------------------------------------------
 
 class TestTagRepr:
@@ -65,6 +65,90 @@ class TestParseJsonList:
 
 
 # ---------------------------------------------------------------------------
+# gnosis/routers/ingest.py  lines 143-144 — _ai_enrich invalid-JSON fallback
+#
+# _ai_enrich is a pure async helper; call it directly as a unit test.
+# The branch at 143-144 is the `except (json.JSONDecodeError, TypeError): pass`
+# inside the `if match:` block — triggered when the regex finds a brace group
+# but json.loads raises.
+# ---------------------------------------------------------------------------
+
+class TestAiEnrichInvalidJson:
+    @pytest.mark.anyio
+    async def test_ai_enrich_brace_match_invalid_json_fallback(self):
+        """regex matches braces but json.loads raises -> fallback to parsed values."""
+        from gnosis.routers.ingest import _ai_enrich
+        from gnosis.services.document_parser import ParsedDocument
+
+        parsed = ParsedDocument(
+            title="Test Doc",
+            text="Some interesting content about epistemology and knowledge systems.",
+            format="pdf",
+        )
+        with patch("gnosis.routers.ingest.llm_provider") as mock_llm:
+            mock_llm.is_available = True
+            # Brace group present so regex matches, but not valid JSON
+            mock_llm.complete = AsyncMock(
+                return_value="{title: AI Title, summary: great stuff, tags: not-array}"
+            )
+            title, summary, tags = await _ai_enrich(parsed)
+
+        # Falls back to parsed.title, parsed.text[:500], []
+        assert title == parsed.title
+        assert summary == parsed.text[:500]
+        assert tags == []
+
+    @pytest.mark.anyio
+    async def test_ai_enrich_no_brace_match_fallback(self):
+        """No brace group in LLM response -> if match is falsy -> fallback."""
+        from gnosis.routers.ingest import _ai_enrich
+        from gnosis.services.document_parser import ParsedDocument
+
+        parsed = ParsedDocument(
+            title="Second Doc",
+            text="Content about dependent origination.",
+            format="docx",
+        )
+        with patch("gnosis.routers.ingest.llm_provider") as mock_llm:
+            mock_llm.is_available = True
+            mock_llm.complete = AsyncMock(
+                return_value="Here is a plain prose response with no JSON at all."
+            )
+            title, summary, tags = await _ai_enrich(parsed)
+
+        assert title == parsed.title
+        assert tags == []
+
+
+# ---------------------------------------------------------------------------
+# gnosis/routers/export.py  line 237 — PDF export note-not-found
+#
+# export.py imports `settings` as a module-level singleton:
+#   from gnosis.config import settings
+# So we patch `gnosis.routers.export.settings`, not get_settings().
+# weasyprint is imported inside the function; inject a stub into sys.modules
+# so the ImportError branch is skipped and execution reaches the DB query.
+# ---------------------------------------------------------------------------
+
+class TestExportPdfNotFound:
+    @pytest.mark.anyio
+    async def test_export_pdf_note_not_found(self, async_client):
+        """PDF enabled, weasyprint present, note missing -> 404."""
+        # Build a minimal weasyprint stub
+        fake_wp = types.ModuleType("weasyprint")
+        fake_wp.HTML = MagicMock()  # never called; note lookup fails first
+
+        with (
+            patch("gnosis.routers.export.settings") as mock_settings,
+            patch.dict(sys.modules, {"weasyprint": fake_wp}),
+        ):
+            mock_settings.enable_pdf_export = True
+            resp = await async_client.get("/api/v1/export/note/does-not-exist-xyz.pdf")
+
+        assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # Helper: create a note via the notes router
 # ---------------------------------------------------------------------------
 
@@ -77,51 +161,6 @@ async def _create_note(
     )
     assert resp.status_code in (200, 201), f"note creation failed {resp.status_code}: {resp.text}"
     return note_id
-
-
-# ---------------------------------------------------------------------------
-# gnosis/routers/export.py  line 237 — PDF export note-not-found
-# ---------------------------------------------------------------------------
-
-class TestExportPdfNotFound:
-    @pytest.mark.anyio
-    async def test_export_pdf_note_not_found(self, async_client):
-        """PDF export enabled but note doesn't exist -> 404 (or 503 if weasyprint absent)."""
-        with (
-            patch("gnosis.routers.export.get_settings") as mock_settings,
-            patch("gnosis.routers.export.HTML", create=True),
-        ):
-            cfg = MagicMock()
-            cfg.enable_pdf_export = True
-            mock_settings.return_value = cfg
-            resp = await async_client.get("/api/v1/export/note/does-not-exist-xyz/pdf")
-        assert resp.status_code in (404, 422, 503)
-
-
-# ---------------------------------------------------------------------------
-# gnosis/routers/ingest.py  lines 143-144 — _ai_enrich invalid-JSON fallback
-# ---------------------------------------------------------------------------
-
-class TestIngestAiEnrichInvalidJson:
-    @pytest.mark.anyio
-    async def test_ai_enrich_invalid_json_fallback(self, async_client):
-        """LLM returns brace text but not valid JSON -> except branch, note still created."""
-        with (
-            patch("gnosis.routers.ingest.llm_provider") as mock_llm,
-            patch("gnosis.routers.ingest.hybrid_search", return_value=[]),
-        ):
-            mock_llm.is_available = True
-            mock_llm.complete = AsyncMock(return_value="{this is not json at all}")
-            resp = await async_client.post(
-                "/api/v1/ingest/note",
-                json={
-                    "id": "ingest-invalid-json-001",
-                    "title": "Invalid JSON Enrich Test",
-                    "body": "Body content for invalid json enrich fallback.",
-                    "folder": "00-inbox",
-                },
-            )
-        assert resp.status_code in (200, 201, 422)
 
 
 # ---------------------------------------------------------------------------
