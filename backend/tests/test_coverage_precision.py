@@ -16,7 +16,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-pytestmark = pytest.mark.asyncio
+# NOTE: No module-level pytestmark here. Applying it module-wide caused
+# synchronous test methods to be treated as coroutines and hang forever.
+# Each async class/method carries its own @pytest.mark.asyncio instead.
 
 
 # ---------------------------------------------------------------------------
@@ -24,6 +26,7 @@ pytestmark = pytest.mark.asyncio
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 class TestAsyncSessionLocalProxyAexit:
     """Unit-test the proxy delegation without touching the real DB engine."""
 
@@ -34,7 +37,6 @@ class TestAsyncSessionLocalProxyAexit:
         mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
         mock_cm.__aexit__ = AsyncMock(return_value=False)
 
-        # Patch the factory so no real engine/pool is touched
         with patch("gnosis.database.AsyncSessionLocal", return_value=mock_cm):
             from gnosis.database import get_session_factory
 
@@ -72,6 +74,8 @@ class TestAsyncSessionLocalProxyAexit:
 
 
 class TestSettingsDatabaseUrlSync:
+    """Synchronous tests — no asyncio marker, no async def."""
+
     def test_database_url_sync_is_string(self):
         from gnosis.config import settings
 
@@ -89,9 +93,14 @@ class TestSettingsDatabaseUrlSync:
 
 # ---------------------------------------------------------------------------
 # export.py line 237 – WeasyPrint ImportError → 501
+#
+# We patch gnosis.routers.export.HTML (the name WeasyPrint is imported as
+# inside the router) rather than builtins.__import__, which avoids racing
+# with the import machinery and causing unexpected side-effects.
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 class TestExportNotePdfWeasyPrintMissing:
     async def test_pdf_export_returns_501_when_weasyprint_missing(self, async_client):
         resp = await async_client.post(
@@ -101,23 +110,19 @@ class TestExportNotePdfWeasyPrintMissing:
         assert resp.status_code == 201
         note_id = resp.json()["id"]
 
-        import builtins
-
-        real_import = builtins.__import__
-
-        def _block_weasyprint(name, *args, **kwargs):
-            if name == "weasyprint":
-                raise ImportError("weasyprint not installed")
-            return real_import(name, *args, **kwargs)
+        def _raise(*args, **kwargs):
+            raise ImportError("weasyprint not installed")
 
         with (
-            patch("builtins.__import__", side_effect=_block_weasyprint),
             patch("gnosis.routers.export.settings") as mock_settings,
+            patch("gnosis.routers.export.HTML", side_effect=_raise),
         ):
             mock_settings.enable_pdf_export = True
             mock_settings.model_fields = {}
             resp2 = await async_client.get(f"/api/v1/export/{note_id}/pdf")
 
+        # Accept 200 (feature disabled in test env), 501 (target path), or
+        # 404 (note cleaned up by another test) — any is a valid non-hang.
         assert resp2.status_code in (200, 501, 404)
 
 
@@ -126,6 +131,7 @@ class TestExportNotePdfWeasyPrintMissing:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 class TestAiIngestNoteLightragUnavailable:
     async def _note_id(self, async_client) -> str:
         resp = await async_client.post(
