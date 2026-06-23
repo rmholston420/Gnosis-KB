@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from gnosis.models.link import Link
     from gnosis.models.review import ReviewCard
     from gnosis.models.tag import Tag
+    from gnosis.models.user import User
 
 
 class Note(Base):
@@ -49,6 +50,13 @@ class Note(Base):
     # ------------------------------------------------------------------ #
     # Relationships                                                        #
     # ------------------------------------------------------------------ #
+
+    owner: Mapped[User | None] = relationship(
+        "User",
+        back_populates="notes",
+        foreign_keys=[owner_id],
+        lazy="noload",
+    )
 
     attachments: Mapped[list[Attachment]] = relationship(
         "Attachment",
@@ -84,10 +92,5 @@ class Note(Base):
         "ReviewCard",
         back_populates="note",
         uselist=False,
-        # noload: never auto-load the review card when fetching notes.
-        # The review router loads it explicitly via _get_card_or_404.
-        # Using selectin or joined here caused a conflict with the
-        # eagerly-loaded attribute 'Note.tags' which collapsed Note.tags
-        # to a scalar and broke the tags API response.
         lazy="noload",
     )

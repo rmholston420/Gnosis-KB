@@ -47,7 +47,7 @@ class User(Base):
     vault_display_name: Mapped[str | None] = mapped_column(
         String(200),
         nullable=True,
-        comment="Human-readable vault name shown in the UI (e.g. 'Ryan's KB')",
+        comment="Human-readable vault name shown in the UI (e.g. 'Ryan\'s KB')",
     )
 
     # Relationships
@@ -64,9 +64,10 @@ class User(Base):
         lazy="noload",
         cascade="all, delete-orphan",
     )
+    # SharedVaultMember is the association table; member_id FK lives there.
     shared_vault_memberships: Mapped[list] = relationship(
-        "SharedVault",
+        "SharedVaultMember",
         back_populates="member",
-        foreign_keys="SharedVault.member_id",
+        foreign_keys="SharedVaultMember.member_id",
         lazy="noload",
     )
