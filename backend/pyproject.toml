@@ -104,7 +104,10 @@ ignore_missing_imports = true
 [tool.coverage.run]
 source = ["gnosis"]
 branch = true
-concurrency = ["thread", "greenlet"]
+# 'asyncio' must be listed so the C tracer stays attached when the event
+# loop switches coroutine frames; without it, async arc hits are silently
+# dropped and the same lines appear uncovered on every run.
+concurrency = ["thread", "greenlet", "asyncio"]
 omit = [
     "gnosis/core/sm2_test.py",
     "gnosis/services/fts_test.py",
