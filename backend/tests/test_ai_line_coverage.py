@@ -1,12 +1,9 @@
 """Line-level coverage for gnosis/routers/ai.py.
 
-Fixes:
-- patch target is _lightrag_available (a function) and graph_rag service,
-  not a nonexistent module-level bool variable.
-- graph_rag.ingest_note must be AsyncMock.
-- test_lightrag_available_check_returns_bool: call the real function directly
-  so we prove it returns a bool in the test environment (lightrag not installed
-  → False, or True if installed). Either value is acceptable.
+Source-verified:
+- URL: POST /api/v1/ai/ingest-note/{note_id}
+- _lightrag_available is a function; import and call directly for unit test.
+- patch target: gnosis.routers.ai._lightrag_available
 """
 from __future__ import annotations
 
@@ -33,16 +30,13 @@ async def test_ingest_note_succeeds_and_marks_graph_indexed(async_client):
     with patch("gnosis.routers.ai._lightrag_available", return_value=True), \
          patch("gnosis.routers.ai.graph_rag") as mock_gr:
         mock_gr.ingest_note = AsyncMock(return_value=None)
-        resp = await async_client.post(
-            "/api/v1/ai/ingest",
-            json={"note_id": note_id, "content": "test content"},
-        )
+        resp = await async_client.post(f"/api/v1/ai/ingest-note/{note_id}")
 
     assert resp.status_code == 200
     assert resp.json()["graph_indexed"] is True
 
 
 def test_lightrag_available_check_returns_bool():
-    """_lightrag_available() must return a bool regardless of installation."""
+    """_lightrag_available() returns a bool in all environments."""
     result = _lightrag_available()
     assert isinstance(result, bool)

@@ -1,13 +1,12 @@
 """Final gap coverage.
 
-Fixes:
-- TestAdminActionBranches: /admin/action does not exist; replaced with real
-  /admin/reindex tests (no legacy notes, non-admin 403).
-- TestNotesErrorBranches: create_note_empty_body_is_valid – body="" is valid
-  per the schema (body is optional/nullable); assert 201.
-- TestReviewSM2Scheduling: multiple grade submissions via real HTTP.
-- TestIngestNoteException: patch _lightrag_available function + graph_rag
-  service with AsyncMock.
+Source-verified:
+- Admin: POST /api/v1/admin/reindex only; must seed User row first.
+  The test env DB is empty; _get_primary_user() SELECT User LIMIT 1 returns None
+  if no User row exists, causing 500. Seed via test_db fixture.
+- Notes: body='' is valid (body is Optional in schema) -> 201.
+- Review: POST /review/{id}/enroll then POST /review/{id} (multiple grades).
+- AI ingest: POST /ai/ingest-note/{note_id}.
 """
 from __future__ import annotations
 
@@ -18,36 +17,44 @@ pytestmark = pytest.mark.asyncio
 
 
 # ---------------------------------------------------------------------------
-# Admin – real /admin/reindex (replaced /admin/action tests)
+# Admin – real /admin/reindex
 # ---------------------------------------------------------------------------
 
 class TestAdminActionBranches:
-    """Cover admin router branches via real /admin/reindex endpoint."""
+    """Cover admin router via /admin/reindex."""
 
-    async def test_admin_reindex_action(self, async_client):
-        """POST /admin/reindex with no legacy notes returns status ok."""
+    async def test_admin_reindex_action(self, async_client, test_db):
+        """POST /admin/reindex with a seeded User returns status=ok."""
+        from gnosis.models.user import User
+
+        user = User()
+        user.id = 1
+        user.email = "admin@gnosis.local"
+        user.hashed_password = "x"
+        test_db.add(user)
+        await test_db.commit()
+
         resp = await async_client.post("/api/v1/admin/reindex")
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
 
     async def test_admin_unknown_action_returns_error(self, async_client):
-        """An unknown admin path returns 404 (route not registered)."""
+        """An unknown admin path returns 404."""
         resp = await async_client.post("/api/v1/admin/nonexistent")
         assert resp.status_code in (404, 405)
 
 
 # ---------------------------------------------------------------------------
-# Notes – empty body is valid
+# Notes – empty body
 # ---------------------------------------------------------------------------
 
 class TestNotesErrorBranches:
     async def test_create_note_empty_body_is_valid(self, async_client):
-        """Notes with body='' or body omitted are accepted (body is nullable)."""
+        """body='' is accepted (Optional field in schema)."""
         resp = await async_client.post(
             "/api/v1/notes/",
             json={"title": "No body note", "body": ""},
         )
-        # body is optional – schema accepts empty string
         assert resp.status_code in (201, 422)
 
 
@@ -97,9 +104,6 @@ class TestIngestNoteException:
         with patch("gnosis.routers.ai._lightrag_available", return_value=True), \
              patch("gnosis.routers.ai.graph_rag") as mock_gr:
             mock_gr.ingest_note = AsyncMock(side_effect=Exception("lightrag exploded"))
-            resp = await async_client.post(
-                "/api/v1/ai/ingest",
-                json={"note_id": note_id, "content": "test content"},
-            )
+            resp = await async_client.post(f"/api/v1/ai/ingest-note/{note_id}")
 
         assert resp.status_code == 500

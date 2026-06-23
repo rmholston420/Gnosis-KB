@@ -1,13 +1,11 @@
 """Precision coverage for specific missing lines.
 
-Fixes:
-- TestAsyncSessionLocalProxyAexit: unchanged – was passing.
-- TestSettingsDatabaseUrlSync: unchanged – was passing.
-- TestExportNotePdfWeasyPrintMissing: unchanged – was passing.
-- TestReviewUnenroll: rewritten to use real HTTP routes (create note →
-  enroll → DELETE) instead of mocking db.delete directly.
-- TestAiIngestNoteLightragUnavailable: patch _lightrag_available (function)
-  and graph_rag service, not a nonexistent module variable.
+Source-verified fixes:
+- TestReviewUnenroll: use real HTTP routes POST /review/{id}/enroll then
+  DELETE /review/{id}.
+- TestAiIngestNoteLightragUnavailable: POST /ai/ingest-note/{note_id}
+  (path param, no body); patch _lightrag_available function.
+- TestAdminReindex: seed User row before calling /admin/reindex.
 """
 from __future__ import annotations
 
@@ -85,7 +83,6 @@ class TestExportNotePdfWeasyPrintMissing:
 
 class TestReviewUnenroll:
     async def test_unenroll_deletes_enrollment(self, async_client):
-        # Create note
         note_resp = await async_client.post(
             "/api/v1/notes/",
             json={"title": "Precision unenroll", "body": "precision body"},
@@ -93,20 +90,19 @@ class TestReviewUnenroll:
         assert note_resp.status_code == 201
         note_id = note_resp.json()["id"]
 
-        # Enroll
         enroll = await async_client.post(
             f"/api/v1/review/{note_id}/enroll",
             json={"due_today": True},
         )
         assert enroll.status_code == 201
 
-        # Unenroll – hits db.delete + db.commit (lines 189-190)
         unenroll = await async_client.delete(f"/api/v1/review/{note_id}")
         assert unenroll.status_code == 204
 
 
 # ---------------------------------------------------------------------------
 # ai.py – ingest_note LightRAG unavailable / fails
+# POST /ai/ingest-note/{note_id}  (path param only)
 # ---------------------------------------------------------------------------
 
 class TestAiIngestNoteLightragUnavailable:
@@ -122,10 +118,7 @@ class TestAiIngestNoteLightragUnavailable:
         note_id = await self._note_id(async_client)
 
         with patch("gnosis.routers.ai._lightrag_available", return_value=False):
-            resp = await async_client.post(
-                "/api/v1/ai/ingest",
-                json={"note_id": note_id, "content": "precision content"},
-            )
+            resp = await async_client.post(f"/api/v1/ai/ingest-note/{note_id}")
 
         assert resp.status_code == 200
         assert resp.json()["graph_indexed"] is False
@@ -136,9 +129,6 @@ class TestAiIngestNoteLightragUnavailable:
         with patch("gnosis.routers.ai._lightrag_available", return_value=True), \
              patch("gnosis.routers.ai.graph_rag") as mock_gr:
             mock_gr.ingest_note = AsyncMock(side_effect=RuntimeError("graph crash"))
-            resp = await async_client.post(
-                "/api/v1/ai/ingest",
-                json={"note_id": note_id, "content": "precision content"},
-            )
+            resp = await async_client.post(f"/api/v1/ai/ingest-note/{note_id}")
 
         assert resp.status_code == 500
