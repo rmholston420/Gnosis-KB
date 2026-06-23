@@ -15,7 +15,29 @@ Files / lines addressed:
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch, PropertyMock
+
+from gnosis.services.llm_provider import llm_provider
+from gnosis.services.graph_rag import graph_rag
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _available_provider():
+    """Context manager: make llm_provider.is_available return True."""
+    return patch.object(type(llm_provider), "is_available", new_callable=PropertyMock, return_value=True)
+
+
+def _unavailable_provider():
+    """Context manager: make llm_provider.is_available return False."""
+    return patch.object(type(llm_provider), "is_available", new_callable=PropertyMock, return_value=False)
+
+
+def _graph_rag_unavailable():
+    """Context manager: make graph_rag.is_available return False (async method)."""
+    return patch.object(graph_rag, "is_available", new=AsyncMock(return_value=False))
 
 
 # ===========================================================================
@@ -27,17 +49,20 @@ class TestReviewEnroll:
 
     @pytest.mark.asyncio
     async def test_enroll_note_not_found_returns_404(self, client):
-        """Enrolling a non-existent note_id must return 404."""
+        """Enrolling a non-existent note_id must return 404.
+
+        ReviewEnroll schema requires both note_id and due_today fields.
+        """
         resp = await client.post(
             "/api/v1/review/does-not-exist-abc123/enroll",
-            json={"due_today": False},
+            json={"note_id": "does-not-exist-abc123", "due_today": False},
         )
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
     async def test_enroll_already_enrolled_returns_existing_card(self, client, vault_dir):
-        """Enrolling a note that is already enrolled must return the existing card (200, not 201)."""
-        # First create a note via the notes router
+        """Enrolling a note that is already enrolled must return the existing card."""
+        # Create a note via the notes router
         create_resp = await client.post(
             "/api/v1/notes/",
             json={
@@ -51,12 +76,17 @@ class TestReviewEnroll:
         note_id = create_resp.json()["id"]
 
         # First enroll — 201
-        r1 = await client.post(f"/api/v1/review/{note_id}/enroll", json={"due_today": False})
+        r1 = await client.post(
+            f"/api/v1/review/{note_id}/enroll",
+            json={"note_id": note_id, "due_today": False},
+        )
         assert r1.status_code == 201
 
-        # Second enroll — should hit line 158, returning the existing card with 200 or 201
-        r2 = await client.post(f"/api/v1/review/{note_id}/enroll", json={"due_today": False})
-        # FastAPI returns 201 for the route but the handler returns early with existing card
+        # Second enroll — hits line 158 (already enrolled), returns existing card
+        r2 = await client.post(
+            f"/api/v1/review/{note_id}/enroll",
+            json={"note_id": note_id, "due_today": False},
+        )
         assert r2.status_code in (200, 201)
         assert r2.json()["note_id"] == note_id
 
@@ -80,7 +110,10 @@ class TestReviewSubmitLastReviewed:
         assert cr.status_code == 201
         note_id = cr.json()["id"]
 
-        er = await client.post(f"/api/v1/review/{note_id}/enroll", json={"due_today": True})
+        er = await client.post(
+            f"/api/v1/review/{note_id}/enroll",
+            json={"note_id": note_id, "due_today": True},
+        )
         assert er.status_code == 201
 
         # Submit a review — quality 4 (good recall)
@@ -88,7 +121,6 @@ class TestReviewSubmitLastReviewed:
         assert sr.status_code == 200
         data = sr.json()
         assert data["note_id"] == note_id
-        # interval should advance
         assert data["interval"] >= 1
 
 
@@ -116,7 +148,7 @@ class TestUpsertTagsBranches:
 
     @pytest.mark.asyncio
     async def test_create_note_with_empty_tags_skips_upsert(self, client, vault_dir):
-        """Creating a note with tags=[] exercises the 52→exit arc (for-loop body never entered)."""
+        """Creating a note with tags=[] exercises the 52→exit arc."""
         resp = await client.post(
             "/api/v1/notes/",
             json={
@@ -139,7 +171,8 @@ class TestAiGetNoteOr404:
 
     @pytest.mark.asyncio
     async def test_summarize_unknown_note_returns_404(self, client):
-        with patch("gnosis.services.llm_provider.llm_provider.is_available", True):
+        """When provider is available but note_id does not exist, return 404."""
+        with _available_provider():
             resp = await client.post("/api/v1/ai/summarize/nonexistent-note-id")
         assert resp.status_code == 404
 
@@ -149,10 +182,7 @@ class TestAiChat503:
 
     @pytest.mark.asyncio
     async def test_chat_no_provider_returns_503(self, client):
-        with (
-            patch("gnosis.routers.ai.graph_rag.is_available", new=AsyncMock(return_value=False)),
-            patch("gnosis.routers.ai.llm_provider.is_available", False),
-        ):
+        with _graph_rag_unavailable(), _unavailable_provider():
             resp = await client.post(
                 "/api/v1/ai/chat",
                 json={"message": "hello", "mode": "hybrid"},
@@ -165,7 +195,7 @@ class TestAiSuggestLinks:
 
     @pytest.mark.asyncio
     async def test_suggest_links_no_provider_returns_503(self, client):
-        with patch("gnosis.routers.ai.llm_provider.is_available", False):
+        with _unavailable_provider():
             resp = await client.post("/api/v1/ai/suggest-links/any-note-id")
         assert resp.status_code == 503
 
@@ -187,11 +217,8 @@ class TestAiSuggestLinks:
         # LLM returns two arrays; second is invalid JSON → fallback parse
         fake_llm_output = '["Title A"]\n[not valid json]'
         with (
-            patch("gnosis.routers.ai.llm_provider.is_available", True),
-            patch(
-                "gnosis.routers.ai.llm_provider.complete",
-                new=AsyncMock(return_value=fake_llm_output),
-            ),
+            _available_provider(),
+            patch.object(llm_provider, "complete", new=AsyncMock(return_value=fake_llm_output)),
         ):
             resp = await client.post(f"/api/v1/ai/suggest-links/{note_id}")
         assert resp.status_code == 200
@@ -204,7 +231,7 @@ class TestAiSuggestTags503:
 
     @pytest.mark.asyncio
     async def test_suggest_tags_no_provider_returns_503(self, client):
-        with patch("gnosis.routers.ai.llm_provider.is_available", False):
+        with _unavailable_provider():
             resp = await client.post("/api/v1/ai/suggest-tags/any-note-id")
         assert resp.status_code == 503
 
@@ -214,7 +241,7 @@ class TestAiCritique503:
 
     @pytest.mark.asyncio
     async def test_critique_no_provider_returns_503(self, client):
-        with patch("gnosis.routers.ai.llm_provider.is_available", False):
+        with _unavailable_provider():
             resp = await client.post("/api/v1/ai/critique/any-note-id")
         assert resp.status_code == 503
 
@@ -225,7 +252,7 @@ class TestAiOrphanAudit:
     @pytest.mark.asyncio
     async def test_orphan_audit_no_provider_returns_empty_items(self, client):
         """When provider is unavailable the handler returns early with items=[]."""
-        with patch("gnosis.routers.ai.llm_provider.is_available", False):
+        with _unavailable_provider():
             resp = await client.get("/api/v1/ai/orphan-audit")
         assert resp.status_code == 200
         data = resp.json()
@@ -237,7 +264,7 @@ class TestAiGenerateMoc:
 
     @pytest.mark.asyncio
     async def test_generate_moc_empty_topic_returns_422(self, client):
-        with patch("gnosis.routers.ai.llm_provider.is_available", True):
+        with _available_provider():
             resp = await client.post(
                 "/api/v1/ai/generate-moc",
                 json={"topic": "   "},  # whitespace-only → stripped to empty
@@ -247,7 +274,7 @@ class TestAiGenerateMoc:
     @pytest.mark.asyncio
     async def test_generate_moc_no_matching_notes_returns_404(self, client):
         """No notes containing the topic → 404 (lines 709-710)."""
-        with patch("gnosis.routers.ai.llm_provider.is_available", True):
+        with _available_provider():
             resp = await client.post(
                 "/api/v1/ai/generate-moc",
                 json={"topic": "zzz-topic-that-will-never-match-anything-xyz"},
