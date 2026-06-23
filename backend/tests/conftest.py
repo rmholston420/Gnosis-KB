@@ -34,11 +34,19 @@ _fake_deny_user() — zero-argument, always raises HTTP 401.
 
 Vault-owner scoping
 -------------------
-get_vault_owner_ids is also overridden to return {1}. Without this
-override the real dependency calls get_accessible_owner_ids() with the
-_FakeUser dataclass (not a real SQLAlchemy User row), which either
-crashes or returns an empty set — causing every AI/notes query scoped
-by owner_ids to find nothing and skip branches we want to cover.
+get_vault_owner_ids is overridden differently per client type:
+  - authenticated clients → _fake_vault_owner_ids() returns {1}
+  - unauthenticated_client → _fake_deny_vault_owner_ids() raises HTTP 401
+
+Without the authenticated override, get_vault_owner_ids() calls the real
+get_accessible_owner_ids() with a _FakeUser dataclass (not a real
+SQLAlchemy User row), which either crashes or returns an empty set —
+causing all AI/notes endpoints that filter by owner_ids to find nothing
+and skip branches we want to cover.
+
+Without the unauthenticated override, the deny path short-circuits at
+require_user (which raises 401), so FastAPI never calls get_vault_owner_ids
+for unauthenticated requests — both overrides are needed for correctness.
 
 Isolation
 ---------
@@ -68,7 +76,6 @@ from __future__ import annotations
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from sqlite3 import connect as sqlite3_connect
 from typing import AsyncGenerator
 from unittest.mock import AsyncMock, patch
 
@@ -76,7 +83,7 @@ import pytest
 import pytest_asyncio
 from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 from starlette.testclient import TestClient
@@ -185,6 +192,16 @@ async def _fake_vault_owner_ids() -> set[int]:
     return {1}
 
 
+async def _fake_deny_vault_owner_ids() -> set[int]:
+    """Raise HTTP 401 — mirrors _fake_deny_user for the vault-owner dependency.
+
+    unauthenticated_client overrides both require_user AND get_vault_owner_ids
+    so that auth-guard tests receive a consistent 401 regardless of which
+    dependency the router resolves first.
+    """
+    raise HTTPException(status_code=401, detail="Not authenticated")
+
+
 # ---------------------------------------------------------------------------
 # Shared app factory
 # ---------------------------------------------------------------------------
@@ -208,6 +225,7 @@ async def _make_client(
     vault_dir,
     *,
     auth_override=_fake_require_user,
+    vault_owner_override=_fake_vault_owner_ids,
 ) -> AsyncGenerator[AsyncClient, None]:
     p1, p2, p3 = _make_patches()
     with p1, p2, p3:
@@ -228,9 +246,7 @@ async def _make_client(
         app.dependency_overrides[get_db] = override_get_db
         app.dependency_overrides[require_user] = auth_override
         app.dependency_overrides[get_current_user] = auth_override
-        # Override get_vault_owner_ids so AI/notes endpoints scoped by owner_ids
-        # always see notes written by _FakeUser(id=1) in the test DB.
-        app.dependency_overrides[get_vault_owner_ids] = _fake_vault_owner_ids
+        app.dependency_overrides[get_vault_owner_ids] = vault_owner_override
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             yield c
@@ -241,21 +257,38 @@ async def _make_client(
 @pytest_asyncio.fixture
 async def async_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, None]:
     """Authenticated HTTPX client — all requests resolve to FakeUser(id=1)."""
-    async for c in _make_client(test_engine, vault_dir, auth_override=_fake_require_user):
+    async for c in _make_client(
+        test_engine, vault_dir,
+        auth_override=_fake_require_user,
+        vault_owner_override=_fake_vault_owner_ids,
+    ):
         yield c
 
 
 @pytest_asyncio.fixture
 async def client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, None]:
     """Alias for async_client (backward-compat)."""
-    async for c in _make_client(test_engine, vault_dir, auth_override=_fake_require_user):
+    async for c in _make_client(
+        test_engine, vault_dir,
+        auth_override=_fake_require_user,
+        vault_owner_override=_fake_vault_owner_ids,
+    ):
         yield c
 
 
 @pytest_asyncio.fixture
 async def unauthenticated_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, None]:
-    """HTTPX client where every request raises HTTP 401."""
-    async for c in _make_client(test_engine, vault_dir, auth_override=_fake_deny_user):
+    """HTTPX client where every request raises HTTP 401.
+
+    Both require_user and get_vault_owner_ids raise 401 so that auth-guard
+    tests receive a consistent 401 regardless of which dependency the router
+    resolves first.
+    """
+    async for c in _make_client(
+        test_engine, vault_dir,
+        auth_override=_fake_deny_user,
+        vault_owner_override=_fake_deny_vault_owner_ids,
+    ):
         yield c
 
 
