@@ -164,7 +164,6 @@ class TestParseQuery:
 
 from gnosis.services.query_parser import (
     GQLParseError,
-    ParsedQuery,
     _tokenise,
     execute_query,
     parse_query,
@@ -204,10 +203,6 @@ class TestExecuteQuery:
         db = AsyncMock()
         db.execute.return_value = mock_result
 
-        # scoped_note_stmt is a LOCAL import inside execute_query, so patch
-        # at the source module, not at query_parser.
-        # Its return value must be a chainable MagicMock because execute_query
-        # calls .where(), .order_by(), and .limit() on it.
         chainable = MagicMock()
         chainable.where.return_value = chainable
         chainable.order_by.return_value = chainable
@@ -354,7 +349,6 @@ class TestSM2:
         assert new_state.interval == 1
 
     def test_advance_quality_3_preserves_easiness_floor(self):
-        # After many hard reviews easiness should not drop below floor
         state = SM2State(easiness=EASINESS_FLOOR + 0.01, interval=1, repetitions=0)
         new_state, _ = advance(state, quality=3)
         assert new_state.easiness >= EASINESS_FLOOR
@@ -365,7 +359,6 @@ class TestSM2:
             advance(state, quality=6)
 
     def test_advance_quality_0_raises_or_resets(self):
-        # quality=0 is valid (0-5 range); should reset
         state = SM2State(easiness=EASINESS_START, interval=10, repetitions=3)
         new_state, _ = advance(state, quality=0)
         assert new_state.repetitions == 0
@@ -431,14 +424,6 @@ class TestEmbedDense:
 
 # ---------------------------------------------------------------------------
 # services/llm_provider — LLMProvider class
-# LLMProvider has: initialize() (async), complete(), stream(), is_available,
-# active_provider, active_model, swap_model().
-# Clients are configured inside initialize(); _available is populated there.
-#
-# When _available is empty, complete() iterates an empty list and raises:
-#   RuntimeError("All LLM providers failed. Last error: None")
-# stream() raises:
-#   RuntimeError("All LLM stream providers failed. Last error: None")
 # ---------------------------------------------------------------------------
 
 from gnosis.services.llm_provider import LLMProvider
@@ -447,7 +432,6 @@ from gnosis.services.llm_provider import LLMProvider
 class TestLLMProvider:
     def test_is_available_false_before_init(self):
         provider = LLMProvider()
-        # Before initialize(), _available is empty
         assert provider.is_available is False
 
     def test_active_provider_none_before_init(self):
@@ -466,13 +450,11 @@ class TestLLMProvider:
     @pytest.mark.asyncio
     async def test_complete_raises_when_no_providers(self):
         provider = LLMProvider()
-        # _available is empty — iterates nothing, raises with last_exc=None
         with pytest.raises(RuntimeError, match="All LLM providers failed"):
             await provider.complete("hello")
 
     @pytest.mark.asyncio
     async def test_complete_uses_available_client(self):
-        """Inject a fake openai client into _available and verify complete() calls it."""
         provider = LLMProvider()
         mock_client = AsyncMock()
         choice = MagicMock()
@@ -490,7 +472,6 @@ class TestLLMProvider:
     @pytest.mark.asyncio
     async def test_stream_raises_when_no_providers(self):
         provider = LLMProvider()
-        # _available is empty — raises "All LLM stream providers failed..."
         with pytest.raises(RuntimeError, match="All LLM stream providers failed"):
             async for _ in provider.stream("hello"):
                 pass
@@ -595,7 +576,6 @@ class TestMarkdownParser:
 
     def test_generate_note_id_format(self):
         note_id = generate_note_id()
-        # YYYYMMDD-HHmmss = 15 chars
         assert len(note_id) == 15
         assert "-" in note_id
 
@@ -611,7 +591,6 @@ class TestFTS:
     @pytest.mark.asyncio
     async def test_fulltext_search_returns_dict(self):
         mock_row = MagicMock()
-        # fulltext_search accesses rows via mappings() dict-like interface
         mock_row.__getitem__ = lambda self, key: {
             "note_id": "1", "title": "Test", "slug": "", "folder": "",
             "note_type": "", "status": "", "score": 0.5, "highlight": "", "tags": [],
@@ -678,8 +657,6 @@ class TestFTS:
 
 # ---------------------------------------------------------------------------
 # services/hybrid_search
-# hybrid_search(query, owner_ids, limit, folder, note_type, tags) → sync
-# returns dict{results: list, elapsed_ms: float}
 # ---------------------------------------------------------------------------
 
 from gnosis.services.hybrid_search import hybrid_search as hs_hybrid_search
@@ -742,8 +719,7 @@ class TestHybridSearch:
 
 
 # ---------------------------------------------------------------------------
-# services/vector_store — module-level functions: upsert_note, delete_note,
-#   ensure_collection, get_qdrant_client
+# services/vector_store
 # ---------------------------------------------------------------------------
 
 from gnosis.services.vector_store import (
@@ -791,7 +767,6 @@ class TestVectorStore:
             patch("gnosis.services.vector_store.get_settings") as mock_settings,
         ):
             mock_settings.return_value.qdrant_collection_name = "test_col"
-            # Should not raise — just logs and returns
             upsert_note("note-fail", "Title", "Body", "folder", "type", "status", [], 1)
 
     def test_delete_note_calls_qdrant(self):
@@ -806,7 +781,7 @@ class TestVectorStore:
 
     def test_ensure_collection_no_op_if_exists(self):
         mock_client = MagicMock()
-        mock_client.get_collection.return_value = MagicMock()  # already exists
+        mock_client.get_collection.return_value = MagicMock()
         with (
             patch("gnosis.services.vector_store.get_qdrant_client", return_value=mock_client),
             patch("gnosis.services.vector_store.get_settings") as mock_settings,
@@ -971,21 +946,6 @@ class TestVaultSync:
 
 # ---------------------------------------------------------------------------
 # Router smoke tests (via FastAPI TestClient)
-#
-# All routers are mounted under /api/v1 prefix (see gnosis/main.py):
-#   application.include_router(search.router, prefix=API_V1)  # /api/v1/search/
-#   application.include_router(query.router,  prefix=API_V1)  # /api/v1/query
-#   application.include_router(notes.router,  prefix=API_V1)  # /api/v1/notes
-#   application.include_router(tags.router,   prefix=API_V1)  # /api/v1/tags
-#   application.include_router(vault_router.router, prefix=API_V1)  # /api/v1/vault
-#
-# Query router endpoints:
-#   POST /api/v1/query/run          — execute a one-off GQL query
-#   GET  /api/v1/query/saved        — list saved dashboards
-#
-# Vault router endpoints:
-#   POST /api/v1/vault/sync         — trigger sync
-#   GET  /api/v1/vault/sync/status  — poll sync state
 # ---------------------------------------------------------------------------
 
 from fastapi.testclient import TestClient
@@ -1013,9 +973,6 @@ async def _override_owner_ids():
 
 
 async def _override_db():
-    # Build a mock DB whose execute() returns a result with a fully chainable
-    # scalars() → unique() → one_or_none() / all() interface so both list and
-    # single-item endpoints can call any variant without AttributeError.
     scalar_result = MagicMock()
     scalar_result.all.return_value = []
     scalar_result.unique.return_value = scalar_result
@@ -1023,7 +980,6 @@ async def _override_db():
 
     exec_result = MagicMock()
     exec_result.scalars.return_value = scalar_result
-    # scalar_one() used by count queries (list_notes)
     exec_result.scalar_one.return_value = 0
     exec_result.scalar_one_or_none.return_value = None
 
@@ -1041,7 +997,6 @@ client = TestClient(app, raise_server_exceptions=False)
 
 class TestSearchRouter:
     def test_search_endpoint_returns_200_or_422(self):
-        # Route is /api/v1/search/?q=test (trailing slash from router prefix)
         resp = client.get("/api/v1/search/?q=test")
         assert resp.status_code in (200, 422, 500)
 
@@ -1052,7 +1007,6 @@ class TestSearchRouter:
 
 class TestQueryRouter:
     def test_query_endpoint_post(self):
-        # The run-query endpoint is POST /api/v1/query/run
         resp = client.post("/api/v1/query/run", json={"query": "FROM notes LIMIT 5"})
         assert resp.status_code in (200, 422, 500)
 
@@ -1071,8 +1025,6 @@ class TestNotesRouter:
         assert resp.status_code in (200, 500)
 
     def test_get_note_not_found(self):
-        # /{note_id} param is a str (e.g. "20240101-120000"), not an int.
-        # With mock DB returning one_or_none()=None the router raises 404.
         resp = client.get("/api/v1/notes/nonexistent-note-id")
         assert resp.status_code in (404, 500)
 
@@ -1085,6 +1037,5 @@ class TestTagsRouter:
 
 class TestVaultRouter:
     def test_vault_status(self):
-        # The status endpoint is GET /api/v1/vault/sync/status
         resp = client.get("/api/v1/vault/sync/status")
         assert resp.status_code in (200, 500)
