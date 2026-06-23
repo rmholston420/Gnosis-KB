@@ -104,12 +104,7 @@ ignore_missing_imports = true
 [tool.coverage.run]
 source = ["gnosis"]
 branch = true
-# "thread" catches sync code in worker threads.
-# "greenlet" catches SQLAlchemy greenlet-dispatched coroutines.
-# "asyncio" catches native asyncio coroutine bodies (FastAPI async handlers)
-# that run on the event loop but aren't attributed to the main thread by
-# coverage.py's default C-tracer.
-concurrency = ["thread", "greenlet", "asyncio"]
+concurrency = ["thread", "greenlet"]
 omit = [
     "gnosis/core/sm2_test.py",
     "gnosis/services/fts_test.py",
