@@ -68,9 +68,9 @@ class TestParseJsonList:
 # gnosis/routers/ingest.py  lines 143-144 — _ai_enrich invalid-JSON fallback
 #
 # _ai_enrich is a pure async helper; call it directly as a unit test.
-# The branch at 143-144 is the `except (json.JSONDecodeError, TypeError): pass`
-# inside the `if match:` block — triggered when the regex finds a brace group
-# but json.loads raises.
+# ParsedDocument field is `raw_format` (not `format`).
+# Lines 143-144 are the except (json.JSONDecodeError, TypeError): pass inside
+# the `if match:` block — triggered when regex finds braces but json.loads fails.
 # ---------------------------------------------------------------------------
 
 class TestAiEnrichInvalidJson:
@@ -82,18 +82,18 @@ class TestAiEnrichInvalidJson:
 
         parsed = ParsedDocument(
             title="Test Doc",
-            text="Some interesting content about epistemology and knowledge systems.",
-            format="pdf",
+            text="Some interesting content about epistemology.",
+            raw_format="pdf",
         )
         with patch("gnosis.routers.ingest.llm_provider") as mock_llm:
             mock_llm.is_available = True
-            # Brace group present so regex matches, but not valid JSON
+            # Brace group present so regex matches, but content is not valid JSON
             mock_llm.complete = AsyncMock(
                 return_value="{title: AI Title, summary: great stuff, tags: not-array}"
             )
             title, summary, tags = await _ai_enrich(parsed)
 
-        # Falls back to parsed.title, parsed.text[:500], []
+        # Must fall back to parsed.title / parsed.text[:500] / []
         assert title == parsed.title
         assert summary == parsed.text[:500]
         assert tags == []
@@ -107,7 +107,7 @@ class TestAiEnrichInvalidJson:
         parsed = ParsedDocument(
             title="Second Doc",
             text="Content about dependent origination.",
-            format="docx",
+            raw_format="docx",
         )
         with patch("gnosis.routers.ingest.llm_provider") as mock_llm:
             mock_llm.is_available = True
@@ -123,18 +123,17 @@ class TestAiEnrichInvalidJson:
 # ---------------------------------------------------------------------------
 # gnosis/routers/export.py  line 237 — PDF export note-not-found
 #
-# export.py imports `settings` as a module-level singleton:
+# export.py uses a module-level `settings` singleton bound at import time:
 #   from gnosis.config import settings
-# So we patch `gnosis.routers.export.settings`, not get_settings().
-# weasyprint is imported inside the function; inject a stub into sys.modules
-# so the ImportError branch is skipped and execution reaches the DB query.
+# Patch the bound name `gnosis.routers.export.settings`, not get_settings().
+# Inject a weasyprint stub via sys.modules so the ImportError branch is
+# skipped and execution reaches the DB query -> note missing -> 404.
 # ---------------------------------------------------------------------------
 
 class TestExportPdfNotFound:
     @pytest.mark.anyio
     async def test_export_pdf_note_not_found(self, async_client):
-        """PDF enabled, weasyprint present, note missing -> 404."""
-        # Build a minimal weasyprint stub
+        """PDF enabled, weasyprint stub present, note missing -> 404."""
         fake_wp = types.ModuleType("weasyprint")
         fake_wp.HTML = MagicMock()  # never called; note lookup fails first
 
