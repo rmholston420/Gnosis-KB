@@ -20,6 +20,10 @@ note_tags = Table(
     Column("tag_id", Integer, ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True),
 )
 
+# Backwards-compatible alias: routers and vault_sync use `NoteTag.c.note_id` etc.
+# The Table object exposes the same column accessor API either way.
+NoteTag = note_tags
+
 
 class Tag(Base):
     __tablename__ = "tags"
@@ -28,7 +32,7 @@ class Tag(Base):
     name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
 
     # lazy='select': explicit load only — avoids double-load collision.
-    notes: Mapped[list[Note]] = relationship(
+    notes: Mapped[list["Note"]] = relationship(
         "Note",
         secondary="note_tags",
         back_populates="tags",
