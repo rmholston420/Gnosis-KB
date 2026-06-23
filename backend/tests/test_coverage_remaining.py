@@ -51,11 +51,21 @@ def _mock_llm(available: bool) -> MagicMock:
 
 
 def _mock_graph_rag(available: bool) -> MagicMock:
-    """Return a MagicMock that mimics graph_rag with is_available=<available>."""
+    """Return a MagicMock that mimics graph_rag with is_available=<available>.
+
+    graph_rag.is_available is awaited as a coroutine in the router:
+        if await graph_rag.is_available(current_user.id): ...
+    so it must be an AsyncMock callable that returns the bool.
+    """
     m = MagicMock()
     m.is_available = AsyncMock(return_value=available)
     m.query = AsyncMock(return_value="graph answer")
-    m.stream = AsyncMock(return_value=iter([]))
+
+    async def _empty_stream(*args, **kwargs):
+        return
+        yield  # make it an async generator
+
+    m.stream = _empty_stream
     return m
 
 
@@ -67,7 +77,7 @@ class TestReviewEnroll:
     """review.py lines 147-155 (note not found) and 158 (already enrolled)."""
 
     @pytest.mark.asyncio
-    async def test_enroll_note_not_found_returns_404(self, client):
+    async def test_enroll_note_not_found_returns_404(self, client, vault_dir):
         """Enrolling a non-existent note_id must return 404."""
         resp = await client.post(
             "/api/v1/review/does-not-exist-abc123/enroll",
@@ -182,7 +192,7 @@ class TestAiGetNoteOr404:
     """ai.py line 129: _get_note_or_404 raises 404 for unknown note."""
 
     @pytest.mark.asyncio
-    async def test_summarize_unknown_note_returns_404(self, client):
+    async def test_summarize_unknown_note_returns_404(self, client, vault_dir):
         """Provider available but note doesn't exist → 404."""
         with patch(f"{_AI}.llm_provider", _mock_llm(available=True)):
             resp = await client.post("/api/v1/ai/summarize/nonexistent-note-id")
@@ -193,7 +203,7 @@ class TestAiProviders:
     """ai.py lines 138-142: GET /providers returns available=False when no provider."""
 
     @pytest.mark.asyncio
-    async def test_get_providers_no_provider_returns_unavailable(self, client):
+    async def test_get_providers_no_provider_returns_unavailable(self, client, vault_dir):
         """Lines 138-142: early return with available=False."""
         with patch(f"{_AI}.llm_provider", _mock_llm(available=False)):
             resp = await client.get("/api/v1/ai/providers")
@@ -208,7 +218,7 @@ class TestAiSetModel:
     """ai.py lines 211-221: POST /providers/model."""
 
     @pytest.mark.asyncio
-    async def test_set_model_ollama_unavailable_returns_400(self, client):
+    async def test_set_model_ollama_unavailable_returns_400(self, client, vault_dir):
         """Line 211: ollama not in _available → 400."""
         with patch(f"{_AI}.llm_provider", _mock_llm(available=False)):
             resp = await client.post(
@@ -218,7 +228,7 @@ class TestAiSetModel:
         assert resp.status_code == 400
 
     @pytest.mark.asyncio
-    async def test_set_model_ollama_available_swaps_and_returns_info(self, client):
+    async def test_set_model_ollama_available_swaps_and_returns_info(self, client, vault_dir):
         """Lines 215-221: ollama present → swap_model called, 200 with provider info."""
         mock_llm = _mock_llm(available=True)
 
@@ -251,7 +261,7 @@ class TestAiChat503:
     """ai.py lines 243-244: chat 503 when neither graph_rag nor llm available."""
 
     @pytest.mark.asyncio
-    async def test_chat_no_provider_returns_503(self, client):
+    async def test_chat_no_provider_returns_503(self, client, vault_dir):
         with (
             patch(f"{_AI}.graph_rag", _mock_graph_rag(available=False)),
             patch(f"{_AI}.llm_provider", _mock_llm(available=False)),
@@ -267,7 +277,7 @@ class TestAiSuggestLinks:
     """ai.py lines 297-303: suggest-links 503 + rationale fallback."""
 
     @pytest.mark.asyncio
-    async def test_suggest_links_no_provider_returns_503(self, client):
+    async def test_suggest_links_no_provider_returns_503(self, client, vault_dir):
         with patch(f"{_AI}.llm_provider", _mock_llm(available=False)):
             resp = await client.post("/api/v1/ai/suggest-links/any-note-id")
         assert resp.status_code == 503
@@ -288,6 +298,8 @@ class TestAiSuggestLinks:
         note_id = cr.json()["id"]
 
         mock_llm = _mock_llm(available=True)
+        # First array is valid JSON; second array is intentionally broken JSON
+        # so the except-JSONDecodeError branch in suggest_links is exercised.
         mock_llm.complete = AsyncMock(return_value='["Title A"]\n[not valid json]')
 
         with patch(f"{_AI}.llm_provider", mock_llm):
@@ -300,7 +312,7 @@ class TestAiSuggestTags503:
     """ai.py lines 343-344: suggest-tags 503."""
 
     @pytest.mark.asyncio
-    async def test_suggest_tags_no_provider_returns_503(self, client):
+    async def test_suggest_tags_no_provider_returns_503(self, client, vault_dir):
         with patch(f"{_AI}.llm_provider", _mock_llm(available=False)):
             resp = await client.post("/api/v1/ai/suggest-tags/any-note-id")
         assert resp.status_code == 503
@@ -310,7 +322,7 @@ class TestAiCritique503:
     """ai.py lines 411-412: critique 503."""
 
     @pytest.mark.asyncio
-    async def test_critique_no_provider_returns_503(self, client):
+    async def test_critique_no_provider_returns_503(self, client, vault_dir):
         with patch(f"{_AI}.llm_provider", _mock_llm(available=False)):
             resp = await client.post("/api/v1/ai/critique/any-note-id")
         assert resp.status_code == 503
@@ -320,7 +332,7 @@ class TestAiOrphanAudit:
     """ai.py line 450: fast return when provider unavailable."""
 
     @pytest.mark.asyncio
-    async def test_orphan_audit_no_provider_returns_empty_items(self, client):
+    async def test_orphan_audit_no_provider_returns_empty_items(self, client, vault_dir):
         with patch(f"{_AI}.llm_provider", _mock_llm(available=False)):
             resp = await client.get("/api/v1/ai/orphan-audit")
         assert resp.status_code == 200
@@ -331,7 +343,7 @@ class TestAiStreamChat:
     """ai.py lines 467-483, 481-482: SSE stream exception handler."""
 
     @pytest.mark.asyncio
-    async def test_stream_chat_exception_yields_error_event(self, client):
+    async def test_stream_chat_exception_yields_error_event(self, client, vault_dir):
         """Raising inside the token loop exercises lines 481-482; finally always
         emits meta + [DONE] (lines 467/483)."""
 
@@ -359,8 +371,9 @@ class TestAiGenerateMoc:
     """ai.py lines 670 (empty topic 422) and 709-710 (no notes 404)."""
 
     @pytest.mark.asyncio
-    async def test_generate_moc_empty_topic_returns_422(self, client):
-        """Whitespace-only topic → stripped to empty → 422."""
+    async def test_generate_moc_empty_topic_returns_422(self, client, vault_dir):
+        """Whitespace-only topic → Pydantic accepts it (len>0), router strips
+        to empty string → manual 422 raise."""
         with patch(f"{_AI}.llm_provider", _mock_llm(available=True)):
             resp = await client.post(
                 "/api/v1/ai/generate-moc",
@@ -369,7 +382,7 @@ class TestAiGenerateMoc:
         assert resp.status_code == 422
 
     @pytest.mark.asyncio
-    async def test_generate_moc_no_matching_notes_returns_404(self, client):
+    async def test_generate_moc_no_matching_notes_returns_404(self, client, vault_dir):
         """No notes matching topic → 404."""
         with patch(f"{_AI}.llm_provider", _mock_llm(available=True)):
             resp = await client.post(
