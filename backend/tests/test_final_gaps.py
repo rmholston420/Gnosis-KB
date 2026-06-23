@@ -154,9 +154,12 @@ class TestAsyncSessionLocalProxy:
 # gnosis/main.py  lines 86-88
 # lifespan: graph_rag.initialize(user_id=1) raises -> logger.warning fires.
 #
-# lifespan is decorated with @asynccontextmanager, so it must be driven with
-# `async with lifespan(app)`, NOT with .__anext__().  We verify the warning
-# branch fired using assertLogs on the "gnosis.main" logger.
+# Strategy:
+#   - patch get_engine() to return a fake engine whose .begin() is a proper
+#     @asynccontextmanager (so `async with engine.begin() as conn` works).
+#   - patch graph_rag.initialize to raise RuntimeError.
+#   - assert the WARNING log is emitted and shutdown hooks are called.
+#   - ALL assertions live INSIDE the patch context so mocks are still active.
 # ---------------------------------------------------------------------------
 
 class TestMainLifespanWarning:
@@ -168,6 +171,10 @@ class TestMainLifespanWarning:
 
         app = FastAPI()
 
+        # Build a real async context manager for engine.begin() so that
+        # `async with get_engine().begin() as conn` works correctly.
+        # fake_engine.begin is a callable that returns an AsyncContextManager
+        # when invoked — matching how SQLAlchemy's engine.begin() works.
         fake_conn = MagicMock()
         fake_conn.run_sync = AsyncMock()
 
@@ -190,70 +197,19 @@ class TestMainLifespanWarning:
             mock_llm.initialize = AsyncMock()
             mock_rag.initialize = AsyncMock(side_effect=RuntimeError("no ollama"))
 
-            # assertLogs captures the warning emitted on lines 86-88
-            with pytest.raises(Exception) if False else _noop_ctx():
-                pass
-
-            import logging as _logging
-            gnosis_logger = _logging.getLogger("gnosis.main")
-
             with _capture_logs("gnosis.main", level=logging.WARNING) as log_watcher:
                 async with lifespan(app):
-                    # we are now past the yield - startup completed, warning fired
+                    # Startup has completed; the warning branch has already fired.
                     pass
+                # Shutdown has completed; observer.stop/join were called.
 
-        assert any(
-            "LightRAG warm-up skipped" in msg for msg in log_watcher
-        ), f"Expected warning not found. Captured: {log_watcher}"
-        mock_rag.initialize.assert_called_once_with(user_id=1)
-        mock_obs.stop.assert_called_once()
-        mock_obs.join.assert_called_once()
-
-
-class _noop_ctx:
-    def __enter__(self): return self
-    def __exit__(self, *a): return False
-
-
-class _capture_logs:
-    """Minimal context manager that collects log messages for a given logger."""
-
-    def __init__(self, logger_name: str, level: int = logging.WARNING):
-        self._name = logger_name
-        self._level = level
-        self._messages: list[str] = []
-        self._handler: logging.Handler | None = None
-
-    def __enter__(self) -> list[str]:
-        logger = logging.getLogger(self._name)
-        handler = _ListHandler(self._messages)
-        handler.setLevel(self._level)
-        logger.addHandler(handler)
-        # Ensure the logger itself passes messages at this level
-        if logger.level == logging.NOTSET or logger.level > self._level:
-            self._orig_level = logger.level
-            logger.setLevel(self._level)
-        else:
-            self._orig_level = None
-        self._handler = handler
-        return self._messages
-
-    def __exit__(self, *args):
-        logger = logging.getLogger(self._name)
-        if self._handler:
-            logger.removeHandler(self._handler)
-        if self._orig_level is not None:
-            logger.setLevel(self._orig_level)
-        return False
-
-
-class _ListHandler(logging.Handler):
-    def __init__(self, store: list[str]):
-        super().__init__()
-        self._store = store
-
-    def emit(self, record: logging.LogRecord) -> None:
-        self._store.append(self.format(record))
+            # --- assertions inside the patch context ---
+            assert any(
+                "LightRAG warm-up skipped" in msg for msg in log_watcher
+            ), f"Expected warning not found. Captured: {log_watcher}"
+            mock_rag.initialize.assert_called_once_with(user_id=1)
+            mock_obs.stop.assert_called_once()
+            mock_obs.join.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -571,3 +527,46 @@ class TestGenerateMocJsonDecodeFallback:
         data = resp.json()
         assert data["sections"] == []
         assert "dharma" in data["topic"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Log capture helper
+# ---------------------------------------------------------------------------
+
+class _capture_logs:
+    """Minimal context manager that collects log messages for a given logger."""
+
+    def __init__(self, logger_name: str, level: int = logging.WARNING):
+        self._name = logger_name
+        self._level = level
+        self._messages: list[str] = []
+        self._handler: logging.Handler | None = None
+        self._orig_level = None
+
+    def __enter__(self) -> list[str]:
+        logger = logging.getLogger(self._name)
+        handler = _ListHandler(self._messages)
+        handler.setLevel(self._level)
+        logger.addHandler(handler)
+        if logger.level == logging.NOTSET or logger.level > self._level:
+            self._orig_level = logger.level
+            logger.setLevel(self._level)
+        self._handler = handler
+        return self._messages
+
+    def __exit__(self, *args):
+        logger = logging.getLogger(self._name)
+        if self._handler:
+            logger.removeHandler(self._handler)
+        if self._orig_level is not None:
+            logger.setLevel(self._orig_level)
+        return False
+
+
+class _ListHandler(logging.Handler):
+    def __init__(self, store: list[str]):
+        super().__init__()
+        self._store = store
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self._store.append(self.format(record))
