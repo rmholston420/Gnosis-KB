@@ -58,7 +58,7 @@ or from the real on-disk vault.
 from __future__ import annotations
 
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from sqlite3 import connect as sqlite3_connect
 from typing import AsyncGenerator
@@ -157,6 +157,7 @@ class _FakeUser:
     full_name: str | None = "Test User"
     vault_slug: str | None = "test"
     vault_path: str | None = None
+    vault_display_name: str | None = None   # required by UserProfile.model_validate
     is_active: bool = True
     is_superuser: bool = False
 
