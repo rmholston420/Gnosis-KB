@@ -29,12 +29,6 @@ import pytest
 # ---------------------------------------------------------------------------
 # query_parser — pure logic, no DB needed for parse_query
 # ---------------------------------------------------------------------------
-from gnosis.services.query_parser import (
-    GQLParseError,
-    _tokenise,
-    parse_query,
-)
-
 
 class TestTokenise:
     def test_basic(self):
@@ -168,7 +162,13 @@ class TestParseQuery:
 # query_parser — execute_query (mocked DB)
 # ---------------------------------------------------------------------------
 
-from gnosis.services.query_parser import execute_query
+from gnosis.services.query_parser import (
+    GQLParseError,
+    ParsedQuery,
+    _tokenise,
+    execute_query,
+    parse_query,
+)
 
 
 class TestExecuteQuery:
