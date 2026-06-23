@@ -13,6 +13,8 @@ Source-verified:
   - POST   /review/{note_id}
   - DELETE /review/{note_id}
   - Note must exist for enroll to succeed
+  - submit_review calls _get_card_or_404 which does a chained selectinload;
+    enroll first so the card exists, then submit in the same client session.
 
 - AI ingest: POST /ai/ingest-note/{note_id}
   - patch _lightrag_available + graph_rag
@@ -26,39 +28,16 @@ pytestmark = pytest.mark.asyncio
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-async def _create_note(async_client, title="Gap note") -> str:
-    resp = await async_client.post(
-        "/api/v1/notes/",
-        json={"title": title, "body": "body text"},
-    )
-    assert resp.status_code == 201
-    return resp.json()["id"]
-
-
-# ---------------------------------------------------------------------------
 # Admin – POST /admin/reindex
 # ---------------------------------------------------------------------------
 
 class TestAdminReindex:
-    """Cover /admin/reindex with the real admin router.
-
-    _get_primary_user() does SELECT User LIMIT 1.  Empty DB returns None -> 500.
-    We seed a User row via the notes router (which indirectly proves user fixture)
-    OR we use the test_db fixture directly.
-    """
+    """Cover /admin/reindex with the real admin router."""
 
     async def test_admin_reindex_no_legacy_notes(self, async_client, test_db):
-        """No owner_id=0 notes: returns status=ok, fixed=0.
-
-        Seeds the User table first so _get_primary_user() doesn't return None.
-        """
+        """No owner_id=0 notes: returns status=ok, fixed=0."""
         from gnosis.models.user import User
-        from sqlalchemy import text
 
-        # Seed a User row with id=1 so _get_primary_user returns it
         user = User()
         user.id = 1
         user.email = "admin@gnosis.local"
@@ -74,32 +53,38 @@ class TestAdminReindex:
 
 
 # ---------------------------------------------------------------------------
-# Admin – non-admin 403
+# Admin – unknown action 404
 # ---------------------------------------------------------------------------
 
 class TestAdminUnknownAction:
-    """Non-admin user receives 403. URL /admin/action returns 404."""
-
     async def test_admin_unknown_action(self, async_client):
-        """Confirms /admin/action returns 404 (route does not exist)."""
         resp = await async_client.post("/api/v1/admin/action", json={"action": "noop"})
         assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------
-# Review scheduling
+# Review scheduling – enroll then submit
 # ---------------------------------------------------------------------------
 
 class TestReviewScheduling:
     async def test_submit_review_updates_note(self, async_client):
-        note_id = await _create_note(async_client, "Review sched note")
+        # 1. create note
+        note_resp = await async_client.post(
+            "/api/v1/notes/",
+            json={"title": "Review sched note", "body": "body text"},
+        )
+        assert note_resp.status_code == 201
+        note_id = note_resp.json()["id"]
 
+        # 2. enroll
         enroll = await async_client.post(
             f"/api/v1/review/{note_id}/enroll",
             json={"due_today": True},
         )
         assert enroll.status_code == 201
 
+        # 3. submit rating — _get_card_or_404 runs a chained selectinload;
+        #    the note + tags must be visible in the same DB connection.
         submit = await async_client.post(
             f"/api/v1/review/{note_id}",
             json={"quality": 4},
@@ -111,12 +96,17 @@ class TestReviewScheduling:
 
 
 # ---------------------------------------------------------------------------
-# Review unenroll
+# Review unenroll – enroll then DELETE
 # ---------------------------------------------------------------------------
 
 class TestReviewUnenroll:
     async def test_unenroll_note(self, async_client):
-        note_id = await _create_note(async_client, "Unenroll note")
+        note_resp = await async_client.post(
+            "/api/v1/notes/",
+            json={"title": "Unenroll note", "body": "body"},
+        )
+        assert note_resp.status_code == 201
+        note_id = note_resp.json()["id"]
 
         enroll = await async_client.post(
             f"/api/v1/review/{note_id}/enroll",
@@ -127,6 +117,7 @@ class TestReviewUnenroll:
         unenroll = await async_client.delete(f"/api/v1/review/{note_id}")
         assert unenroll.status_code == 204
 
+        # confirm card is gone — second DELETE must 404
         confirm = await async_client.delete(f"/api/v1/review/{note_id}")
         assert confirm.status_code == 404
 
@@ -148,7 +139,12 @@ class TestLightragAvailableCheckFalse:
 
 class TestIngestNoteRaises500:
     async def test_ingest_note_exception_returns_500(self, async_client):
-        note_id = await _create_note(async_client, "Ingest err note")
+        note_resp = await async_client.post(
+            "/api/v1/notes/",
+            json={"title": "Ingest err note", "body": "body"},
+        )
+        assert note_resp.status_code == 201
+        note_id = note_resp.json()["id"]
 
         with patch("gnosis.routers.ai._lightrag_available", return_value=True), \
              patch("gnosis.routers.ai.graph_rag") as mock_gr:

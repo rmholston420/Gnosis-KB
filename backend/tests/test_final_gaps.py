@@ -6,6 +6,9 @@ Source-verified:
   if no User row exists, causing 500. Seed via test_db fixture.
 - Notes: body='' is valid (body is Optional in schema) -> 201.
 - Review: POST /review/{id}/enroll then POST /review/{id} (multiple grades).
+  Note: _get_card_or_404 chains selectinload(ReviewCard.note).selectinload(Note.tags).
+  All requests must go through the same async_client so they share one DB
+  connection (StaticPool); create note → enroll → submit in sequence.
 - AI ingest: POST /ai/ingest-note/{note_id}.
 """
 from __future__ import annotations
@@ -21,8 +24,6 @@ pytestmark = pytest.mark.asyncio
 # ---------------------------------------------------------------------------
 
 class TestAdminActionBranches:
-    """Cover admin router via /admin/reindex."""
-
     async def test_admin_reindex_action(self, async_client, test_db):
         """POST /admin/reindex with a seeded User returns status=ok."""
         from gnosis.models.user import User
@@ -39,7 +40,6 @@ class TestAdminActionBranches:
         assert resp.json()["status"] == "ok"
 
     async def test_admin_unknown_action_returns_error(self, async_client):
-        """An unknown admin path returns 404."""
         resp = await async_client.post("/api/v1/admin/nonexistent")
         assert resp.status_code in (404, 405)
 
@@ -50,7 +50,6 @@ class TestAdminActionBranches:
 
 class TestNotesErrorBranches:
     async def test_create_note_empty_body_is_valid(self, async_client):
-        """body='' is accepted (Optional field in schema)."""
         resp = await async_client.post(
             "/api/v1/notes/",
             json={"title": "No body note", "body": ""},
@@ -64,6 +63,7 @@ class TestNotesErrorBranches:
 
 class TestReviewSM2Scheduling:
     async def test_multiple_grade_submissions(self, async_client):
+        # Create the note
         note_resp = await async_client.post(
             "/api/v1/notes/",
             json={"title": "SM2 multi grade", "body": "sm2 body"},
@@ -71,18 +71,22 @@ class TestReviewSM2Scheduling:
         assert note_resp.status_code == 201
         note_id = note_resp.json()["id"]
 
+        # Enroll
         enroll = await async_client.post(
             f"/api/v1/review/{note_id}/enroll",
             json={"due_today": True},
         )
         assert enroll.status_code == 201
 
+        # Submit multiple grades in sequence through the same client/connection
         for quality in [4, 3, 5]:
             submit = await async_client.post(
                 f"/api/v1/review/{note_id}",
                 json={"quality": quality},
             )
-            assert submit.status_code == 200
+            assert submit.status_code == 200, (
+                f"grade {quality} failed: {submit.status_code} {submit.text}"
+            )
             data = submit.json()
             assert "easiness" in data
             assert "interval" in data

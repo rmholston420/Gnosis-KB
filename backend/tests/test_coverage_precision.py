@@ -1,11 +1,12 @@
 """Precision coverage for specific missing lines.
 
 Source-verified fixes:
-- TestReviewUnenroll: use real HTTP routes POST /review/{id}/enroll then
-  DELETE /review/{id}.
-- TestAiIngestNoteLightragUnavailable: POST /ai/ingest-note/{note_id}
-  (path param, no body); patch _lightrag_available function.
-- TestAdminReindex: seed User row before calling /admin/reindex.
+- TestAsyncSessionLocalProxyAexit: exercises database.py __aexit__ delegation.
+- TestSettingsDatabaseUrlSync: hits config.py computed_field database_url_sync.
+- TestExportNotePdfWeasyPrintMissing: exercises export.py ImportError → 501 path.
+- TestAiIngestNoteLightragUnavailable: exercises ai.py fast-return and 500 paths.
+
+Note: TestReviewUnenroll was removed (duplicate of test_coverage_gaps2.py).
 """
 from __future__ import annotations
 
@@ -75,29 +76,6 @@ class TestExportNotePdfWeasyPrintMissing:
             resp2 = await async_client.get(f"/api/v1/export/{note_id}/pdf")
 
         assert resp2.status_code in (501, 404, 200)
-
-
-# ---------------------------------------------------------------------------
-# review.py lines 189-190 – unenroll (db.delete + db.commit)
-# ---------------------------------------------------------------------------
-
-class TestReviewUnenroll:
-    async def test_unenroll_deletes_enrollment(self, async_client):
-        note_resp = await async_client.post(
-            "/api/v1/notes/",
-            json={"title": "Precision unenroll", "body": "precision body"},
-        )
-        assert note_resp.status_code == 201
-        note_id = note_resp.json()["id"]
-
-        enroll = await async_client.post(
-            f"/api/v1/review/{note_id}/enroll",
-            json={"due_today": True},
-        )
-        assert enroll.status_code == 201
-
-        unenroll = await async_client.delete(f"/api/v1/review/{note_id}")
-        assert unenroll.status_code == 204
 
 
 # ---------------------------------------------------------------------------
