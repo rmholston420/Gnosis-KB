@@ -158,7 +158,8 @@ class TestNotesCRUD:
     async def test_list_notes_pagination(self, async_client):
         for i in range(5):
             await _create_note(async_client, title=f"Pagination Note {i}")
-        resp = await async_client.get("/api/v1/notes/?limit=2&offset=0")
+        # Notes list uses page/page_size query params, not limit/offset
+        resp = await async_client.get("/api/v1/notes/?page=1&page_size=2")
         assert resp.status_code == 200
         data = resp.json()
         assert len(data["items"]) <= 2
@@ -221,9 +222,22 @@ class TestSearch:
         )
         # fulltext_search service does not accept owner_ids kwarg; patch it so
         # the router can resolve without hitting the real PostgreSQL tsvector.
-        fts_result = {"results": [{"id": "1", "title": "E2E FTS Search Note",
-                                    "body": "...", "score": 1.0, "snippet": ""}],
-                      "elapsed_ms": 1}
+        # Keys must match what _map_results() expects: note_id, title, slug,
+        # folder, note_type, status, score, highlight, tags.
+        fts_result = {
+            "results": [{
+                "note_id": "1",
+                "title": "E2E FTS Search Note",
+                "slug": "e2e-fts-search-note",
+                "folder": "00-inbox",
+                "note_type": "note",
+                "status": "active",
+                "score": 1.0,
+                "highlight": "",
+                "tags": [],
+            }],
+            "elapsed_ms": 1,
+        }
         with patch("gnosis.routers.search.fulltext_search", new_callable=AsyncMock) as mock_fts:
             mock_fts.return_value = fts_result
             resp = await async_client.get(
@@ -324,12 +338,13 @@ class TestAI:
 
     @pytest.mark.anyio
     async def test_chat_stream(self, async_client):
+        # /ai/stream/chat is a GET endpoint with query params (SSE), not POST+body
         with patch("gnosis.routers.ai.llm_provider") as mock_llm:
             mock_llm.is_available = True
             mock_llm.stream = AsyncMock(return_value=iter(["Hello", " world"]))
-            resp = await async_client.post(
+            resp = await async_client.get(
                 "/api/v1/ai/stream/chat",
-                json={"message": "What is dependent origination?", "mode": "hybrid"},
+                params={"message": "What is dependent origination?", "mode": "hybrid"},
             )
         assert resp.status_code in (200, 422)
 
@@ -407,9 +422,10 @@ class TestReview:
         nid = note["id"]
 
         # Enroll at POST /review/{id}/enroll
+        # ReviewEnroll body requires both note_id and due_today
         enroll_resp = await async_client.post(
             f"/api/v1/review/{nid}/enroll",
-            json={"due_today": True},
+            json={"note_id": str(nid), "due_today": True},
         )
         assert enroll_resp.status_code in (200, 201), enroll_resp.text
         card = enroll_resp.json()
@@ -553,9 +569,10 @@ class TestFullWorkflow:
         assert nid in ids
 
         # 6. Enroll for review at POST /review/{id}/enroll
+        # ReviewEnroll body requires note_id + due_today
         sched_resp = await async_client.post(
             f"/api/v1/review/{nid}/enroll",
-            json={"due_today": True},
+            json={"note_id": str(nid), "due_today": True},
         )
         assert sched_resp.status_code in (200, 201), sched_resp.text
 
