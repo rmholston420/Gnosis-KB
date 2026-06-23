@@ -104,6 +104,11 @@ ignore_missing_imports = true
 [tool.coverage.run]
 source = ["gnosis"]
 branch = true
+# Track coverage across threads AND greenlets so that async handlers
+# executed by anyio/asyncio (via TestClient or AsyncClient) are traced.
+# Without this the coverage C-tracer is only registered in the main
+# thread and async endpoint bodies appear uncovered even when they run.
+concurrency = ["thread", "greenlet"]
 omit = [
     "gnosis/core/sm2_test.py",
     "gnosis/services/fts_test.py",
