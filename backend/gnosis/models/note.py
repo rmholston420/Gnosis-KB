@@ -12,6 +12,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from gnosis.database import Base
 
 if TYPE_CHECKING:
+    from gnosis.models.attachment import Attachment
     from gnosis.models.link import Link
     from gnosis.models.review import ReviewCard
     from gnosis.models.tag import Tag
@@ -48,6 +49,13 @@ class Note(Base):
     # ------------------------------------------------------------------ #
     # Relationships                                                        #
     # ------------------------------------------------------------------ #
+
+    attachments: Mapped[list[Attachment]] = relationship(
+        "Attachment",
+        back_populates="note",
+        cascade="all, delete-orphan",
+        lazy="noload",
+    )
 
     tags: Mapped[list[Tag]] = relationship(
         "Tag",
