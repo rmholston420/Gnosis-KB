@@ -1,28 +1,27 @@
 """
 Targeted gap coverage for the four services still at 95-99%.
 
-All async tests use @pytest.mark.asyncio + async def so pytest-asyncio's
-event loop is used correctly. No asyncio.get_event_loop() calls.
+All async tests use @pytest.mark.asyncio + async def.
 
-Missing lines addressed
------------------------
-graph_rag.py    : 50-52  _LIGHTRAG_AVAILABLE=False branch
-                  187    _synthesise fallback when llm not available
-                  288/291 stream: early return when shared_ids empty / error path
-llm_provider.py : 41->52  initialize: Ollama non-200 / exception skip
-                  112/114  active_model groq / openai branches
-                  125      swap_model RuntimeError when ollama absent
-                  181->179 stream: all providers fail -> RuntimeError
-vault_sync.py   : 152->156  run_full_sync: vault does not exist
-                  168->163  run_full_sync: per-file exception in loop
-                  254-259   _handle_upsert exception path
-                  311-312   start_vault_watcher startup-sync exception
-vector_store.py : 156->158  get_qdrant_client: _client already set (returns early)
+Key patching rules
+------------------
+_synthesise does a *local* import inside the function body:
+    from gnosis.services.llm_provider import llm_provider
+So the correct patch target is the singleton on its source module:
+    gnosis.services.llm_provider.llm_provider
+NOT gnosis.services.graph_rag.llm_provider (that name never exists at
+module level in graph_rag.py).
+
+For the stream exception path, MagicMock auto-creates any attribute on
+access, so `del mock.astream_query` is ineffective. Instead we use
+spec=[] to create a mock with *no* attributes, then explicitly attach
+only what we need (aquery). That makes hasattr(instance, 'astream_query')
+return False reliably.
 """
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock, create_autospec
 
 import pytest
 
@@ -54,7 +53,14 @@ class TestGraphRAGAvailabilityFlag:
 
 
 class TestGraphRAGSynthesise:
-    """Line 187: _synthesise fallback when llm_provider unavailable or raises."""
+    """
+    Line 187: _synthesise fallback paths.
+
+    _synthesise contains a *local* import:
+        from gnosis.services.llm_provider import llm_provider
+    The correct patch target is the singleton on the source module:
+        gnosis.services.llm_provider.llm_provider
+    """
 
     @pytest.mark.asyncio
     async def test_synthesise_llm_unavailable_returns_joined(self):
@@ -63,8 +69,10 @@ class TestGraphRAGSynthesise:
         svc = GraphRAGService()
         answers = ["[Vault 1]\nanswer one", "[Vault 2]\nanswer two"]
 
-        with patch("gnosis.services.graph_rag.llm_provider") as mock_llm:
-            type(mock_llm).is_available = PropertyMock(return_value=False)
+        mock_llm = MagicMock()
+        mock_llm.is_available = False
+
+        with patch("gnosis.services.llm_provider.llm_provider", mock_llm):
             result = await svc._synthesise("q", answers)
 
         assert "answer one" in result
@@ -78,9 +86,11 @@ class TestGraphRAGSynthesise:
         svc = GraphRAGService()
         answers = ["[Vault 1]\nfoo", "[Vault 2]\nbar"]
 
-        with patch("gnosis.services.graph_rag.llm_provider") as mock_llm:
-            type(mock_llm).is_available = PropertyMock(return_value=True)
-            mock_llm.complete = AsyncMock(side_effect=RuntimeError("boom"))
+        mock_llm = MagicMock()
+        mock_llm.is_available = True
+        mock_llm.complete = AsyncMock(side_effect=RuntimeError("boom"))
+
+        with patch("gnosis.services.llm_provider.llm_provider", mock_llm):
             result = await svc._synthesise("q", answers)
 
         assert "foo" in result
@@ -92,15 +102,13 @@ class TestGraphRAGStream:
 
     @pytest.mark.asyncio
     async def test_stream_no_shared_ids_returns_single_token(self):
-        """owner_ids == {user_id}: shared_ids is empty, stream exits after own graph."""
+        """owner_ids == {user_id}: shared_ids empty, stream exits after own graph."""
         from gnosis.services.graph_rag import GraphRAGService
 
         svc = GraphRAGService()
-        mock_instance = MagicMock()
+        # spec=[] -> no auto-created attributes, so hasattr(inst, 'astream_query') == False
+        mock_instance = MagicMock(spec=[])
         mock_instance.aquery = AsyncMock(return_value="answer text")
-        # No astream_query attribute -> falls back to aquery single-token path
-        if hasattr(mock_instance, "astream_query"):
-            del mock_instance.astream_query
 
         tokens = []
         with patch.object(svc, "_get_instance", return_value=mock_instance):
@@ -123,44 +131,36 @@ class TestGraphRAGStream:
 
     @pytest.mark.asyncio
     async def test_stream_aquery_raises_yields_error_token(self):
-        """Line 291: exception during streaming yields error string then returns."""
+        """
+        Line 291: aquery raises inside the else-branch (no astream_query)
+        -> except block -> yield 'Stream error: ...' -> return.
+
+        Use spec=[] so hasattr(mock, 'astream_query') is reliably False.
+        """
         from gnosis.services.graph_rag import GraphRAGService
 
         svc = GraphRAGService()
-        mock_instance = MagicMock()
+        mock_instance = MagicMock(spec=[])  # no auto-attributes
         mock_instance.aquery = AsyncMock(side_effect=RuntimeError("gpu oom"))
-        # Force the no-astream_query fallback path
-        try:
-            del mock_instance.astream_query
-        except AttributeError:
-            pass
-        # Make hasattr return False for astream_query
-        mock_instance.__dict__.pop("astream_query", None)
-        type(mock_instance).astream_query = property(lambda self: (_ for _ in ()).throw(AttributeError()))
 
         tokens = []
         with patch.object(svc, "_get_instance", return_value=mock_instance):
-            with patch("builtins.hasattr", wraps=lambda obj, name: (
-                False if (obj is mock_instance and name == "astream_query") else hasattr.__wrapped__(obj, name)
-                    if hasattr(hasattr, "__wrapped__") else True
-            )):
-                async for tok in svc.stream("q", user_id=1):
-                    tokens.append(tok)
+            async for tok in svc.stream("q", user_id=1):
+                tokens.append(tok)
 
-        # aquery raises -> except branch -> yield "Stream error: ..."
-        assert any("error" in t.lower() or "stream" in t.lower() for t in tokens)
+        assert any("error" in t.lower() for t in tokens)
 
     @pytest.mark.asyncio
     async def test_stream_exception_via_astream_query(self):
-        """stream: astream_query raises -> except block -> yield error."""
+        """stream: astream_query raises on first iteration -> except -> yield error."""
         from gnosis.services.graph_rag import GraphRAGService
 
         svc = GraphRAGService()
-        mock_instance = MagicMock()
+        mock_instance = MagicMock(spec=[])
 
         async def _bad_stream(*a, **kw):
             raise RuntimeError("stream fail")
-            yield  # make it an async generator
+            yield  # pragma: no cover
 
         mock_instance.astream_query = _bad_stream
 
@@ -230,7 +230,6 @@ class TestLLMProviderInitialize:
 
         mock_http_client = AsyncMock()
         mock_http_client.get = AsyncMock(return_value=mock_resp)
-        # httpx.AsyncClient is used as `async with AsyncClient(...) as client:`
         mock_context = MagicMock()
         mock_context.__aenter__ = AsyncMock(return_value=mock_http_client)
         mock_context.__aexit__ = AsyncMock(return_value=False)
@@ -278,7 +277,6 @@ class TestLLMProviderStreamAllFail:
         p._available = ["ollama"]
         p._ollama_model = "llama3.2"
 
-        # Build a mock client whose chat.completions.create raises
         mock_create = AsyncMock(side_effect=RuntimeError("connection refused"))
         mock_completions = MagicMock()
         mock_completions.create = mock_create
@@ -359,7 +357,6 @@ class TestVaultEventHandlerUpsert:
         with patch("gnosis.services.vault_sync.AsyncSessionFactory", return_value=mock_cm):
             with patch("gnosis.services.vault_sync._sync_file",
                        new=AsyncMock(side_effect=RuntimeError("db down"))):
-                # Must not raise
                 await handler._handle_upsert(test_path)
 
 
@@ -374,12 +371,9 @@ class TestStartVaultWatcherException:
         mock_observer.schedule = MagicMock()
         mock_observer.start = MagicMock()
 
-        async def _bad_sync(owner_id):
-            raise RuntimeError("sync boom")
-            yield  # make it an async generator signature
-
         with patch("gnosis.services.vault_sync._get_vault_path", return_value=tmp_path):
-            with patch("gnosis.services.vault_sync.run_full_sync_for_user", side_effect=RuntimeError("sync boom")):
+            with patch("gnosis.services.vault_sync.run_full_sync_for_user",
+                       side_effect=RuntimeError("sync boom")):
                 with patch("gnosis.services.vault_sync.Observer", return_value=mock_observer):
                     observer = await start_vault_watcher(owner_id=1)
 
@@ -406,7 +400,7 @@ class TestVectorStoreClientCache:
             vs._client = original
 
     def test_get_qdrant_client_creates_new_when_none(self):
-        """Complementary: _client is None -> QdrantClient is constructed."""
+        """_client is None -> QdrantClient is constructed."""
         import gnosis.services.vector_store as vs
 
         original = vs._client
