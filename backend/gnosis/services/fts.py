@@ -43,6 +43,7 @@ async def fulltext_search(
     db: AsyncSession,
     query: str,
     *,
+    owner_ids: set[int] | None = None,
     limit: int = 10,
     folder: str | None = None,
     note_type: str | None = None,
@@ -57,6 +58,9 @@ async def fulltext_search(
     query:
         Raw user query string.  Converted to a tsquery with
         ``plainto_tsquery`` (no special syntax required from users).
+    owner_ids:
+        Optional set of user IDs whose notes are accessible.  When provided,
+        results are restricted to notes whose ``owner_id`` is in the set.
     limit:
         Maximum number of results (1-100).
     folder, note_type, tags:
@@ -76,6 +80,14 @@ async def fulltext_search(
         "n.fts @@ plainto_tsquery('english', :query)",
     ]
     params: dict[str, Any] = {"query": query, "limit": limit}
+
+    if owner_ids:
+        # Inline the owner_id set as a literal IN list; SQLAlchemy text() does
+        # not support list-valued bind params, so we expand manually.
+        placeholders = ", ".join(f":oid_{i}" for i, _ in enumerate(owner_ids))
+        conditions.append(f"n.owner_id IN ({placeholders})")
+        for i, oid in enumerate(owner_ids):
+            params[f"oid_{i}"] = oid
 
     if folder:
         conditions.append("n.folder = :folder")
@@ -167,23 +179,47 @@ async def fulltext_search(
 async def suggest_completions(
     db: AsyncSession,
     prefix: str,
+    *,
+    owner_ids: set[int] | None = None,
     limit: int = 8,
 ) -> list[str]:
     """Return note titles that start with ``prefix`` (case-insensitive).
 
     Used for the search-bar autocomplete dropdown.  Returns raw title strings;
     the frontend can highlight the matching prefix.
+
+    Parameters
+    ----------
+    db:
+        An open async SQLAlchemy session.
+    prefix:
+        The search prefix string.
+    owner_ids:
+        Optional set of user IDs; when provided, only notes belonging to those
+        users are returned.
+    limit:
+        Maximum number of completions to return (default 8).
     """
+    conditions = [
+        "is_deleted = false",
+        "lower(title) LIKE lower(:prefix) || '%'",
+    ]
+    params: dict[str, Any] = {"prefix": prefix, "limit": limit}
+
+    if owner_ids:
+        placeholders = ", ".join(f":oid_{i}" for i, _ in enumerate(owner_ids))
+        conditions.append(f"owner_id IN ({placeholders})")
+        for i, oid in enumerate(owner_ids):
+            params[f"oid_{i}"] = oid
+
+    where_clause = " AND ".join(conditions)
     result = await db.execute(
-        text(
-            """
+        text(f"""
             SELECT title FROM notes
-            WHERE is_deleted = false
-              AND lower(title) LIKE lower(:prefix) || '%'
+            WHERE {where_clause}
             ORDER BY title
             LIMIT :limit
-            """
-        ),
-        {"prefix": prefix, "limit": limit},
+        """),
+        params,
     )
     return [row[0] for row in result.fetchall()]
