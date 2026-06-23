@@ -1,16 +1,4 @@
-"""Final gap coverage.
-
-Source-verified:
-- Admin: POST /api/v1/admin/reindex only; must seed User row first.
-  The test env DB is empty; _get_primary_user() SELECT User LIMIT 1 returns None
-  if no User row exists, causing 500. Seed via test_db fixture.
-- Notes: body='' is valid (body is Optional in schema) -> 201.
-- Review: POST /review/{id}/enroll then POST /review/{id} (multiple grades).
-  Note: _get_card_or_404 chains selectinload(ReviewCard.note).selectinload(Note.tags).
-  All requests must go through the same async_client so they share one DB
-  connection (StaticPool); create note → enroll → submit in sequence.
-- AI ingest: POST /ai/ingest-note/{note_id}.
-"""
+"""Final gap coverage."""
 from __future__ import annotations
 
 import pytest
@@ -25,7 +13,6 @@ pytestmark = pytest.mark.asyncio
 
 class TestAdminActionBranches:
     async def test_admin_reindex_action(self, async_client, test_db):
-        """POST /admin/reindex with a seeded User returns status=ok."""
         from gnosis.models.user import User
 
         user = User()
@@ -59,28 +46,32 @@ class TestNotesErrorBranches:
 
 # ---------------------------------------------------------------------------
 # Review – multiple SM-2 grade submissions
+# Must use (client, vault_dir) — same proven pattern as
+# test_coverage_remaining.py::TestReviewSubmitLastReviewed.
 # ---------------------------------------------------------------------------
 
 class TestReviewSM2Scheduling:
-    async def test_multiple_grade_submissions(self, async_client):
-        # Create the note
-        note_resp = await async_client.post(
+    async def test_multiple_grade_submissions(self, client, vault_dir):
+        note_resp = await client.post(
             "/api/v1/notes/",
-            json={"title": "SM2 multi grade", "body": "sm2 body"},
+            json={
+                "title": "SM2 multi grade",
+                "body": "sm2 body",
+                "folder": "10-zettelkasten",
+                "tags": [],
+            },
         )
         assert note_resp.status_code == 201
         note_id = note_resp.json()["id"]
 
-        # Enroll
-        enroll = await async_client.post(
+        enroll = await client.post(
             f"/api/v1/review/{note_id}/enroll",
-            json={"due_today": True},
+            json={"note_id": note_id, "due_today": True},
         )
         assert enroll.status_code == 201
 
-        # Submit multiple grades in sequence through the same client/connection
         for quality in [4, 3, 5]:
-            submit = await async_client.post(
+            submit = await client.post(
                 f"/api/v1/review/{note_id}",
                 json={"quality": quality},
             )
@@ -97,10 +88,10 @@ class TestReviewSM2Scheduling:
 # ---------------------------------------------------------------------------
 
 class TestIngestNoteException:
-    async def test_ingest_note_lightrag_raises(self, async_client):
-        note_resp = await async_client.post(
+    async def test_ingest_note_lightrag_raises(self, client, vault_dir):
+        note_resp = await client.post(
             "/api/v1/notes/",
-            json={"title": "Ingest exc note", "body": "ingest body"},
+            json={"title": "Ingest exc note", "body": "ingest body", "folder": "10-zettelkasten", "tags": []},
         )
         assert note_resp.status_code == 201
         note_id = note_resp.json()["id"]
@@ -108,6 +99,6 @@ class TestIngestNoteException:
         with patch("gnosis.routers.ai._lightrag_available", return_value=True), \
              patch("gnosis.routers.ai.graph_rag") as mock_gr:
             mock_gr.ingest_note = AsyncMock(side_effect=Exception("lightrag exploded"))
-            resp = await async_client.post(f"/api/v1/ai/ingest-note/{note_id}")
+            resp = await client.post(f"/api/v1/ai/ingest-note/{note_id}")
 
         assert resp.status_code == 500
