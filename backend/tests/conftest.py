@@ -32,6 +32,14 @@ _fake_deny_user() — zero-argument, always raises HTTP 401.
   Used by unauthenticated_client. Auth-guard tests that assert 401/403
   should use the `unauthenticated_client` fixture instead of `client`.
 
+Vault-owner scoping
+-------------------
+get_vault_owner_ids is also overridden to return {1}. Without this
+override the real dependency calls get_accessible_owner_ids() with the
+_FakeUser dataclass (not a real SQLAlchemy User row), which either
+crashes or returns an empty set — causing every AI/notes query scoped
+by owner_ids to find nothing and skip branches we want to cover.
+
 Isolation
 ---------
 test_engine is function-scoped: each test gets a brand-new in-memory SQLite
@@ -81,13 +89,6 @@ TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 
 # ---------------------------------------------------------------------------
 # Async engine — function-scoped + StaticPool
-#
-# StaticPool is mandatory for sqlite:///:memory: tests.
-# Without it the async connection pool can open a second physical connection
-# for selectinload() sub-SELECTs after commit(), and that second connection
-# sees a completely empty in-memory DB (each SQLite :memory: DB is private
-# to its connection).  StaticPool forces every checkout to reuse the same
-# single connection, so all queries within a test share the same data.
 # ---------------------------------------------------------------------------
 
 
@@ -157,29 +158,31 @@ class _FakeUser:
     full_name: str | None = "Test User"
     vault_slug: str | None = "test"
     vault_path: str | None = None
-    vault_display_name: str | None = None   # required by UserProfile.model_validate
+    vault_display_name: str | None = None
     is_active: bool = True
     is_superuser: bool = False
 
 
 async def _fake_require_user() -> _FakeUser:
-    """Always return a fake authenticated user.
-
-    IMPORTANT: keep this zero-argument with no special types (e.g. no
-    starlette.requests.Request).  FastAPI reflects dependency-override
-    signatures into the OpenAPI schema at startup and raises FastAPIError
-    for injection-only types that are not valid Pydantic field types.
-    """
+    """Always return a fake authenticated user (id=1)."""
     return _FakeUser()
 
 
 async def _fake_deny_user() -> _FakeUser:
-    """Always raise HTTP 401.
-
-    Used by the unauthenticated_client fixture so auth-guard tests receive
-    the expected 401/403 without needing a real JWT stack.
-    """
+    """Always raise HTTP 401."""
     raise HTTPException(status_code=401, detail="Not authenticated")
+
+
+async def _fake_vault_owner_ids() -> set[int]:
+    """Return {1} so every owner-scoped query sees notes created by _FakeUser.
+
+    Without this override get_vault_owner_ids() calls the real
+    get_accessible_owner_ids() with a _FakeUser dataclass (not a real
+    SQLAlchemy User row), which either crashes or returns an empty set —
+    causing all AI/notes endpoints that filter by owner_ids to find nothing
+    and skip branches under test.
+    """
+    return {1}
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +212,7 @@ async def _make_client(
     p1, p2, p3 = _make_patches()
     with p1, p2, p3:
         from gnosis import config
-        from gnosis.core.auth import get_current_user, require_user
+        from gnosis.core.auth import get_current_user, get_vault_owner_ids, require_user
 
         settings = config.get_settings()
         settings.vault_path = str(vault_dir)
@@ -225,6 +228,9 @@ async def _make_client(
         app.dependency_overrides[get_db] = override_get_db
         app.dependency_overrides[require_user] = auth_override
         app.dependency_overrides[get_current_user] = auth_override
+        # Override get_vault_owner_ids so AI/notes endpoints scoped by owner_ids
+        # always see notes written by _FakeUser(id=1) in the test DB.
+        app.dependency_overrides[get_vault_owner_ids] = _fake_vault_owner_ids
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             yield c
@@ -248,35 +254,13 @@ async def client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, None]:
 
 @pytest_asyncio.fixture
 async def unauthenticated_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, None]:
-    """HTTPX client where every request raises HTTP 401.
-
-    Use this fixture in auth-guard tests that assert the endpoint rejects
-    unauthenticated callers::
-
-        async def test_vault_sync_requires_auth(unauthenticated_client):
-            r = await unauthenticated_client.post("/api/v1/vault/sync")
-            assert r.status_code in (401, 403)
-    """
+    """HTTPX client where every request raises HTTP 401."""
     async for c in _make_client(test_engine, vault_dir, auth_override=_fake_deny_user):
         yield c
 
 
 # ---------------------------------------------------------------------------
 # Synchronous TestClient
-#
-# _sync_app owns its own DB engines and vault dir. It must NOT depend on
-# test_engine (async fixture) and must NOT call asyncio.run() — both are
-# incompatible with pytest-asyncio's event-loop ownership.
-#
-# StaticPool is used here for the same reason as test_engine: without it
-# the async engine used by the ASGI app can open a second connection for
-# sub-queries that sees an empty in-memory DB.
-#
-# _VAULT_PATH reset:
-#   vault_sync._VAULT_PATH is a module-level cache. We reset it to None
-#   before patching settings.vault_path so _get_vault_path() re-reads the
-#   patched value. We reset again in the finally block so subsequent tests
-#   (including async tests) start clean.
 # ---------------------------------------------------------------------------
 
 
@@ -313,7 +297,7 @@ def _sync_app():
             p1, p2, p3 = _make_patches()
             with p1, p2, p3:
                 from gnosis import config
-                from gnosis.core.auth import get_current_user, require_user
+                from gnosis.core.auth import get_current_user, get_vault_owner_ids, require_user
 
                 settings = config.get_settings()
                 settings.vault_path = str(vault)
@@ -330,6 +314,7 @@ def _sync_app():
                 app.dependency_overrides[get_db] = override_get_db
                 app.dependency_overrides[require_user] = _fake_require_user
                 app.dependency_overrides[get_current_user] = _fake_require_user
+                app.dependency_overrides[get_vault_owner_ids] = _fake_vault_owner_ids
 
                 yield app
                 app.dependency_overrides.clear()
