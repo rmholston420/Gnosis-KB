@@ -6,7 +6,7 @@ import uuid
 from datetime import date, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, JSON, String, Text, func
+from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from gnosis.database import Base
@@ -49,14 +49,14 @@ class Note(Base):
     # Relationships                                                        #
     # ------------------------------------------------------------------ #
 
-    tags: Mapped[list["Tag"]] = relationship(
+    tags: Mapped[list[Tag]] = relationship(
         "Tag",
         secondary="note_tags",
         back_populates="notes",
         lazy="noload",
     )
 
-    outgoing_links: Mapped[list["Link"]] = relationship(
+    outgoing_links: Mapped[list[Link]] = relationship(
         "Link",
         foreign_keys="Link.source_id",
         back_populates="source",
@@ -64,7 +64,7 @@ class Note(Base):
         lazy="noload",
     )
 
-    incoming_links: Mapped[list["Link"]] = relationship(
+    incoming_links: Mapped[list[Link]] = relationship(
         "Link",
         foreign_keys="Link.target_id",
         back_populates="target",
@@ -72,7 +72,7 @@ class Note(Base):
         lazy="noload",
     )
 
-    review_card: Mapped["ReviewCard | None"] = relationship(
+    review_card: Mapped[ReviewCard | None] = relationship(
         "ReviewCard",
         back_populates="note",
         uselist=False,

@@ -1,4 +1,5 @@
 """Application startup / shutdown event handlers."""
+
 from __future__ import annotations
 
 import logging
@@ -15,8 +16,11 @@ async def on_startup() -> None:
     # Log startup banner
     try:
         from gnosis.models.user import User  # noqa: F401
+
         logger.info("Gnosis KB starting up")
-        logger.info("Database URL: %s", settings.database_url[:40] if settings.database_url else "unset")
+        logger.info(
+            "Database URL: %s", settings.database_url[:40] if settings.database_url else "unset"
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning("Startup banner error: %s", exc)
 
@@ -31,6 +35,7 @@ async def on_startup() -> None:
     # Initialise LightRAG if available
     try:
         from gnosis.services import graph_rag
+
         init_fn = getattr(graph_rag, "init_lightrag", None)
         if init_fn is not None:
             await init_fn()

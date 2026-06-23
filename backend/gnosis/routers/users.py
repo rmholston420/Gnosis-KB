@@ -264,8 +264,8 @@ async def invite_to_vault(
     )
     vault = vault_result.scalar_one_or_none()
     if vault is None:
-        import uuid
         from slugify import slugify
+
         vault_name = current_user.vault_display_name or current_user.email
         vault = SharedVault(
             owner_id=current_user.id,

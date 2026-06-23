@@ -26,6 +26,7 @@ async def lifespan(app: FastAPI):  # type: ignore[misc]
     observer: Any = None
     try:
         from gnosis.services.vault_sync import start_vault_watcher
+
         observer = await start_vault_watcher()
     except Exception as exc:  # noqa: BLE001
         logger.warning("Vault watcher could not start: %s", exc)
@@ -40,6 +41,7 @@ async def lifespan(app: FastAPI):  # type: ignore[misc]
             logger.warning("Error stopping vault watcher: %s", exc)
 
     from gnosis.core.events import on_shutdown
+
     await on_shutdown()
 
 
@@ -97,20 +99,20 @@ def create_app() -> FastAPI:
     )
 
     _api_v1 = "/api/v1"
-    application.include_router(health.router,        prefix=_api_v1)
-    application.include_router(auth.router,          prefix=_api_v1)
-    application.include_router(notes.router,         prefix=_api_v1)
-    application.include_router(tags.router,          prefix=_api_v1)
-    application.include_router(search.router,        prefix=_api_v1)
-    application.include_router(query.router,         prefix=_api_v1)
-    application.include_router(review.router,        prefix=_api_v1)
-    application.include_router(export.router,        prefix=_api_v1)
-    application.include_router(ai.router,            prefix=_api_v1)
-    application.include_router(graph.router,         prefix=_api_v1)
-    application.include_router(ingest.router,        prefix=_api_v1)
-    application.include_router(vault.router,         prefix=_api_v1)
-    application.include_router(admin.router,         prefix=_api_v1)
-    application.include_router(users.router,         prefix=_api_v1)
+    application.include_router(health.router, prefix=_api_v1)
+    application.include_router(auth.router, prefix=_api_v1)
+    application.include_router(notes.router, prefix=_api_v1)
+    application.include_router(tags.router, prefix=_api_v1)
+    application.include_router(search.router, prefix=_api_v1)
+    application.include_router(query.router, prefix=_api_v1)
+    application.include_router(review.router, prefix=_api_v1)
+    application.include_router(export.router, prefix=_api_v1)
+    application.include_router(ai.router, prefix=_api_v1)
+    application.include_router(graph.router, prefix=_api_v1)
+    application.include_router(ingest.router, prefix=_api_v1)
+    application.include_router(vault.router, prefix=_api_v1)
+    application.include_router(admin.router, prefix=_api_v1)
+    application.include_router(users.router, prefix=_api_v1)
 
     @application.exception_handler(Exception)
     async def _global_exception_handler(request: Request, exc: Exception) -> JSONResponse:

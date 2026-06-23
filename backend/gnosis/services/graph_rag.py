@@ -188,19 +188,23 @@ class GraphRAGService:
                     relations_file = wd / "relations.json"
                     if entities_file.exists():
                         raw = json.loads(entities_file.read_text())
-                        for eid, edata in (raw.items() if isinstance(raw, dict) else enumerate(raw)):
+                        for eid, edata in raw.items() if isinstance(raw, dict) else enumerate(raw):
                             nodes.append(
                                 {
                                     "id": str(eid),
-                                    "label": edata.get("entity_name", str(eid)) if isinstance(edata, dict) else str(edata),
-                                    "description": edata.get("description") if isinstance(edata, dict) else None,
+                                    "label": edata.get("entity_name", str(eid))
+                                    if isinstance(edata, dict)
+                                    else str(edata),
+                                    "description": edata.get("description")
+                                    if isinstance(edata, dict)
+                                    else None,
                                     "cluster": None,
                                     "source_note_ids": [],
                                 }
                             )
                     if relations_file.exists():
                         raw_rels = json.loads(relations_file.read_text())
-                        for rel in (raw_rels if isinstance(raw_rels, list) else []):
+                        for rel in raw_rels if isinstance(raw_rels, list) else []:
                             links.append(
                                 {
                                     "source": str(rel.get("src_id", "")),

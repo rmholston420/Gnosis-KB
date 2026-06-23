@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,9 +51,7 @@ async def vault_stats(
     total_result = await db.execute(select(func.count()).select_from(base.subquery()))
     total_notes: int = int(total_result.scalar_one() or 0)  # type: ignore[arg-type]
 
-    word_result = await db.execute(
-        select(func.sum(Note.word_count)).select_from(base.subquery())
-    )
+    word_result = await db.execute(select(func.sum(Note.word_count)).select_from(base.subquery()))
     total_words: int = int(word_result.scalar_one() or 0)  # type: ignore[arg-type]
 
     folder_result = await db.execute(
@@ -65,10 +63,7 @@ async def vault_stats(
         .limit(10)
     )
 
-    folders = [
-        {"folder": row[0] or "(none)", "count": int(row[1])}
-        for row in folder_result.all()
-    ]
+    folders = [{"folder": row[0] or "(none)", "count": int(row[1])} for row in folder_result.all()]
 
     settings_obj = None
     vault_path_str: str | None = None
@@ -77,6 +72,7 @@ async def vault_stats(
 
     try:
         from gnosis.config import get_settings
+
         settings_obj = get_settings()
         vault_path_str = str(getattr(settings_obj, "vault_path", None) or "")
         if vault_path_str:
