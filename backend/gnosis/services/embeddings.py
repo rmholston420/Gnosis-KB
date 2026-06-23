@@ -59,7 +59,7 @@ def embed_dense(text: str) -> list[float]:
         768-dimensional float list.
     """
     model = get_dense_model()
-    embeddings = list(model.embed([text]))  # type: ignore[union-attr]
+    embeddings = list(model.embed([text]))  # type: ignore[attr-defined]
     return [float(x) for x in embeddings[0]]
 
 
@@ -73,5 +73,5 @@ def embed_colbert(text: str) -> list[list[float]]:
         List of 128-dimensional float lists (one per token).
     """
     model = get_colbert_model()
-    embeddings = list(model.embed([text]))  # type: ignore[union-attr]
+    embeddings = list(model.embed([text]))  # type: ignore[attr-defined]
     return [[float(x) for x in vec] for vec in embeddings[0]]

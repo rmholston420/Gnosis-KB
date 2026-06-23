@@ -16,7 +16,7 @@ from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from gnosis.models.note import Note
-from gnosis.models.shared_vault import SharedVault
+from gnosis.models.shared_vault import SharedVaultMember
 from gnosis.models.user import User
 
 # ---------------------------------------------------------------------------
@@ -60,24 +60,31 @@ async def get_accessible_owner_ids(
     """Return the set of user IDs whose notes *current_user* may read.
 
     Always includes the current user's own ID.
-    Also includes any vault where an active SharedVault grant exists.
+    Also includes any vault where an active SharedVaultMember grant exists.
 
     If *target_owner_id* is given, additionally verify the current user
     has access to that specific owner's vault (raises ValueError if not).
     """
-    # Own vault is always accessible
+    from gnosis.models.shared_vault import SharedVault  # local to avoid circular
+
     accessible: set[int] = {current_user.id}
 
-    # Shared vaults this user has been granted access to
+    # SharedVaultMember rows where this user is the member
     result = await session.execute(
-        select(SharedVault).where(
-            SharedVault.member_id == current_user.id,
-            SharedVault.is_active.is_(True),
-            SharedVault.accepted_at.is_not(None),
+        select(SharedVaultMember.vault_id).where(
+            SharedVaultMember.member_id == current_user.id,
         )
     )
-    for grant in result.scalars().all():
-        accessible.add(grant.owner_id)
+    vault_ids = [row[0] for row in result.all()]
+
+    if vault_ids:
+        vault_result = await session.execute(
+            select(SharedVault.owner_id).where(
+                SharedVault.id.in_(vault_ids),
+            )
+        )
+        for (owner_id,) in vault_result.all():
+            accessible.add(owner_id)
 
     if target_owner_id is not None and target_owner_id not in accessible:
         raise ValueError(
