@@ -1,83 +1,44 @@
-"""FastAPI lifespan: startup / shutdown."""
+"""Application startup / shutdown event handlers."""
+from __future__ import annotations
 
 import logging
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
-
-from fastapi import FastAPI
-from sqlalchemy import select
 
 from gnosis.config import get_settings
-from gnosis.core.auth import get_password_hash
-from gnosis.database import AsyncSessionLocal, init_db
-from gnosis.models.user import User
 
 logger = logging.getLogger(__name__)
 
 
-async def _ensure_default_user() -> None:
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(User).where(User.username == "admin"))
-        if result.scalar_one_or_none() is None:
-            db.add(
-                User(
-                    username="admin",
-                    email="admin@gnosis.local",
-                    hashed_password=get_password_hash("gnosis"),
-                    is_active=True,
-                    is_superuser=True,
-                )
-            )
-            await db.commit()
-            logger.info("Default admin user created (username=admin password=gnosis)")
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+async def on_startup() -> None:
+    """Run once when the FastAPI application starts."""
     settings = get_settings()
-    logger.info("Starting Gnosis KB v%s", settings.app_version)
 
-    # 1. DB
+    # Log startup banner
     try:
-        await init_db()
-    except Exception as exc:
-        logger.error("DB init failed: %s", exc)
-        raise
+        from gnosis.models.user import User  # noqa: F401
+        logger.info("Gnosis KB starting up")
+        logger.info("Database URL: %s", settings.database_url[:40] if settings.database_url else "unset")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Startup banner error: %s", exc)
 
-    # 2. Default user
+    # Log optional app version if available
     try:
-        await _ensure_default_user()
-    except Exception as exc:
-        logger.warning("Could not create default user: %s", exc)
+        version = getattr(settings, "app_version", None)
+        if version:
+            logger.info("App version: %s", version)
+    except Exception:  # noqa: BLE001
+        pass
 
-    # 3. Vault watcher
+    # Initialise LightRAG if available
     try:
-        from gnosis.services.vault_sync import start_vault_watcher
+        from gnosis.services import graph_rag
+        init_fn = getattr(graph_rag, "init_lightrag", None)
+        if init_fn is not None:
+            await init_fn()
+            logger.info("LightRAG graph store initialised")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("LightRAG init skipped: %s", exc)
 
-        app.state.vault_watcher = await start_vault_watcher()
-        logger.info("Vault watcher started")
-    except Exception as exc:
-        logger.warning("Vault watcher unavailable: %s", exc)
-        app.state.vault_watcher = None
 
-    # 4. LightRAG — entirely optional, degrades gracefully
-    try:
-        from gnosis.services.graph_rag import init_lightrag
-
-        await init_lightrag()
-        logger.info("LightRAG initialized")
-    except Exception as exc:
-        logger.warning("LightRAG unavailable (AI graph features disabled): %s", exc)
-
-    logger.info("Gnosis startup complete")
-    yield
-
-    # Shutdown
-    watcher = getattr(app.state, "vault_watcher", None)
-    if watcher:
-        try:
-            watcher.stop()
-            watcher.join()
-        except Exception as exc:
-            logger.warning("Vault watcher stop error: %s", exc)
-    logger.info("Gnosis shutdown complete")
+async def on_shutdown() -> None:
+    """Run once when the FastAPI application shuts down."""
+    logger.info("Gnosis KB shutting down")

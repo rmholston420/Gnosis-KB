@@ -105,15 +105,15 @@ def _note_to_read(note: Note) -> NoteRead:
     return NoteRead(
         id=note.id,
         title=note.title,
-        slug=note.slug,
-        body=note.body,
-        body_html=note.body_html,
-        note_type=note.note_type,
-        status=note.status,
+        slug=note.slug or "",
+        body=note.body or "",
+        body_html=note.body_html or "",
+        note_type=note.note_type or "permanent",
+        status=note.status or "draft",
         vault_path=note.vault_path,
-        folder=note.folder,
+        folder=note.folder or "00-inbox",
         source_url=note.source_url,
-        word_count=note.word_count,
+        word_count=note.word_count or 0,
         created_at=note.created_at,
         modified_at=note.modified_at,
         last_reviewed=note.last_reviewed,
@@ -196,11 +196,11 @@ async def list_notes(
         NoteListItem(
             id=n.id,
             title=n.title,
-            slug=n.slug,
-            note_type=n.note_type,
-            status=n.status,
-            folder=n.folder,
-            word_count=n.word_count,
+            slug=n.slug or "",
+            note_type=n.note_type or "permanent",
+            status=n.status or "draft",
+            folder=n.folder or "00-inbox",
+            word_count=n.word_count or 0,
             created_at=n.created_at,
             modified_at=n.modified_at,
             tags=[t.name for t in (n.tags or [])],
@@ -373,11 +373,6 @@ async def create_note(
         await _upsert_tags(note_id, data.tags, db)
 
     await db.commit()
-    # expunge removes the instance from the identity map entirely.
-    # db.expire() only marks attributes stale; AsyncSession still returns the
-    # cached object on a PK lookup without issuing a SELECT, so tags stay [].
-    # expunge forces _get_note_or_404's select() to hit the DB fresh and
-    # populate tags via selectinload from the committed rows.
     db.expunge(note)
     note = await _get_note_or_404(note_id, db, owner_ids)
     return _note_to_read(note)
@@ -410,11 +405,11 @@ async def list_orphan_notes(
         NoteListItem(
             id=n.id,
             title=n.title,
-            slug=n.slug,
-            note_type=n.note_type,
-            status=n.status,
-            folder=n.folder,
-            word_count=n.word_count,
+            slug=n.slug or "",
+            note_type=n.note_type or "permanent",
+            status=n.status or "draft",
+            folder=n.folder or "00-inbox",
+            word_count=n.word_count or 0,
             created_at=n.created_at,
             modified_at=n.modified_at,
             tags=[t.name for t in (n.tags or [])],
@@ -509,10 +504,9 @@ async def get_or_create_daily_note(
         owner_id=current_user.id,
     )
     db.add(note)
-    await db.flush()  # INSERT note row before FK
-    # Daily notes have no tags — no _upsert_tags call needed.
+    await db.flush()
     await db.commit()
-    db.expunge(note)  # remove from identity map so re-fetch issues a real SELECT
+    db.expunge(note)
     note = await _get_note_or_404(note_id, db, owner_ids)
     return _note_to_read(note)
 
@@ -572,14 +566,13 @@ async def update_note(
         note.frontmatter = existing_fm
 
     if data.tags is not None:
-        # Replace all tags: delete existing associations, re-insert new ones.
         await db.execute(delete(NoteTag).where(NoteTag.c.note_id == note_id))
         await db.flush()
         await _upsert_tags(note_id, data.tags, db)
 
     await db.flush()
     await db.commit()
-    db.expunge(note)  # remove from identity map so re-fetch issues a real SELECT
+    db.expunge(note)
     note = await _get_note_or_404(note_id, db, owner_ids)
     return _note_to_read(note)
 

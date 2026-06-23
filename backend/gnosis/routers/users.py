@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from gnosis.core.auth import get_password_hash, require_user
 from gnosis.core.namespace import ensure_vault_directory
 from gnosis.database import get_session
-from gnosis.models.shared_vault import SharedVault
+from gnosis.models.shared_vault import SharedVault, SharedVaultMember
 from gnosis.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -63,26 +63,26 @@ class UpdateMeRequest(BaseModel):
 
 class InviteRequest(BaseModel):
     member_email: EmailStr = Field(description="Email of the user to invite")
-    permission: str = Field(
-        default="read",
-        description="'read' or 'write'",
+    role: str = Field(
+        default="viewer",
+        description="'viewer' or 'editor'",
     )
 
 
 class UpdateGrantRequest(BaseModel):
-    permission: str = Field(description="'read' or 'write'")
+    role: str = Field(description="'viewer' or 'editor'")
 
 
 class SharedVaultGrant(BaseModel):
-    id: int
+    id: str
+    vault_id: str
     owner_id: int
     owner_email: str
     owner_vault_display_name: str | None
     member_id: int
     member_email: str
-    permission: str
-    is_active: bool
-    accepted_at: str | None
+    role: str
+    joined_at: str | None
 
 
 class CreateUserRequest(BaseModel):
@@ -111,22 +111,23 @@ def _serialize_user(u: User) -> dict:
 
 
 def _serialize_grant(
-    grant: SharedVault,
+    member: SharedVaultMember,
+    vault: SharedVault,
     owner_email: str,
     owner_vault_display_name: str | None,
     member_email: str,
 ) -> SharedVaultGrant:
-    """Build a SharedVaultGrant response from a SharedVault ORM instance."""
+    """Build a SharedVaultGrant response from ORM instances."""
     return SharedVaultGrant(
-        id=grant.id,
-        owner_id=grant.owner_id,
+        id=member.id,
+        vault_id=member.vault_id,
+        owner_id=vault.owner_id,
         owner_email=owner_email,
         owner_vault_display_name=owner_vault_display_name,
-        member_id=grant.member_id,
+        member_id=member.member_id,
         member_email=member_email,
-        permission=grant.permission,
-        is_active=grant.is_active,
-        accepted_at=grant.accepted_at.isoformat() if grant.accepted_at else None,
+        role=member.role,
+        joined_at=member.joined_at.isoformat() if member.joined_at else None,
     )
 
 
@@ -206,18 +207,27 @@ async def list_my_vaults(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> list[SharedVaultGrant]:
-    """Return all active vaults this user has been invited to."""
+    """Return all vaults this user is a member of."""
     result = await session.execute(
-        select(SharedVault).where(
-            SharedVault.member_id == current_user.id,
-            SharedVault.is_active.is_(True),
+        select(SharedVaultMember).where(
+            SharedVaultMember.member_id == current_user.id,
         )
     )
-    grants = result.scalars().all()
-    return [  # pragma: no cover
-        _serialize_grant(g, g.owner.email, g.owner.vault_display_name, g.member.email)
-        for g in grants
-    ]
+    members = result.scalars().all()
+    out = []
+    for m in members:  # pragma: no cover
+        vault_result = await session.execute(
+            select(SharedVault).where(SharedVault.id == m.vault_id)
+        )
+        vault = vault_result.scalar_one_or_none()
+        if vault is None:
+            continue
+        owner_result = await session.execute(select(User).where(User.id == vault.owner_id))
+        owner = owner_result.scalar_one_or_none()
+        owner_email = owner.email if owner else ""
+        owner_vdn = owner.vault_display_name if owner else None
+        out.append(_serialize_grant(m, vault, owner_email, owner_vdn, current_user.email))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -236,79 +246,110 @@ async def invite_to_vault(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> SharedVaultGrant:
-    if req.permission not in ("read", "write"):
-        raise HTTPException(status_code=422, detail="permission must be 'read' or 'write'")
+    if req.role not in ("viewer", "editor"):
+        raise HTTPException(status_code=422, detail="role must be 'viewer' or 'editor'")
 
     result = await session.execute(
         select(User).where(User.email == req.member_email, User.is_active.is_(True))
     )
-    member = result.scalar_one_or_none()
-    if member is None:
+    member_user = result.scalar_one_or_none()
+    if member_user is None:
         raise HTTPException(status_code=404, detail=f"No active user with email {req.member_email}")
-    if member.id == current_user.id:
+    if member_user.id == current_user.id:
         raise HTTPException(status_code=422, detail="You cannot share your vault with yourself")
 
-    existing_result = await session.execute(
-        select(SharedVault).where(
-            SharedVault.owner_id == current_user.id,
-            SharedVault.member_id == member.id,
+    # Find or create the SharedVault record for current_user
+    vault_result = await session.execute(
+        select(SharedVault).where(SharedVault.owner_id == current_user.id)
+    )
+    vault = vault_result.scalar_one_or_none()
+    if vault is None:
+        import uuid
+        from slugify import slugify
+        vault_name = current_user.vault_display_name or current_user.email
+        vault = SharedVault(
+            owner_id=current_user.id,
+            name=vault_name,
+            slug=slugify(vault_name) + "-" + str(current_user.id),
+        )
+        session.add(vault)
+        await session.flush()
+
+    # Find or create the membership
+    existing_member_result = await session.execute(
+        select(SharedVaultMember).where(
+            SharedVaultMember.vault_id == vault.id,
+            SharedVaultMember.member_id == member_user.id,
         )
     )
-    grant = existing_result.scalar_one_or_none()
-    if grant is not None:  # pragma: no cover
-        grant.permission = req.permission
-        grant.is_active = True
+    member_row = existing_member_result.scalar_one_or_none()
+    if member_row is not None:  # pragma: no cover
+        member_row.role = req.role
     else:
-        grant = SharedVault(
-            owner_id=current_user.id,
-            member_id=member.id,
-            permission=req.permission,
+        member_row = SharedVaultMember(
+            vault_id=vault.id,
+            member_id=member_user.id,
+            role=req.role,
         )
-        session.add(grant)
+        session.add(member_row)
 
     await session.commit()
-    await session.refresh(grant)
+    await session.refresh(member_row)
 
     return _serialize_grant(  # pragma: no cover
-        grant, current_user.email, current_user.vault_display_name, member.email
+        member_row, vault, current_user.email, current_user.vault_display_name, member_user.email
     )
 
 
 # ---------------------------------------------------------------------------
-# PATCH /users/me/vaults/{grant_id}  — change permission
+# PATCH /users/me/vaults/{grant_id}  — change role
 # ---------------------------------------------------------------------------
 
 
 @router.patch(
     "/me/vaults/{grant_id}",
     response_model=SharedVaultGrant,
-    summary="Update permission level on a share grant",
+    summary="Update role on a share grant",
 )
 async def update_grant(
-    grant_id: int,
+    grant_id: str,
     req: UpdateGrantRequest,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> SharedVaultGrant:
-    if req.permission not in ("read", "write"):
-        raise HTTPException(status_code=422, detail="permission must be 'read' or 'write'")
+    if req.role not in ("viewer", "editor"):
+        raise HTTPException(status_code=422, detail="role must be 'viewer' or 'editor'")
 
+    # grant_id is the SharedVaultMember.id; verify current_user owns the vault
     result = await session.execute(
+        select(SharedVaultMember).where(SharedVaultMember.id == grant_id)
+    )
+    member_row = result.scalar_one_or_none()
+    if member_row is None:
+        raise HTTPException(status_code=404, detail="Grant not found")
+
+    vault_result = await session.execute(
         select(SharedVault).where(
-            SharedVault.id == grant_id,
+            SharedVault.id == member_row.vault_id,
             SharedVault.owner_id == current_user.id,
         )
     )
-    grant = result.scalar_one_or_none()
-    if grant is None:
-        raise HTTPException(status_code=404, detail="Grant not found")
+    vault = vault_result.scalar_one_or_none()
+    if vault is None:
+        raise HTTPException(status_code=403, detail="You do not own this vault")
 
-    grant.permission = req.permission  # pragma: no cover
+    member_row.role = req.role  # pragma: no cover
     await session.commit()  # pragma: no cover
-    await session.refresh(grant)  # pragma: no cover
+    await session.refresh(member_row)  # pragma: no cover
+
+    member_user_result = await session.execute(  # pragma: no cover
+        select(User).where(User.id == member_row.member_id)
+    )
+    member_user = member_user_result.scalar_one_or_none()  # pragma: no cover
+    member_email = member_user.email if member_user else ""  # pragma: no cover
 
     return _serialize_grant(  # pragma: no cover
-        grant, current_user.email, current_user.vault_display_name, grant.member.email
+        member_row, vault, current_user.email, current_user.vault_display_name, member_email
     )
 
 
@@ -323,21 +364,27 @@ async def update_grant(
     summary="Revoke a share grant",
 )
 async def revoke_grant(
-    grant_id: int,
+    grant_id: str,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> None:
     result = await session.execute(
+        select(SharedVaultMember).where(SharedVaultMember.id == grant_id)
+    )
+    member_row = result.scalar_one_or_none()
+    if member_row is None:
+        raise HTTPException(status_code=404, detail="Grant not found")
+
+    vault_result = await session.execute(
         select(SharedVault).where(
-            SharedVault.id == grant_id,
+            SharedVault.id == member_row.vault_id,
             SharedVault.owner_id == current_user.id,
         )
     )
-    grant = result.scalar_one_or_none()
-    if grant is None:
-        raise HTTPException(status_code=404, detail="Grant not found")
+    if vault_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=403, detail="You do not own this vault")
 
-    grant.is_active = False  # pragma: no cover
+    await session.delete(member_row)  # pragma: no cover
     await session.commit()  # pragma: no cover
 
 

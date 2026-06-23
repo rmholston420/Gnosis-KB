@@ -47,7 +47,7 @@ from typing import Any
 
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import InstrumentedAttribute, selectinload
 
 from gnosis.models.note import Note
 
@@ -55,15 +55,15 @@ from gnosis.models.note import Note
 # Constants
 # ---------------------------------------------------------------------------
 
-_ALLOWED_FIELDS = {
-    "title": Note.title,
-    "status": Note.status,
-    "note_type": Note.note_type,
-    "folder": Note.folder,
-    "word_count": Note.word_count,
-    "created_at": Note.created_at,
-    "modified_at": Note.modified_at,
-    "last_reviewed": Note.last_reviewed,
+_ALLOWED_FIELDS: dict[str, InstrumentedAttribute[Any]] = {
+    "title": Note.title,  # type: ignore[dict-item]
+    "status": Note.status,  # type: ignore[dict-item]
+    "note_type": Note.note_type,  # type: ignore[dict-item]
+    "folder": Note.folder,  # type: ignore[dict-item]
+    "word_count": Note.word_count,  # type: ignore[dict-item]
+    "created_at": Note.created_at,  # type: ignore[dict-item]
+    "modified_at": Note.modified_at,  # type: ignore[dict-item]
+    "last_reviewed": Note.last_reviewed,  # type: ignore[dict-item]
 }
 
 _ALLOWED_SORT_FIELDS = set(_ALLOWED_FIELDS)
@@ -302,7 +302,7 @@ async def execute_query(
         stmt = stmt.where(and_(*filters))
 
     # SORT
-    sort_col = _ALLOWED_FIELDS.get(parsed.sort_field, Note.modified_at)
+    sort_col = _ALLOWED_FIELDS.get(parsed.sort_field, Note.modified_at)  # type: ignore[arg-type]
     if parsed.sort_dir == "ASC":
         stmt = stmt.order_by(sort_col.asc())
     else:
@@ -319,12 +319,12 @@ async def execute_query(
     rows: list[dict[str, Any]] = []
     for note in notes:
         row: dict[str, Any] = {}
-        for col in select_cols:
-            if col == "tags":
-                row[col] = [t.name for t in note.tags]
+        for col_name in select_cols:
+            if col_name == "tags":
+                row[col_name] = [t.name for t in note.tags]
             else:
-                val = getattr(note, col, None)
-                row[col] = val.isoformat() if hasattr(val, "isoformat") else val
+                val = getattr(note, col_name, None)
+                row[col_name] = val.isoformat() if hasattr(val, "isoformat") else val
         rows.append(row)
 
     ms = round((time.perf_counter() - t0) * 1000, 2)
