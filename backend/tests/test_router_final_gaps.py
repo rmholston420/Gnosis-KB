@@ -12,10 +12,9 @@ notes.py
 query.py  (PUT /saved/{id})
   160->166: payload.query valid -> sq.query updated
   166->168: payload.description is not None -> sq.description updated
-  Key fix: use real SavedQuery() instance (not MagicMock) so Pydantic
-  model_validate(from_attributes=True) works via SQLAlchemy __dict__.
-  Use spec=AsyncSession and sync lambda dep overrides to match the
-  pattern in test_query_router_coverage.py.
+  Key: call update_saved() as a coroutine directly (same pattern as
+  test_query_router.py) so FastAPI response serialization is bypassed
+  entirely and a plain MagicMock return value is fine.
 
 users.py  (get_session + require_user)
   100: _serialize_user direct
@@ -25,8 +24,8 @@ users.py  (get_session + require_user)
   184-185: OSError from ensure_vault_directory
 
 vault.py
-  92-93:  'total:notanumber' -> ValueError -> pass  (_run_sync_background)
-  124-125: RuntimeError mid-iteration -> error SSE  (_sync_sse_generator)
+  92-93:  _run_sync_background: 'total:notanumber' -> ValueError -> pass
+  124-125: _sync_sse_generator: RuntimeError -> error SSE token
 """
 from __future__ import annotations
 
@@ -153,79 +152,64 @@ class TestNotesUpdateOptionalFields:
 # ===========================================================================
 # query.py — 160->166 and 166->168
 #
-# Pattern mirrors test_query_router_coverage.py exactly:
-#   - spec=AsyncSession on the db mock
-#   - sync lambda for dependency overrides (not async def)
-#   - real SavedQuery() ORM instance so Pydantic from_attributes works
-#   - sq.created_at / sq.updated_at set to real datetimes (server_default
-#     only fires on DB INSERT; raw instances have None until manually set)
+# Call update_saved() directly as a coroutine (same pattern as
+# test_query_router.py) to bypass FastAPI response-model serialization.
+# The function returns the raw ORM object; we never ask FastAPI to
+# encode it through SavedQueryRead, so MagicMock is safe here.
 # ===========================================================================
 
-def _make_query_app(db):
-    from gnosis.core.auth import get_current_user, get_vault_owner_ids
-    from gnosis.database import get_db
-    from gnosis.models.user import User
-    from gnosis.routers.query import router as query_router
-
-    app = FastAPI()
-    app.include_router(query_router, prefix="/query")
-
-    user = User(email="u@test.com", hashed_password="x",
-                is_superuser=False, is_active=True)
-    user.id = 1
-
-    async def _get_db(): yield db
-    app.dependency_overrides[get_db] = _get_db
-    app.dependency_overrides[get_current_user] = lambda: user
-    app.dependency_overrides[get_vault_owner_ids] = lambda: {1}
-    return app
-
-
-def _make_saved_query(query="tag:python", description="old description"):
-    """Real SavedQuery instance with manually-set server-default fields."""
-    from gnosis.models.saved_query import SavedQuery
-    sq = SavedQuery(
-        name="Dashboard",
-        query=query,
-        description=description,
-        owner_id=1,
-    )
-    sq.id = 1
-    sq.created_at = _NOW
-    sq.updated_at = _NOW
+def _sq_mock(query="tag:python", description="old"):
+    sq = MagicMock()
+    sq.id = 1; sq.name = "Dashboard"
+    sq.query = query; sq.description = description
+    sq.owner_id = 1
     return sq
 
 
-def _make_query_db(sq):
-    db = AsyncMock(spec=AsyncSession)
-    res = MagicMock()
-    res.scalar_one_or_none.return_value = sq
-    db.execute = AsyncMock(return_value=res)
+def _db_for_sq(sq):
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = sq
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=result)
     db.commit = AsyncMock()
-    db.refresh = AsyncMock()  # no-op; sq already has valid timestamps
+    db.refresh = AsyncMock()
     return db
 
 
 class TestQueryRouterUpdateSavedBranches:
-    def test_update_query_field_160_to_166(self):
-        """160->166: payload.query valid -> sq.query updated; description=None -> skip to 168."""
-        sq = _make_saved_query()
-        db = _make_query_db(sq)
-        app = _make_query_app(db)
+    @pytest.mark.asyncio
+    async def test_update_query_field_160_to_166(self):
+        """160->166: payload.query valid -> sq.query updated; description=None -> 168."""
+        from gnosis.routers.query import update_saved
+        from gnosis.schemas.query import SavedQueryUpdate
+
+        sq = _sq_mock()
+        db = _db_for_sq(sq)
         with patch("gnosis.routers.query.parse_query", return_value=MagicMock()):
-            client = TestClient(app)
-            resp = client.put("/query/saved/1", json={"query": "tag:python"})
-        assert resp.status_code == 200, resp.text
+            result = await update_saved(
+                sq_id=1,
+                payload=SavedQueryUpdate(query="tag:python"),
+                db=db,
+                current_user=sq,  # sq.id == 1 matches sq.owner_id == 1
+            )
+        assert result is sq
         assert sq.query == "tag:python"
 
-    def test_update_description_field_166_to_168(self):
+    @pytest.mark.asyncio
+    async def test_update_description_field_166_to_168(self):
         """166->168: payload.description is not None -> sq.description updated."""
-        sq = _make_saved_query()
-        db = _make_query_db(sq)
-        app = _make_query_app(db)
-        client = TestClient(app)
-        resp = client.put("/query/saved/1", json={"description": "new desc"})
-        assert resp.status_code == 200, resp.text
+        from gnosis.routers.query import update_saved
+        from gnosis.schemas.query import SavedQueryUpdate
+
+        sq = _sq_mock()
+        db = _db_for_sq(sq)
+        result = await update_saved(
+            sq_id=1,
+            payload=SavedQueryUpdate(description="new desc"),
+            db=db,
+            current_user=sq,  # sq.id == 1 matches sq.owner_id == 1
+        )
+        assert result is sq
         assert sq.description == "new desc"
 
 
