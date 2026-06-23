@@ -20,15 +20,15 @@ AsyncMock session so those attributes are plain MagicMock (not coroutines).
 """
 from __future__ import annotations
 
-import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 from fastapi import HTTPException
 
-from gnosis.routers.notes import create_note, update_note, delete_note, get_or_create_daily_note
-from gnosis.schemas.note import NoteCreate, NoteUpdate
 from gnosis.core.exceptions import NoteConflictError
-
+from gnosis.routers.notes import create_note, delete_note, get_or_create_daily_note, update_note
+from gnosis.schemas.note import NoteCreate, NoteUpdate
 
 # ---------------------------------------------------------------------------
 # Patch targets

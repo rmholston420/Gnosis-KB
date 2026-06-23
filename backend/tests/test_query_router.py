@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -71,6 +70,7 @@ async def test_run_query_happy_path():
 @pytest.mark.asyncio
 async def test_run_query_returns_422_on_parse_error():
     from fastapi import HTTPException
+
     from gnosis.routers.query import run_query
     from gnosis.schemas.query import QueryRun
     from gnosis.services.query_parser import GQLParseError
@@ -124,6 +124,7 @@ async def test_create_saved_happy_path():
 @pytest.mark.asyncio
 async def test_create_saved_returns_409_on_duplicate():
     from fastapi import HTTPException
+
     from gnosis.routers.query import create_saved
     from gnosis.schemas.query import SavedQueryCreate
 
@@ -144,6 +145,7 @@ async def test_create_saved_returns_409_on_duplicate():
 @pytest.mark.asyncio
 async def test_create_saved_returns_422_on_bad_query():
     from fastapi import HTTPException
+
     from gnosis.routers.query import create_saved
     from gnosis.schemas.query import SavedQueryCreate
     from gnosis.services.query_parser import GQLParseError
@@ -176,6 +178,7 @@ async def test_get_saved_returns_dashboard():
 @pytest.mark.asyncio
 async def test_get_saved_returns_404_when_missing():
     from fastapi import HTTPException
+
     from gnosis.routers.query import get_saved
 
     db = _db_returning(None)
@@ -210,6 +213,7 @@ async def test_update_saved_modifies_fields():
 @pytest.mark.asyncio
 async def test_update_saved_returns_404_when_missing():
     from fastapi import HTTPException
+
     from gnosis.routers.query import update_saved
     from gnosis.schemas.query import SavedQueryUpdate
 
@@ -225,6 +229,7 @@ async def test_update_saved_returns_404_when_missing():
 @pytest.mark.asyncio
 async def test_update_saved_returns_422_on_bad_query():
     from fastapi import HTTPException
+
     from gnosis.routers.query import update_saved
     from gnosis.schemas.query import SavedQueryUpdate
     from gnosis.services.query_parser import GQLParseError
@@ -261,6 +266,7 @@ async def test_delete_saved_calls_db_delete():
 @pytest.mark.asyncio
 async def test_delete_saved_returns_404_when_missing():
     from fastapi import HTTPException
+
     from gnosis.routers.query import delete_saved
 
     db = _db_returning(None)
@@ -291,6 +297,7 @@ async def test_run_saved_happy_path():
 @pytest.mark.asyncio
 async def test_run_saved_returns_404_when_missing():
     from fastapi import HTTPException
+
     from gnosis.routers.query import run_saved
 
     db = _db_returning(None)
@@ -302,6 +309,7 @@ async def test_run_saved_returns_404_when_missing():
 @pytest.mark.asyncio
 async def test_run_saved_returns_422_on_bad_saved_query():
     from fastapi import HTTPException
+
     from gnosis.routers.query import run_saved
     from gnosis.services.query_parser import GQLParseError
 

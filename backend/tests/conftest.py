@@ -74,9 +74,9 @@ or from the real on-disk vault.
 from __future__ import annotations
 
 import tempfile
-from dataclasses import dataclass, field
+from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from pathlib import Path
-from typing import AsyncGenerator
 from unittest.mock import AsyncMock, patch
 
 import pytest

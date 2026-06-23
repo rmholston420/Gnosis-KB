@@ -20,12 +20,9 @@ Files / lines addressed:
 """
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
-
-from gnosis.services.llm_provider import llm_provider
-from gnosis.services.graph_rag import graph_rag
-
 
 # ---------------------------------------------------------------------------
 # Module-namespace patch helpers

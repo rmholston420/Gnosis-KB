@@ -1,7 +1,7 @@
 """Additional coverage tests for gnosis/routers/ai.py complex branches."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,7 +17,7 @@ def _note(note_id="n1", title="Note Title", body="Body text", folder="10-zettelk
     n.note_type = "evergreen"
     n.status = "active"
     n.is_deleted = False
-    n.created_at = datetime.now(timezone.utc)
+    n.created_at = datetime.now(UTC)
     return n
 
 

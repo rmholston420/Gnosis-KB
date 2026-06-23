@@ -1,7 +1,6 @@
 """Pydantic schemas for the SM-2 review system."""
 
 from datetime import date
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -14,7 +13,7 @@ class ReviewCardRead(BaseModel):
     interval: int
     repetitions: int
     due_date: date
-    last_quality: Optional[int] = None
+    last_quality: int | None = None
 
     model_config = {"from_attributes": True}
 

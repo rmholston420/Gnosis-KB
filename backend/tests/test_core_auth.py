@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Password helpers
 # ---------------------------------------------------------------------------
@@ -26,9 +25,10 @@ def test_get_password_hash_and_verify():
 
 
 def test_create_access_token_encodes_user_id():
-    from gnosis.core.auth import create_access_token, TokenData
     from jose import jwt
+
     from gnosis.config import settings
+    from gnosis.core.auth import TokenData, create_access_token
     token = create_access_token(TokenData(user_id=42, email="u@example.com"))
     payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
     assert payload["sub"] == "42"
@@ -36,7 +36,7 @@ def test_create_access_token_encodes_user_id():
 
 
 def test_create_access_token_custom_expiry():
-    from gnosis.core.auth import create_access_token, TokenData
+    from gnosis.core.auth import TokenData, create_access_token
     token = create_access_token(TokenData(user_id=1, email="a@b.com"), expires_delta=timedelta(hours=1))
     assert token
 
@@ -47,8 +47,8 @@ def test_create_access_token_custom_expiry():
 
 @pytest.mark.asyncio
 async def test_get_current_user_returns_user_on_valid_token():
-    from gnosis.core.auth import get_current_user, create_access_token, TokenData
     from gnosis.config import settings as real_settings
+    from gnosis.core.auth import TokenData, create_access_token, get_current_user
 
     user = MagicMock()
     user.id = 7
@@ -70,6 +70,7 @@ async def test_get_current_user_returns_user_on_valid_token():
 @pytest.mark.asyncio
 async def test_get_current_user_raises_401_on_bad_token():
     from fastapi import HTTPException
+
     from gnosis.core.auth import get_current_user
 
     db = AsyncMock()
@@ -84,6 +85,7 @@ async def test_get_current_user_raises_401_on_bad_token():
 @pytest.mark.asyncio
 async def test_get_current_user_raises_401_when_no_token():
     from fastapi import HTTPException
+
     from gnosis.core.auth import get_current_user
 
     db = AsyncMock()
@@ -97,8 +99,9 @@ async def test_get_current_user_raises_401_when_no_token():
 @pytest.mark.asyncio
 async def test_get_current_user_raises_401_when_user_not_found():
     from fastapi import HTTPException
-    from gnosis.core.auth import get_current_user, create_access_token, TokenData
+
     from gnosis.config import settings as real_settings
+    from gnosis.core.auth import TokenData, create_access_token, get_current_user
 
     result_mock = MagicMock()
     result_mock.scalar_one_or_none.return_value = None
@@ -139,6 +142,7 @@ async def test_get_current_user_auth_not_required_returns_first_user():
 @pytest.mark.asyncio
 async def test_require_user_raises_401_when_none():
     from fastapi import HTTPException
+
     from gnosis.core.auth import require_user
 
     with pytest.raises(HTTPException) as exc_info:
@@ -174,8 +178,6 @@ async def test_get_vault_owner_ids_no_header_returns_accessible():
     # get_accessible_owner_ids is imported locally inside get_vault_owner_ids
     # from gnosis.core.namespace — patch it there.
     with patch("gnosis.core.namespace.get_accessible_owner_ids", new=AsyncMock(return_value={1, 2})):
-        import importlib
-        import gnosis.core.auth as _auth
         # Force the lazy import inside the function to pick up our patch
         import gnosis.core.namespace as _ns
         original = _ns.get_accessible_owner_ids
@@ -207,6 +209,7 @@ async def test_get_vault_owner_ids_own_vault_header_returns_self():
 async def test_get_vault_owner_ids_invalid_header_returns_400():
     """Non-integer header value raises HTTP 400."""
     from fastapi import HTTPException
+
     from gnosis.core.auth import get_vault_owner_ids
 
     user = MagicMock()
@@ -224,6 +227,7 @@ async def test_get_vault_owner_ids_invalid_header_returns_400():
 async def test_get_vault_owner_ids_no_grant_returns_403():
     """When get_accessible_owner_ids raises ValueError, HTTP 403 is raised."""
     from fastapi import HTTPException
+
     from gnosis.core.auth import get_vault_owner_ids
 
     user = MagicMock()

@@ -35,7 +35,6 @@ from gnosis.database import get_session
 from gnosis.models.user import User
 from gnosis.routers.users import router
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

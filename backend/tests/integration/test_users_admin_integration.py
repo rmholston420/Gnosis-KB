@@ -20,18 +20,17 @@ _fake_superuser.  This ensures the exact same instrumented app is used.
 """
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import AsyncGenerator
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker
-from unittest.mock import AsyncMock, patch
 
-from gnosis.database import Base, get_db
+from gnosis.database import get_db
 from gnosis.main import create_app
-
 
 # ---------------------------------------------------------------------------
 # Superuser fake (vault_display_name required by UserProfile.model_validate)
@@ -66,8 +65,6 @@ async def superuser_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient
     coverage.py instruments the same code paths as the standard `client`
     fixture.
     """
-    from unittest.mock import AsyncMock, patch
-    from pathlib import Path
 
     class _MockObs:
         def stop(self): ...
@@ -81,9 +78,9 @@ async def superuser_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient
     p3 = patch("gnosis.services.graph_rag.graph_rag.initialize", new=AsyncMock(return_value=None))
 
     with p1, p2, p3:
+        import gnosis.core.namespace as _ns
         from gnosis import config
         from gnosis.core.auth import get_current_user, require_user
-        import gnosis.core.namespace as _ns
 
         settings = config.get_settings()
         settings.vault_path = str(vault_dir)

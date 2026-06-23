@@ -7,7 +7,7 @@ _sync_sse_generator (success + exception).
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -48,6 +48,7 @@ async def test_trigger_vault_sync_background_returns_202():
 @pytest.mark.asyncio
 async def test_trigger_vault_sync_stream_returns_streaming_response():
     from fastapi.responses import StreamingResponse
+
     from gnosis.routers.vault import trigger_vault_sync
 
     bg = MagicMock()
@@ -78,6 +79,7 @@ async def test_get_sync_status_idle_when_no_entry():
 @pytest.mark.asyncio
 async def test_get_sync_status_running():
     import time
+
     from gnosis.routers import vault as vault_mod
     from gnosis.routers.vault import get_sync_status
 
@@ -98,6 +100,7 @@ async def test_get_sync_status_running():
 @pytest.mark.asyncio
 async def test_get_sync_status_done():
     import time
+
     from gnosis.routers import vault as vault_mod
     from gnosis.routers.vault import get_sync_status
 
@@ -117,6 +120,7 @@ async def test_get_sync_status_done():
 @pytest.mark.asyncio
 async def test_get_sync_status_error():
     import time
+
     from gnosis.routers import vault as vault_mod
     from gnosis.routers.vault import get_sync_status
 

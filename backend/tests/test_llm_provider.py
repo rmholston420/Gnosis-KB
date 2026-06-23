@@ -6,8 +6,8 @@ patched as module-level attributes (patch('gnosis.services.llm_provider.httpx', 
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
-import pytest
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -118,7 +118,6 @@ def test_get_client_and_model_returns_ollama_first():
 @pytest.mark.asyncio
 async def test_initialize_detects_ollama_when_available():
     from gnosis.services.llm_provider import LLMProvider
-    from gnosis.config import get_settings
 
     fake_resp = MagicMock()
     fake_resp.status_code = 200
@@ -165,7 +164,6 @@ async def test_initialize_skips_ollama_when_unreachable():
 
 @pytest.mark.asyncio
 async def test_complete_returns_string():
-    from gnosis.services.llm_provider import LLMProvider
 
     fake_msg = MagicMock()
     fake_msg.content = "Hello from LLM."
@@ -189,7 +187,6 @@ async def test_complete_returns_string():
 
 @pytest.mark.asyncio
 async def test_complete_raises_when_no_provider():
-    from gnosis.services.llm_provider import LLMProvider
     p = _make_provider([])
     with pytest.raises(RuntimeError):
         await p.complete("hello")

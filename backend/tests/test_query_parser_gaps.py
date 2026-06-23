@@ -7,7 +7,7 @@ Covers the four uncovered lines:
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -15,7 +15,6 @@ from gnosis.services.query_parser import (
     ParsedQuery,
     execute_query,
 )
-
 
 # ---------------------------------------------------------------------------
 # Line 298: unknown operator is skipped (op_fn is None → continue)

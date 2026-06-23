@@ -1,11 +1,9 @@
 """Tests for database.py — engine, session factory, init_db."""
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # get_engine

@@ -1,9 +1,12 @@
 """Coverage tests for gnosis/routers/search.py."""
 from __future__ import annotations
+
 from unittest.mock import AsyncMock, patch
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from gnosis.core.auth import get_current_user, get_vault_owner_ids
 from gnosis.database import get_db
 from gnosis.routers.search import router

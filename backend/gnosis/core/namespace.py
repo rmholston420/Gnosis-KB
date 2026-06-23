@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional
 
 from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from gnosis.models.note import Note
 from gnosis.models.shared_vault import SharedVault
 from gnosis.models.user import User
-
 
 # ---------------------------------------------------------------------------
 # Vault path helpers
@@ -55,7 +53,7 @@ def ensure_vault_directory(user: User) -> Path:
 async def get_accessible_owner_ids(
     current_user: User,
     session: AsyncSession,
-    target_owner_id: Optional[int] = None,
+    target_owner_id: int | None = None,
 ) -> set[int]:
     """Return the set of user IDs whose notes *current_user* may read.
 

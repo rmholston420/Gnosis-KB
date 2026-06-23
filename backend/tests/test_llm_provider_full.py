@@ -6,8 +6,11 @@ attributes that don't exist. This replacement uses the real API:
   stream(prompt)   -> AsyncGenerator[str, None]
 """
 from __future__ import annotations
-from unittest.mock import AsyncMock, MagicMock, patch
+
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
+
 from gnosis.services.llm_provider import LLMProvider
 
 

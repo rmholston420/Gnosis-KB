@@ -26,13 +26,11 @@ vault.py
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
 
 # ===========================================================================
 # graph.py — 171->170  (BFS already-visited neighbor skip)
@@ -110,9 +108,10 @@ async def test_get_graph_entities_import_error_returns_fallback():
 @pytest.mark.asyncio
 async def test_export_note_pdf_happy_path_lines_230_242():
     """Lines 230-242: weasyprint available, note found -> PDF Response."""
+    from fastapi.responses import Response
+
     import gnosis.routers.export as export_mod
     from gnosis.routers.export import export_note_pdf
-    from fastapi.responses import Response
 
     note = MagicMock()
     note.id = "note-1"
@@ -136,7 +135,7 @@ async def test_export_note_pdf_happy_path_lines_230_242():
     with patch.object(export_mod, "settings", MagicMock(enable_pdf_export=True)), \
          patch.dict("sys.modules", {"weasyprint": MagicMock(HTML=fake_html_cls)}):
         # Re-import inside the patch so the lazy 'from weasyprint import HTML' picks it up
-        import importlib, sys
+        import sys
         # Insert a fresh weasyprint mock so the try-import inside the function finds it
         sys.modules["weasyprint"] = MagicMock(HTML=fake_html_cls)
         resp = await export_note_pdf(
@@ -191,6 +190,7 @@ class TestIngestBatch:
     def test_batch_file_too_large_returns_413(self):
         """Line 385: content > _MAX_FILE_SIZE -> 413."""
         import io
+
         from gnosis.routers.ingest import _MAX_FILE_SIZE
         oversized = b"x" * (_MAX_FILE_SIZE + 2)
         client = TestClient(self._make_app(), raise_server_exceptions=False)
@@ -208,6 +208,7 @@ class TestIngestBatch:
         """
         import io
         import zipfile as zf
+
         import gnosis.routers.ingest as ingest_mod
 
         buf = io.BytesIO()
@@ -237,6 +238,7 @@ class TestIngestBatch:
         """
         import io
         import zipfile as zf
+
         import gnosis.routers.ingest as ingest_mod
 
         buf = io.BytesIO()
@@ -312,9 +314,9 @@ class TestUsersUpdateMeSlugAssign:
 class TestUsersInviteToVaultNewGrant:
     @pytest.mark.asyncio
     async def test_invite_creates_new_grant_lines_244_263(self):
-        from gnosis.routers.users import invite_to_vault, InviteRequest
-        from gnosis.models.user import User
         from gnosis.models.shared_vault import SharedVault
+        from gnosis.models.user import User
+        from gnosis.routers.users import InviteRequest, invite_to_vault
 
         owner = User(email="owner@test.com", hashed_password="x",
                      is_superuser=False, is_active=True)
@@ -360,8 +362,8 @@ class TestUsersInviteToVaultNewGrant:
 class TestVaultSyncSSEGeneratorBadTotal:
     @pytest.mark.asyncio
     async def test_bad_total_line_ignored_lines_124_125(self):
-        from gnosis.routers.vault import _sync_sse_generator, _sync_status
         import gnosis.routers.vault as vm
+        from gnosis.routers.vault import _sync_sse_generator, _sync_status
 
         async def _fake_sync(user_id):
             yield "synced: note1.md"

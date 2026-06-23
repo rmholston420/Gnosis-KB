@@ -3,17 +3,17 @@
 import asyncio
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-# Import Base so Alembic can detect all models
-from gnosis.database import Base
-from gnosis.config import get_settings
-
 # Import all models so metadata is populated
 import gnosis.models  # noqa: F401
+from alembic import context
+from gnosis.config import get_settings
+
+# Import Base so Alembic can detect all models
+from gnosis.database import Base
 
 config = context.config
 

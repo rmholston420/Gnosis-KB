@@ -8,11 +8,10 @@ from __future__ import annotations
 
 import json
 import zipfile
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -35,8 +34,8 @@ def _note(note_id="n1", title="My Note", body="Body text.", folder="10-zettelkas
     n.vault_path = f"{folder}/{note_id}.md"
     n.word_count = 2
     n.tags = [_tag("eeg"), _tag("research")]
-    n.created_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
-    n.modified_at = datetime(2025, 6, 1, tzinfo=timezone.utc)
+    n.created_at = datetime(2025, 1, 1, tzinfo=UTC)
+    n.modified_at = datetime(2025, 6, 1, tzinfo=UTC)
     return n
 
 
@@ -61,7 +60,7 @@ def _db_notes(notes):
 
 def test_iso_datetime():
     from gnosis.routers.export import _iso
-    dt = datetime(2025, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+    dt = datetime(2025, 1, 15, 12, 0, 0, tzinfo=UTC)
     assert "2025-01-15" in _iso(dt)
 
 
@@ -187,6 +186,7 @@ async def test_export_note_md_returns_content():
 @pytest.mark.asyncio
 async def test_export_note_md_returns_404_when_missing():
     from fastapi import HTTPException
+
     from gnosis.routers.export import export_note_md
     db = _db_notes([])
 
@@ -202,6 +202,7 @@ async def test_export_note_md_returns_404_when_missing():
 @pytest.mark.asyncio
 async def test_export_note_pdf_returns_501_when_disabled():
     from fastapi import HTTPException
+
     from gnosis.routers.export import export_note_pdf
 
     with patch("gnosis.routers.export.settings") as mock_settings:
@@ -214,6 +215,7 @@ async def test_export_note_pdf_returns_501_when_disabled():
 @pytest.mark.asyncio
 async def test_export_note_pdf_returns_501_when_weasyprint_missing():
     from fastapi import HTTPException
+
     from gnosis.routers.export import export_note_pdf
 
     with patch("gnosis.routers.export.settings") as mock_settings:

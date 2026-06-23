@@ -10,8 +10,11 @@ Key facts from the source:
     (exact message from source)
 """
 from __future__ import annotations
+
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
+
 from gnosis.services.llm_provider import LLMProvider
 
 

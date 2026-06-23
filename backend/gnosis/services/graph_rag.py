@@ -32,8 +32,9 @@ synthesis block from shared vaults as a final chunk.
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, Optional
+from typing import Any
 
 from gnosis.config import get_settings
 
@@ -66,7 +67,7 @@ class GraphRAGService:
     """
 
     def __init__(self) -> None:
-        self._instances: Dict[int, Any] = {}
+        self._instances: dict[int, Any] = {}
         self._base_dir = Path(settings.lightrag_data_dir)
 
     def _working_dir(self, user_id: int) -> Path:
@@ -142,7 +143,7 @@ class GraphRAGService:
         question: str,
         user_id: int = _LEGACY_USER_ID,
         mode: str = "hybrid",
-        owner_ids: Optional[set[int]] = None,
+        owner_ids: set[int] | None = None,
     ) -> str:
         """Query the knowledge graph(s) accessible to *user_id*.
 
@@ -235,7 +236,7 @@ class GraphRAGService:
         question: str,
         user_id: int = _LEGACY_USER_ID,
         mode: str = "hybrid",
-        owner_ids: Optional[set[int]] = None,
+        owner_ids: set[int] | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream an answer token-by-token from *user_id*'s knowledge graph.
 

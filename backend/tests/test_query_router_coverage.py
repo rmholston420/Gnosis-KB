@@ -8,10 +8,13 @@ Key facts from the source:
   - get_vault_owner_ids dependency must be overridden
 """
 from __future__ import annotations
+
 from unittest.mock import AsyncMock, MagicMock, patch
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from gnosis.core.auth import get_current_user, get_vault_owner_ids
 from gnosis.database import get_db
 from gnosis.models.user import User

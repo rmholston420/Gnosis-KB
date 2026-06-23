@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -87,6 +86,7 @@ def test_vault_sync_status_idle():
 def test_vault_sync_status_running():
     """GET /vault/sync/status returns running state."""
     import time
+
     import gnosis.routers.vault as vault_router
     vault_router._sync_status[1] = {
         "state": "running",
@@ -107,6 +107,7 @@ def test_vault_sync_status_running():
 def test_vault_sync_status_done():
     """GET /vault/sync/status returns done state."""
     import time
+
     import gnosis.routers.vault as vault_router
     vault_router._sync_status[1] = {
         "state": "done",

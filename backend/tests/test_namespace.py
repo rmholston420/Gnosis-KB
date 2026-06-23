@@ -1,21 +1,20 @@
 """Tests for core/namespace.py — vault path helpers and query scoping."""
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy import select
 
 from gnosis.core.namespace import (
-    resolve_vault_path,
     ensure_vault_directory,
     get_accessible_owner_ids,
+    resolve_vault_path,
     scoped_note_stmt,
 )
 from gnosis.models.note import Note
-from sqlalchemy import select
 
 
 @dataclass

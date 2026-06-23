@@ -1,8 +1,6 @@
 """Pydantic schemas for AI router requests and responses."""
 from __future__ import annotations
 
-from typing import Optional
-
 from pydantic import BaseModel, Field
 
 
@@ -14,7 +12,7 @@ class ChatRequest(BaseModel):
         default="hybrid",
         description="LightRAG query mode: local | global | hybrid",
     )
-    session_id: Optional[str] = Field(
+    session_id: str | None = Field(
         default=None, description="Optional chat session ID for history"
     )
 
@@ -24,7 +22,7 @@ class ChatResponse(BaseModel):
 
     answer: str
     mode: str
-    session_id: Optional[str] = None
+    session_id: str | None = None
 
 
 class SummarizeResponse(BaseModel):
@@ -124,11 +122,11 @@ class MocRequest(BaseModel):
         max_length=200,
         description="Topic or tag name to generate the MOC around",
     )
-    tag: Optional[str] = Field(
+    tag: str | None = Field(
         default=None,
         description="If provided, only notes tagged with this value are considered",
     )
-    folder: Optional[str] = Field(
+    folder: str | None = Field(
         default=None,
         description="If provided, only notes in this folder prefix are considered",
     )

@@ -9,12 +9,15 @@ The router:
   - No ParsedDocument import needed in tests
 """
 from __future__ import annotations
+
 import io
 import zipfile
 from unittest.mock import AsyncMock, MagicMock, patch
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from gnosis.core.auth import get_current_user
 from gnosis.database import get_session
 from gnosis.models.user import User
@@ -80,7 +83,6 @@ def test_ingest_file_parse_error_returns_422():
 
 def test_ingest_url_ok():
     """POST /ingest/url with a valid URL should return 200."""
-    from gnosis.services.document_parser import ParsedDocument
     fake = MagicMock()
     fake.title = "Article"; fake.text = "Body."
     with patch("gnosis.routers.ingest.parse_url" if hasattr(__import__("gnosis.routers.ingest", fromlist=["parse_url"]), "parse_url") else "gnosis.services.document_parser.parse_url",

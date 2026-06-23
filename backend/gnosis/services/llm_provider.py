@@ -9,7 +9,7 @@ All providers share the OpenAI-compatible API surface.
 from __future__ import annotations
 
 import logging
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 import httpx
 from openai import AsyncOpenAI

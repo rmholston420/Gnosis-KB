@@ -5,8 +5,8 @@ real database is needed.
 """
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime, timezone
 
 import pytest
 
@@ -34,8 +34,8 @@ def _make_note(
     note.word_count = word_count
     note.slug = slug
     note.is_deleted = is_deleted
-    note.created_at = created_at or datetime(2025, 1, 1, tzinfo=timezone.utc)
-    note.modified_at = modified_at or datetime(2025, 6, 1, tzinfo=timezone.utc)
+    note.created_at = created_at or datetime(2025, 1, 1, tzinfo=UTC)
+    note.modified_at = modified_at or datetime(2025, 6, 1, tzinfo=UTC)
     note.last_reviewed = last_reviewed
     note.tags = tags or []
     return note
@@ -56,7 +56,7 @@ def _make_db(notes):
 
 @pytest.mark.asyncio
 async def test_execute_query_returns_rows_and_ms():
-    from gnosis.services.query_parser import execute_query, ParsedQuery
+    from gnosis.services.query_parser import ParsedQuery, execute_query
 
     note = _make_note()
     db = _make_db([note])
@@ -71,7 +71,7 @@ async def test_execute_query_returns_rows_and_ms():
 
 @pytest.mark.asyncio
 async def test_execute_query_row_has_expected_fields():
-    from gnosis.services.query_parser import execute_query, ParsedQuery
+    from gnosis.services.query_parser import ParsedQuery, execute_query
 
     tag = MagicMock(); tag.name = "python"
     note = _make_note(tags=[tag])
@@ -87,7 +87,7 @@ async def test_execute_query_row_has_expected_fields():
 
 @pytest.mark.asyncio
 async def test_execute_query_serialises_datetime():
-    from gnosis.services.query_parser import execute_query, ParsedQuery
+    from gnosis.services.query_parser import ParsedQuery, execute_query
 
     note = _make_note()
     db = _make_db([note])
@@ -99,7 +99,7 @@ async def test_execute_query_serialises_datetime():
 
 @pytest.mark.asyncio
 async def test_execute_query_empty_result():
-    from gnosis.services.query_parser import execute_query, ParsedQuery
+    from gnosis.services.query_parser import ParsedQuery, execute_query
 
     db = _make_db([])
     rows, _ = await execute_query(ParsedQuery(), db)
@@ -112,7 +112,7 @@ async def test_execute_query_empty_result():
 
 @pytest.mark.asyncio
 async def test_execute_query_from_folder_applies_filter():
-    from gnosis.services.query_parser import execute_query, ParsedQuery
+    from gnosis.services.query_parser import ParsedQuery, execute_query
 
     note = _make_note(folder="10-zettelkasten")
     db = _make_db([note])
@@ -128,7 +128,7 @@ async def test_execute_query_from_folder_applies_filter():
 
 @pytest.mark.asyncio
 async def test_execute_query_tag_condition():
-    from gnosis.services.query_parser import execute_query, ParsedQuery
+    from gnosis.services.query_parser import ParsedQuery, execute_query
 
     tag = MagicMock(); tag.name = "eeg"
     note = _make_note(tags=[tag])
@@ -145,7 +145,7 @@ async def test_execute_query_tag_condition():
 
 @pytest.mark.asyncio
 async def test_execute_query_field_eq_condition():
-    from gnosis.services.query_parser import execute_query, ParsedQuery
+    from gnosis.services.query_parser import ParsedQuery, execute_query
 
     note = _make_note(status="draft")
     db = _make_db([note])
@@ -158,7 +158,7 @@ async def test_execute_query_field_eq_condition():
 
 @pytest.mark.asyncio
 async def test_execute_query_word_count_gt_coerces_int():
-    from gnosis.services.query_parser import execute_query, ParsedQuery
+    from gnosis.services.query_parser import ParsedQuery, execute_query
 
     note = _make_note(word_count=200)
     db = _make_db([note])
@@ -172,7 +172,7 @@ async def test_execute_query_word_count_gt_coerces_int():
 @pytest.mark.asyncio
 async def test_execute_query_unknown_op_is_skipped():
     """An op not in _OP_MAP should be silently skipped (no crash)."""
-    from gnosis.services.query_parser import execute_query, ParsedQuery
+    from gnosis.services.query_parser import ParsedQuery, execute_query
 
     note = _make_note()
     db = _make_db([note])
@@ -189,7 +189,7 @@ async def test_execute_query_unknown_op_is_skipped():
 
 @pytest.mark.asyncio
 async def test_execute_query_sort_asc():
-    from gnosis.services.query_parser import execute_query, ParsedQuery
+    from gnosis.services.query_parser import ParsedQuery, execute_query
 
     db = _make_db([])
     parsed = ParsedQuery(sort_field="created_at", sort_dir="ASC")
@@ -199,7 +199,7 @@ async def test_execute_query_sort_asc():
 
 @pytest.mark.asyncio
 async def test_execute_query_sort_desc():
-    from gnosis.services.query_parser import execute_query, ParsedQuery
+    from gnosis.services.query_parser import ParsedQuery, execute_query
 
     db = _make_db([])
     parsed = ParsedQuery(sort_field="modified_at", sort_dir="DESC")
@@ -215,7 +215,7 @@ async def test_execute_query_sort_desc():
 
 @pytest.mark.asyncio
 async def test_execute_query_calls_scoped_note_stmt_when_owner_ids_given():
-    from gnosis.services.query_parser import execute_query, ParsedQuery
+    from gnosis.services.query_parser import ParsedQuery, execute_query
 
     db = _make_db([])
     parsed = ParsedQuery()
@@ -241,7 +241,7 @@ async def test_execute_query_calls_scoped_note_stmt_when_owner_ids_given():
 
 @pytest.mark.asyncio
 async def test_execute_query_no_scope_when_owner_ids_none():
-    from gnosis.services.query_parser import execute_query, ParsedQuery
+    from gnosis.services.query_parser import ParsedQuery, execute_query
 
     db = _make_db([])
     parsed = ParsedQuery()

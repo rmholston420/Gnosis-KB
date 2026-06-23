@@ -3,13 +3,12 @@ from __future__ import annotations
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # ParsedQuery defaults
 # ---------------------------------------------------------------------------
 
 def test_parse_query_empty_returns_defaults():
-    from gnosis.services.query_parser import parse_query, ParsedQuery
+    from gnosis.services.query_parser import ParsedQuery, parse_query
     pq = parse_query("")
     assert isinstance(pq, ParsedQuery)
     assert pq.sort_field == "modified_at"
@@ -42,7 +41,7 @@ def test_parse_query_from_lowercase():
 
 
 def test_parse_query_from_without_arg_raises():
-    from gnosis.services.query_parser import parse_query, GQLParseError
+    from gnosis.services.query_parser import GQLParseError, parse_query
     with pytest.raises(GQLParseError):
         parse_query("FROM")
 
@@ -58,7 +57,7 @@ def test_parse_query_limit():
 
 
 def test_parse_query_limit_zero_or_negative():
-    from gnosis.services.query_parser import parse_query, GQLParseError
+    from gnosis.services.query_parser import GQLParseError, parse_query
     with pytest.raises((GQLParseError, ValueError)):
         parse_query("LIMIT -5")
 
@@ -81,7 +80,7 @@ def test_parse_query_sort_alias_modified():
 
 
 def test_parse_query_sort_unknown_field_raises():
-    from gnosis.services.query_parser import parse_query, GQLParseError
+    from gnosis.services.query_parser import GQLParseError, parse_query
     with pytest.raises(GQLParseError):
         parse_query("SORT unknown_field DESC")
 
@@ -115,7 +114,7 @@ def test_parse_query_where_multiple_and():
 
 
 def test_parse_query_where_unknown_field_raises():
-    from gnosis.services.query_parser import parse_query, GQLParseError
+    from gnosis.services.query_parser import GQLParseError, parse_query
     with pytest.raises(GQLParseError):
         parse_query("WHERE unknown_field=foo")
 
@@ -154,7 +153,7 @@ def test_parse_query_combined_from_where_sort_limit():
 
 
 def test_parse_query_too_long_raises():
-    from gnosis.services.query_parser import parse_query, GQLParseError
+    from gnosis.services.query_parser import GQLParseError, parse_query
     with pytest.raises(GQLParseError):
         parse_query("a" * 2001)
 

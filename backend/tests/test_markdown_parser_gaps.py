@@ -4,14 +4,14 @@ Line 31→33: generate_note_id(dt=<explicit datetime>) — the non-None branch.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from gnosis.services.markdown_parser import generate_note_id
 
 
 def test_generate_note_id_with_explicit_datetime():
     """Passing an explicit datetime hits the non-None branch (line 33)."""
-    dt = datetime(2024, 6, 15, 10, 30, 45, tzinfo=timezone.utc)
+    dt = datetime(2024, 6, 15, 10, 30, 45, tzinfo=UTC)
     result = generate_note_id(dt)
     assert result == "20240615-103045"
 
@@ -26,6 +26,6 @@ def test_generate_note_id_without_argument_returns_string():
 
 def test_generate_note_id_format_is_sortable():
     """IDs generated from consecutive datetimes sort lexicographically."""
-    early = generate_note_id(datetime(2020, 1, 1, 0, 0, 0, tzinfo=timezone.utc))
-    late  = generate_note_id(datetime(2025, 12, 31, 23, 59, 59, tzinfo=timezone.utc))
+    early = generate_note_id(datetime(2020, 1, 1, 0, 0, 0, tzinfo=UTC))
+    late  = generate_note_id(datetime(2025, 12, 31, 23, 59, 59, tzinfo=UTC))
     assert early < late

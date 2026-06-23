@@ -1,6 +1,5 @@
 """Link model (directional wikilinks between notes)."""
 
-from typing import Optional
 
 from sqlalchemy import ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -24,7 +23,7 @@ class Link(Base):
         String(20), ForeignKey("notes.id", ondelete="CASCADE"), nullable=False, index=True
     )
     link_text: Mapped[str] = mapped_column(String(500), nullable=False)
-    context: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    context: Mapped[str | None] = mapped_column(Text, nullable=True)
     link_type: Mapped[str] = mapped_column(String(50), default="wikilink")
 
     # Relationships

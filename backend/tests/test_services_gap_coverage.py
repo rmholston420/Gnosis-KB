@@ -20,13 +20,12 @@ but may not hit 288->286.  We add a dedicated test for the filter-out case.
 """
 from __future__ import annotations
 
-import sys
 import importlib
+import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ===========================================================================
 # graph_rag.py  lines 50-52  (ImportError block)
@@ -97,8 +96,8 @@ class TestGraphRAGQuerySingleAnswer:
 class TestGraphRAGSynthesise:
     @pytest.mark.asyncio
     async def test_synthesise_llm_unavailable_returns_joined(self):
-        from gnosis.services.graph_rag import GraphRAGService
         import gnosis.services.llm_provider as llm_mod
+        from gnosis.services.graph_rag import GraphRAGService
         svc = GraphRAGService()
         answers = ["[Vault 1]\nanswer one", "[Vault 2]\nanswer two"]
         real = llm_mod.llm_provider
@@ -114,8 +113,8 @@ class TestGraphRAGSynthesise:
 
     @pytest.mark.asyncio
     async def test_synthesise_llm_raises_returns_joined(self):
-        from gnosis.services.graph_rag import GraphRAGService
         import gnosis.services.llm_provider as llm_mod
+        from gnosis.services.graph_rag import GraphRAGService
         svc = GraphRAGService()
         answers = ["[Vault 1]\nfoo", "[Vault 2]\nbar"]
         real = llm_mod.llm_provider
@@ -211,8 +210,8 @@ class TestGraphRAGStream:
         -> generator falls off the end.
         Need shared vault to return a GOOD (non-filtered) answer.
         """
-        from gnosis.services.graph_rag import GraphRAGService
         import gnosis.services.llm_provider as llm_mod
+        from gnosis.services.graph_rag import GraphRAGService
         svc = GraphRAGService()
 
         mock_primary = MagicMock(spec=[])
@@ -582,6 +581,7 @@ class TestVaultHandleDeleteValueError:
     @pytest.mark.asyncio
     async def test_handle_delete_path_outside_vault(self, tmp_path):
         import tempfile
+
         from gnosis.services.vault_sync import VaultEventHandler
         handler = VaultEventHandler(owner_id=1)
         with tempfile.TemporaryDirectory() as other_dir:

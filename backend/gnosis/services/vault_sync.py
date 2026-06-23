@@ -15,8 +15,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import AsyncIterator
 
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
@@ -24,7 +24,7 @@ from watchdog.observers import Observer
 from gnosis.config import get_settings
 from gnosis.database import AsyncSessionFactory
 from gnosis.services.markdown_parser import parse_markdown_file  # noqa: F401 (alias)
-from gnosis.services.vector_store import upsert_note, delete_note_vector
+from gnosis.services.vector_store import delete_note_vector, upsert_note
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +50,9 @@ async def _resolve_owner_id(user_id: int) -> int:
     In practice user_id is already the PK from the JWT token — this guard
     exists so tests can pass synthetic IDs without blowing up.
     """
-    from gnosis.models.user import User
     from sqlalchemy import select
+
+    from gnosis.models.user import User
 
     async with AsyncSessionFactory() as db:
         result = await db.execute(select(User).where(User.id == user_id))
@@ -72,13 +73,14 @@ async def _sync_file(path: Path, owner_id: int, db_session: object) -> str:
 
     Returns a one-line log string describing the outcome.
     """
-    from gnosis.models.note import Note
-    from gnosis.models.link import Link
-    from gnosis.models.tag import Tag, NoteTag
-    from sqlalchemy import select, delete
-    from sqlalchemy.ext.asyncio import AsyncSession
     import frontmatter  # python-frontmatter
     from slugify import slugify as _slugify  # python-slugify
+    from sqlalchemy import delete, select
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from gnosis.models.link import Link
+    from gnosis.models.note import Note
+    from gnosis.models.tag import NoteTag, Tag
 
     db: AsyncSession = db_session  # type: ignore[assignment]
     settings = get_settings()
@@ -301,9 +303,10 @@ class VaultEventHandler(FileSystemEventHandler):
 
     async def _handle_delete(self, path: Path) -> None:
         """Soft-delete a note from the DB when its vault file is removed."""
-        from gnosis.models.note import Note
         from sqlalchemy import select
         from sqlalchemy.ext.asyncio import AsyncSession
+
+        from gnosis.models.note import Note
 
         vault_root = _get_vault_path()
         try:

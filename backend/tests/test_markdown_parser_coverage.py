@@ -8,10 +8,8 @@ All file I/O is done through tmp_path (pytest fixture) — no mocking needed.
 from __future__ import annotations
 
 import textwrap
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-
-import pytest
 
 from gnosis.services.markdown_parser import (
     build_default_frontmatter,
@@ -22,13 +20,12 @@ from gnosis.services.markdown_parser import (
     write_note_file,
 )
 
-
 # ---------------------------------------------------------------------------
 # generate_note_id
 # ---------------------------------------------------------------------------
 
 def test_generate_note_id_uses_provided_dt():
-    dt = datetime(2024, 3, 15, 10, 30, 0, tzinfo=timezone.utc)
+    dt = datetime(2024, 3, 15, 10, 30, 0, tzinfo=UTC)
     assert generate_note_id(dt) == "20240315-103000"
 
 

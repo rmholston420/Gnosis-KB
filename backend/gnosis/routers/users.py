@@ -17,11 +17,11 @@ import logging
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-from gnosis.core.auth import get_current_user, get_password_hash, require_user
+from gnosis.core.auth import get_password_hash, require_user
 from gnosis.core.namespace import ensure_vault_directory
 from gnosis.database import get_session
 from gnosis.models.shared_vault import SharedVault

@@ -16,7 +16,6 @@ State fields:
 """
 
 from datetime import date
-from typing import Optional
 
 from sqlalchemy import Date, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -38,7 +37,7 @@ class ReviewCard(Base):
     interval: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     repetitions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     due_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
-    last_quality: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    last_quality: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # lazy='select': do not auto-JOIN back to Note when loading a ReviewCard.
     # Note.review_card is also lazy='select'.  No query path needs to traverse

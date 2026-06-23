@@ -6,7 +6,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-
 # ---------------------------------------------------------------------------
 # Dataview / GQL engine schemas  (used by routers/query.py)
 # ---------------------------------------------------------------------------

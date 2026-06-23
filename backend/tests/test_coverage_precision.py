@@ -25,7 +25,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ===========================================================================
 # database.py  line 66 — _AsyncSessionLocalProxy.__aexit__
 # ===========================================================================

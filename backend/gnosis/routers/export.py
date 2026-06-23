@@ -24,7 +24,6 @@ import io
 import json
 import zipfile
 from datetime import date, datetime
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
@@ -33,9 +32,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from gnosis.config import settings
+from gnosis.core.auth import get_current_user
 from gnosis.database import get_db
 from gnosis.models.note import Note
-from gnosis.core.auth import get_current_user
 from gnosis.models.user import User
 
 router = APIRouter(prefix="/export", tags=["export"])

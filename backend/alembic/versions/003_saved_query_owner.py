@@ -10,6 +10,7 @@ Idempotent: skips the ALTER if the column already exists.
 from __future__ import annotations
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "003_saved_query_owner"

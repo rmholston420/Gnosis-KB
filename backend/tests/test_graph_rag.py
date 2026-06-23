@@ -1,13 +1,11 @@
 """Tests for services/graph_rag.py — GraphRAGService."""
 from __future__ import annotations
 
-import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gnosis.services.graph_rag import GraphRAGService
-
 
 # ---------------------------------------------------------------------------
 # Helpers

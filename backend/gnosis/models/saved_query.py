@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -35,7 +34,7 @@ class SavedQuery(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     # owner — nullable FK; ON DELETE SET NULL preserves the dashboard row
-    owner_id: Mapped[Optional[int]] = mapped_column(
+    owner_id: Mapped[int | None] = mapped_column(
         Integer,
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
@@ -43,7 +42,7 @@ class SavedQuery(Base):
         default=None,
     )
     # Lazy relationship — only loaded when explicitly accessed
-    owner: Mapped[Optional[object]] = relationship(
+    owner: Mapped[object | None] = relationship(
         "User", foreign_keys=[owner_id], lazy="select"
     )
 

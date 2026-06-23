@@ -13,25 +13,25 @@ These tests confirm:
 """
 from __future__ import annotations
 
+from datetime import UTC
 from unittest.mock import MagicMock
 
-from gnosis.routers.notes import _note_to_read
 from gnosis.models.note import Note
 from gnosis.models.tag import Tag
-
+from gnosis.routers.notes import _note_to_read
 
 # ---------------------------------------------------------------------------
 # Guard in _note_to_read
 # ---------------------------------------------------------------------------
 
 def _make_note(tags_value):
-    from datetime import datetime, timezone
+    from datetime import datetime
     n = MagicMock()
     n.id = "n1"; n.title = "T"; n.slug = "t"; n.body = "."; n.body_html = ""
     n.note_type = "permanent"; n.status = "active"; n.vault_path = "i/n.md"
     n.folder = "00-inbox"; n.source_url = None; n.word_count = 1
-    n.created_at = datetime(2024,1,1,tzinfo=timezone.utc)
-    n.modified_at = datetime(2024,1,1,tzinfo=timezone.utc)
+    n.created_at = datetime(2024,1,1,tzinfo=UTC)
+    n.modified_at = datetime(2024,1,1,tzinfo=UTC)
     n.last_reviewed = None; n.is_deleted = False
     n.vector_indexed = False; n.graph_indexed = False; n.frontmatter = {}
     n.outgoing_links = []; n.incoming_links = []

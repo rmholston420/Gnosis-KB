@@ -1,7 +1,6 @@
 """Attachment model (files attached to notes)."""
 
 from datetime import datetime
-from typing import Optional
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -23,8 +22,8 @@ class Attachment(Base):
     file_path: Mapped[str] = mapped_column(String(1000), nullable=False)
     mime_type: Mapped[str] = mapped_column(String(100), default="application/octet-stream")
     file_size: Mapped[int] = mapped_column(Integer, default=0)
-    extracted_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    uploaded_at: Mapped[Optional[datetime]] = mapped_column(
+    extracted_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    uploaded_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
 

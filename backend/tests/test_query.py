@@ -8,7 +8,6 @@ from gnosis.models.note import Note
 from gnosis.models.tag import NoteTag, Tag
 from gnosis.services.query_parser import GQLParseError, ParsedQuery, execute_query, parse_query
 
-
 # ---------------------------------------------------------------------------
 # Parser — happy-path tests
 # ---------------------------------------------------------------------------

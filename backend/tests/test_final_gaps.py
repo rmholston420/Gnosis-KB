@@ -26,9 +26,6 @@ from contextlib import asynccontextmanager
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
-
 # ---------------------------------------------------------------------------
 # gnosis/models/tag.py  line 39 - Tag.__repr__
 # ---------------------------------------------------------------------------
@@ -169,8 +166,9 @@ class TestAsyncSessionLocalProxy:
 class TestMainLifespanWarning:
     async def test_lifespan_graphrag_init_warning(self):
         """When graph_rag.initialize raises, lifespan logs a WARNING and continues."""
-        from gnosis.main import lifespan
         from fastapi import FastAPI
+
+        from gnosis.main import lifespan
 
         app = FastAPI()
 

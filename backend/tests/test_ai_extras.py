@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,7 +17,7 @@ def _note(note_id="n1", title="Inbox Note", body="Some content.", folder="00-inb
     n.note_type = "fleeting"
     n.status = "active"
     n.is_deleted = False
-    n.created_at = datetime.now(timezone.utc)
+    n.created_at = datetime.now(UTC)
     return n
 
 

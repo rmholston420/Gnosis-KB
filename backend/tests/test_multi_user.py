@@ -3,9 +3,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
-
-import pytest
 
 from gnosis.core.namespace import resolve_vault_path, scoped_note_stmt
 
@@ -58,6 +55,7 @@ def test_resolve_vault_path_uses_id_when_no_slug():
 def test_scoped_note_stmt_includes_null_owner():
     """With include_null_owner=True, legacy notes (owner_id IS NULL) are included."""
     from sqlalchemy import select
+
     from gnosis.models.note import Note
 
     stmt = select(Note)
@@ -70,6 +68,7 @@ def test_scoped_note_stmt_includes_null_owner():
 def test_scoped_note_stmt_excludes_null_owner():
     """With include_null_owner=False, only owned notes are returned."""
     from sqlalchemy import select
+
     from gnosis.models.note import Note
 
     stmt = select(Note)

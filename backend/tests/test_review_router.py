@@ -8,7 +8,6 @@ import pytest
 from gnosis.models.note import Note
 from gnosis.models.review import ReviewCard
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

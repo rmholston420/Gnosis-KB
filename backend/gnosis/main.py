@@ -20,8 +20,8 @@ Routers registered:
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,7 +30,8 @@ from slowapi.errors import RateLimitExceeded
 
 from gnosis.config import get_settings
 from gnosis.core.rate_limit import limiter
-from gnosis.database import get_engine, Base
+from gnosis.database import Base, get_engine
+from gnosis.routers import admin as admin_router
 from gnosis.routers import (
     ai,
     auth,
@@ -45,7 +46,6 @@ from gnosis.routers import (
     tags,
     users,
 )
-from gnosis.routers import admin as admin_router
 from gnosis.routers import vault as vault_router
 from gnosis.services.graph_rag import graph_rag
 from gnosis.services.llm_provider import llm_provider

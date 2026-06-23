@@ -21,10 +21,7 @@ Covers the low-hanging gaps that kept total coverage below 50 %:
 """
 from __future__ import annotations
 
-import asyncio
 import datetime
-import uuid
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -32,10 +29,8 @@ import pytest
 # ---------------------------------------------------------------------------
 # query_parser — pure logic, no DB needed for parse_query
 # ---------------------------------------------------------------------------
-
 from gnosis.services.query_parser import (
     GQLParseError,
-    ParsedQuery,
     _tokenise,
     parse_query,
 )
@@ -286,10 +281,10 @@ class TestExecuteQuery:
 # ---------------------------------------------------------------------------
 
 from gnosis.core.exceptions import (
-    NoteNotFoundError,
-    NoteConflictError,
-    VaultWriteError,
     LLMUnavailableError,
+    NoteConflictError,
+    NoteNotFoundError,
+    VaultWriteError,
 )
 
 
@@ -320,7 +315,7 @@ class TestExceptions:
 # core/sm2 — test SM2State / advance / initial_state
 # ---------------------------------------------------------------------------
 
-from gnosis.core.sm2 import SM2State, advance, initial_state, EASINESS_FLOOR, EASINESS_START
+from gnosis.core.sm2 import EASINESS_FLOOR, EASINESS_START, SM2State, advance, initial_state
 
 
 class TestSM2:
@@ -386,6 +381,7 @@ from gnosis.core.namespace import scoped_note_stmt
 class TestNamespace:
     def test_scoped_note_stmt_returns_stmt(self):
         from sqlalchemy import select
+
         from gnosis.models.note import Note
 
         base = select(Note)
@@ -394,6 +390,7 @@ class TestNamespace:
 
     def test_scoped_note_stmt_empty_owner_ids(self):
         from sqlalchemy import select
+
         from gnosis.models.note import Note
 
         base = select(Note)
@@ -527,9 +524,9 @@ class TestLLMProvider:
 from gnosis.services.markdown_parser import (
     build_default_frontmatter,
     extract_wikilinks,
+    generate_note_id,
     parse_note_file,
     write_note_file,
-    generate_note_id,
 )
 
 
@@ -750,11 +747,10 @@ class TestHybridSearch:
 # ---------------------------------------------------------------------------
 
 from gnosis.services.vector_store import (
-    upsert_note,
+    _note_id_to_uuid,
     delete_note,
     ensure_collection,
-    get_qdrant_client,
-    _note_id_to_uuid,
+    upsert_note,
 )
 
 
@@ -993,9 +989,10 @@ class TestVaultSync:
 # ---------------------------------------------------------------------------
 
 from fastapi.testclient import TestClient
-from gnosis.main import app
+
 from gnosis.core.auth import get_current_user, get_vault_owner_ids
 from gnosis.database import get_db
+from gnosis.main import app
 
 
 def _fake_user():

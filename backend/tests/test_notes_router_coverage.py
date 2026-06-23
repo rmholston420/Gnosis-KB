@@ -8,12 +8,14 @@ All other endpoints issue a single execute whose scalars().unique().one_or_none(
 returns None to trigger 404.
 """
 from __future__ import annotations
-from unittest.mock import AsyncMock, MagicMock, call
+
+from unittest.mock import AsyncMock, MagicMock
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from gnosis.core.auth import get_current_user, get_vault_owner_ids
-from gnosis.core.exceptions import NoteNotFoundError
 from gnosis.database import get_db
 from gnosis.models.user import User
 from gnosis.routers.notes import router

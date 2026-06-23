@@ -14,7 +14,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # embeddings.py  —  uses fastembed TextEmbedding, lazy _dense_model global
 # ---------------------------------------------------------------------------

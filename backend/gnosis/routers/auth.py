@@ -18,7 +18,7 @@ from gnosis.core.auth import (
     require_user,
     verify_password,
 )
-from gnosis.core.rate_limit import auth_limit, limiter
+from gnosis.core.rate_limit import auth_limit
 from gnosis.database import get_db
 from gnosis.models.user import User
 from gnosis.schemas.auth import Token, UserCreate, UserRead

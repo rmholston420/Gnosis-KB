@@ -29,16 +29,14 @@ vault.py
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
-
-_NOW = datetime(2026, 6, 22, 22, 0, 0, tzinfo=timezone.utc)
+_NOW = datetime(2026, 6, 22, 22, 0, 0, tzinfo=UTC)
 
 
 # ===========================================================================
@@ -91,8 +89,8 @@ def _notes_app(db_mock):
 
 class TestNotesCreateDailyVaultWriteError:
     def test_create_daily_write_error_returns_500(self, tmp_path):
-        import gnosis.services.markdown_parser as mp_mod
         import gnosis.core.namespace as ns_mod
+        import gnosis.services.markdown_parser as mp_mod
 
         no_note = MagicMock()
         no_note.scalars.return_value.unique.return_value.one_or_none.return_value = None
@@ -219,8 +217,8 @@ class TestQueryRouterUpdateSavedBranches:
 
 class TestUsersSerializeUser:
     def test_serialize_user_fields(self):
-        from gnosis.routers.users import _serialize_user
         from gnosis.models.user import User
+        from gnosis.routers.users import _serialize_user
         u = User(email="a@b.com", hashed_password="x",
                  full_name="Alice", vault_slug="alice",
                  is_superuser=True, is_active=True)
@@ -237,7 +235,7 @@ class TestUsersSerializeGrant:
         grant = MagicMock()
         grant.id = 7; grant.owner_id = 1; grant.member_id = 2
         grant.permission = "read"; grant.is_active = True
-        grant.accepted_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        grant.accepted_at = datetime(2026, 1, 1, tzinfo=UTC)
         result = _serialize_grant(grant, "o@x.com", "My Vault", "m@x.com")
         assert result.id == 7
         assert "2026-01-01" in result.accepted_at
@@ -331,8 +329,8 @@ class TestVaultRunSyncBackground:
     @pytest.mark.asyncio
     async def test_bad_total_line_silently_ignored_lines_92_93(self):
         """Lines 92-93: 'total:notanumber' -> ValueError -> pass."""
-        from gnosis.routers.vault import _run_sync_background, _sync_status
         import gnosis.routers.vault as vm
+        from gnosis.routers.vault import _run_sync_background, _sync_status
 
         async def _fake_sync(user_id):
             yield "synced: note1.md"
@@ -354,8 +352,8 @@ class TestVaultSyncSSEGenerator:
     @pytest.mark.asyncio
     async def test_sync_exception_yields_error_sse_lines_124_125(self):
         """Lines 124-125: RuntimeError mid-iteration -> error SSE token."""
-        from gnosis.routers.vault import _sync_sse_generator, _sync_status
         import gnosis.routers.vault as vm
+        from gnosis.routers.vault import _sync_sse_generator, _sync_status
 
         async def _bad_sync(user_id):
             yield "synced: a.md"

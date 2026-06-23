@@ -11,7 +11,6 @@ get_settings      : () -> Settings  -- lru_cache shim for FastAPI Depends()
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import List, Optional
 
 from pydantic import computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -30,7 +29,7 @@ class Settings(BaseSettings):
     # Vector store
     qdrant_url: str = "http://localhost:6333"
     qdrant_collection: str = "gnosis_notes"
-    qdrant_api_key: Optional[str] = None
+    qdrant_api_key: str | None = None
     qdrant_collection_name: str = "gnosis_notes"
 
     # Vault
@@ -49,7 +48,7 @@ class Settings(BaseSettings):
     auth_required: bool = False
 
     # CORS
-    cors_origins: List[str] = [
+    cors_origins: list[str] = [
         "http://localhost:5273",
         "http://localhost:5173",
         "http://localhost:3000",
@@ -61,9 +60,9 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_llm_model: str = "qwen2.5:14b"
     ollama_embed_model: str = "nomic-embed-text"
-    openai_api_key: Optional[str] = None
-    groq_api_key: Optional[str] = None
-    openrouter_api_key: Optional[str] = None
+    openai_api_key: str | None = None
+    groq_api_key: str | None = None
+    openrouter_api_key: str | None = None
 
     # Application
     log_level: str = "info"

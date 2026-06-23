@@ -9,7 +9,7 @@ Handles:
 """
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +29,7 @@ _renderer = mistune.create_markdown(
 def generate_note_id(dt: datetime | None = None) -> str:
     """Generate a timestamp-based note ID (YYYYMMDD-HHmmss)."""
     if dt is None:
-        dt = datetime.now(timezone.utc)
+        dt = datetime.now(UTC)
     return dt.strftime("%Y%m%d-%H%M%S")
 
 
@@ -104,7 +104,7 @@ def build_default_frontmatter(
     source_url: str | None = None,
 ) -> dict[str, Any]:
     """Build the default YAML frontmatter dict for a new note."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     return {
         "id": note_id,
         "title": title,

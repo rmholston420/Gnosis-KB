@@ -3,7 +3,7 @@
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, JSON, String, Text, func
+from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from gnosis.database import Base
@@ -54,28 +54,28 @@ class Note(Base):
     body_html: Mapped[str] = mapped_column(Text, nullable=False, default="")
     note_type: Mapped[str] = mapped_column(String(50), default="permanent", index=True)
     status: Mapped[str] = mapped_column(String(50), default="draft", index=True)
-    vault_path: Mapped[Optional[str]] = mapped_column(String(1000), unique=True, nullable=True)
-    folder: Mapped[Optional[str]] = mapped_column(String(100), index=True)
-    source_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    vault_path: Mapped[str | None] = mapped_column(String(1000), unique=True, nullable=True)
+    folder: Mapped[str | None] = mapped_column(String(100), index=True)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     word_count: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[Optional[datetime]] = mapped_column(
+    created_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
-    modified_at: Mapped[Optional[datetime]] = mapped_column(
+    modified_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), onupdate=func.now()
     )
-    last_reviewed: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    last_reviewed: Mapped[date | None] = mapped_column(Date, nullable=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
     vector_indexed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     graph_indexed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    frontmatter: Mapped[Optional[dict]] = mapped_column(
+    frontmatter: Mapped[dict | None] = mapped_column(
         JSON().with_variant(JSON(), "sqlite"),
         default=dict,
         nullable=True,
     )
 
     # ---- Multi-user: owner FK ----------------------------------------------
-    owner_id: Mapped[Optional[int]] = mapped_column(
+    owner_id: Mapped[int | None] = mapped_column(
         Integer,
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=True,   # nullable so legacy rows survive; migration backfills admin

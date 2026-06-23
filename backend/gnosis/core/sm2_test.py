@@ -2,9 +2,11 @@
 
 Run with:  pytest backend/gnosis/core/sm2_test.py -v
 """
-import pytest
 from datetime import date, timedelta
-from gnosis.core.sm2 import SM2State, advance, initial_state, EASINESS_FLOOR, EASINESS_START
+
+import pytest
+
+from gnosis.core.sm2 import EASINESS_FLOOR, EASINESS_START, SM2State, advance, initial_state
 
 
 def test_initial_state_due_today():

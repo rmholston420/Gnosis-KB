@@ -17,10 +17,9 @@ from __future__ import annotations
 import io
 import logging
 import re
-import shutil
 import tempfile
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -31,7 +30,7 @@ from gnosis.config import get_settings
 from gnosis.core.auth import get_current_user
 from gnosis.database import get_session
 from gnosis.models.user import User
-from gnosis.services.document_parser import ParsedDocument, detect_format, parse_file
+from gnosis.services.document_parser import ParsedDocument, parse_file
 from gnosis.services.llm_provider import llm_provider
 
 logger = logging.getLogger(__name__)
@@ -98,7 +97,7 @@ class UrlIngestRequest(BaseModel):
 
 def _timestamp_id() -> str:
     """Generate a Gnosis-style timestamp note ID."""
-    return datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M%S")
+    return datetime.now(tz=UTC).strftime("%Y%m%d%H%M%S")
 
 
 def _sanitize_filename(title: str) -> str:
@@ -167,7 +166,7 @@ def _build_literature_note(
     Returns:
         Complete Markdown string with YAML frontmatter.
     """
-    now = datetime.now(tz=timezone.utc).isoformat()
+    now = datetime.now(tz=UTC).isoformat()
     tags_yaml = "[" + ", ".join(tags) + "]"
     truncated = full_text[:8000] + ("..." if len(full_text) > 8000 else "")
 

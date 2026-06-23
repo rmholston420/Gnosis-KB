@@ -26,13 +26,12 @@ search results can be joined back to the DB.
 
 import logging
 import uuid
-from typing import Any, Optional
 
 from qdrant_client import QdrantClient, models
 from qdrant_client.http.exceptions import UnexpectedResponse
 
 from gnosis.config import get_settings
-from gnosis.services.embeddings import embed_dense, embed_colbert
+from gnosis.services.embeddings import embed_colbert, embed_dense
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +41,7 @@ _LEGACY_OWNER_SENTINEL = 0
 # Namespace for UUID v5 derivation — stable across restarts
 _UUID_NS = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")  # uuid.NAMESPACE_DNS
 
-_client: Optional[QdrantClient] = None
+_client: QdrantClient | None = None
 
 
 def _note_id_to_uuid(note_id: str) -> str:
@@ -114,7 +113,7 @@ def ensure_collection() -> None:
 
 def hybrid_search(
     query: str,
-    owner_ids: Optional[set[int]] = None,
+    owner_ids: set[int] | None = None,
     top_k: int = 5,
     include_legacy: bool = True,
 ) -> list[dict]:
@@ -150,7 +149,7 @@ def hybrid_search(
         return []
 
     # Build owner filter
-    filter_condition: Optional[models.Filter] = None
+    filter_condition: models.Filter | None = None
     if owner_ids is not None:
         allowed_ids = list(owner_ids)
         if include_legacy and _LEGACY_OWNER_SENTINEL not in allowed_ids:
@@ -193,7 +192,7 @@ def upsert_note(
     note_type: str,
     status: str,
     tags: list[str],
-    owner_id: Optional[int] = None,
+    owner_id: int | None = None,
 ) -> None:
     """Upsert a note into the Qdrant collection."""
     client = get_qdrant_client()

@@ -25,8 +25,8 @@ from typing import Any
 from qdrant_client import models
 
 from gnosis.config import get_settings
-from gnosis.services.vector_store import get_qdrant_client, _LEGACY_OWNER_SENTINEL
 from gnosis.services.embeddings import embed_dense
+from gnosis.services.vector_store import _LEGACY_OWNER_SENTINEL, get_qdrant_client
 
 logger = logging.getLogger(__name__)
 

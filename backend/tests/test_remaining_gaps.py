@@ -17,7 +17,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ===========================================================================
 # config.py:82  — get_settings() return value
 # ===========================================================================

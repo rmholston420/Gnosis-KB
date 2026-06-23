@@ -22,11 +22,10 @@ Covers (by source line):
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -43,7 +42,7 @@ def _note(note_id="n1", title="Note", body="Body", folder="10-zettelkasten",
     n.status = status
     n.is_deleted = False
     n.owner_id = 1
-    n.created_at = datetime.now(timezone.utc)
+    n.created_at = datetime.now(UTC)
     return n
 
 
@@ -194,8 +193,9 @@ async def test_get_providers_ollama_http_error_falls_back_to_current_model():
 
 @pytest.mark.asyncio
 async def test_set_model_raises_400_when_ollama_not_available():
-    from gnosis.routers.ai import set_model, ModelSwapRequest
     from fastapi import HTTPException
+
+    from gnosis.routers.ai import ModelSwapRequest, set_model
 
     mock_llm = MagicMock()
     mock_llm._available = []
@@ -209,7 +209,7 @@ async def test_set_model_raises_400_when_ollama_not_available():
 
 @pytest.mark.asyncio
 async def test_set_model_falls_back_when_httpx_raises():
-    from gnosis.routers.ai import set_model, ModelSwapRequest
+    from gnosis.routers.ai import ModelSwapRequest, set_model
 
     mock_llm = MagicMock()
     mock_llm._available = ["ollama"]

@@ -24,7 +24,7 @@ user's real ID.  This endpoint:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -72,7 +72,7 @@ async def _reindex_note(
         await db.execute(
             update(Note)
             .where(Note.id == note.id)
-            .values(owner_id=new_owner_id, modified_at=datetime.now(timezone.utc))
+            .values(owner_id=new_owner_id, modified_at=datetime.now(UTC))
         )
         await db.flush()
     except Exception as exc:  # noqa: BLE001

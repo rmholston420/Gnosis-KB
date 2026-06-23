@@ -18,16 +18,18 @@ version is replaced with per-test fixtures so there is zero state leakage
 between test functions.
 """
 
+from datetime import UTC
+
 import pytest
 import pytest_asyncio
-from httpx import AsyncClient, ASGITransport
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from gnosis.core.auth import TokenData, create_access_token
 from gnosis.database import Base, get_db
 from gnosis.main import create_app
 from gnosis.models.note import Note
 from gnosis.models.user import User
-from gnosis.core.auth import create_access_token, TokenData
 
 # ---------------------------------------------------------------------------
 # Per-test engine + app — function scope eliminates all UNIQUE collisions
@@ -88,11 +90,11 @@ async def two_users_and_notes(iso_db: AsyncSession, iso_engine):
     within the same second.
     """
     import time
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     def _uid() -> str:
         """Microsecond-precision ID: YYYYMMDD-HHmmss-ffffff."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         return now.strftime("%Y%m%d-%H%M%S-") + f"{now.microsecond:06d}"
 
     user_a = User(

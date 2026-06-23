@@ -56,8 +56,8 @@ def _get_handler(decorated_fn):
 
 @pytest.mark.asyncio
 async def test_login_valid_credentials_returns_token():
-    from gnosis.routers.auth import login
     from gnosis.core.auth import get_password_hash
+    from gnosis.routers.auth import login
 
     user = MagicMock()
     user.id = 1
@@ -72,8 +72,9 @@ async def test_login_valid_credentials_returns_token():
 @pytest.mark.asyncio
 async def test_login_wrong_password_returns_401():
     from fastapi import HTTPException
-    from gnosis.routers.auth import login
+
     from gnosis.core.auth import get_password_hash
+    from gnosis.routers.auth import login
 
     user = MagicMock()
     user.id = 1
@@ -89,6 +90,7 @@ async def test_login_wrong_password_returns_401():
 @pytest.mark.asyncio
 async def test_login_unknown_user_returns_401():
     from fastapi import HTTPException
+
     from gnosis.routers.auth import login
 
     handler = _get_handler(login)
@@ -119,6 +121,7 @@ async def test_register_new_user_calls_commit():
 @pytest.mark.asyncio
 async def test_register_duplicate_email_returns_400():
     from fastapi import HTTPException
+
     from gnosis.routers.auth import register
 
     existing = MagicMock()

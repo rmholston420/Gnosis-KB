@@ -18,15 +18,13 @@ Qdrant payload filter, and to ``fulltext_search()`` / ``suggest_completions()``
 which use ``scoped_note_stmt`` under the hood.
 """
 
-from typing import Optional
 import logging
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from gnosis.core.auth import get_current_user, get_vault_owner_ids
+from gnosis.core.auth import get_vault_owner_ids
 from gnosis.database import get_db
-from gnosis.models.user import User
 from gnosis.schemas.search import SearchResponse, SearchResult
 from gnosis.services.fts import fulltext_search, suggest_completions
 from gnosis.services.hybrid_search import hybrid_search
@@ -41,9 +39,9 @@ router = APIRouter(prefix="/search", tags=["search"])
 async def search(
     q: str = Query(..., min_length=1),
     limit: int = Query(10, ge=1, le=100),
-    folder: Optional[str] = Query(None),
-    note_type: Optional[str] = Query(None),
-    tags: Optional[list[str]] = Query(None),
+    folder: str | None = Query(None),
+    note_type: str | None = Query(None),
+    tags: list[str] | None = Query(None),
     mode: str = Query("hybrid", pattern="^(hybrid|semantic|fulltext)$"),
     db: AsyncSession = Depends(get_db),
     owner_ids: set[int] = Depends(get_vault_owner_ids),

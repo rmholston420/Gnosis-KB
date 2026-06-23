@@ -13,13 +13,8 @@ so no real filesystem I/O occurs.
 
 from __future__ import annotations
 
-from pathlib import Path
-from unittest.mock import AsyncMock, patch
-import tempfile
-
 import pytest
 from fastapi.testclient import TestClient
-from httpx import AsyncClient
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers

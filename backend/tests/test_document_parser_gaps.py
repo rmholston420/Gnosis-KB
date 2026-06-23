@@ -32,12 +32,10 @@ Uncovered lines
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -253,6 +251,7 @@ class TestParseUrlDecompose:
     @pytest.mark.asyncio
     async def test_parse_url_decomposes_boilerplate_tags(self):
         import httpx
+
         from gnosis.services.document_parser import parse_url
 
         html = (

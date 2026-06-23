@@ -9,11 +9,11 @@ Covers:
 """
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from gnosis.routers.search import search, suggest, _map_results
+import pytest
 
+from gnosis.routers.search import _map_results, search, suggest
 
 _FULLTEXT_PATCH = "gnosis.routers.search.fulltext_search"
 _HYBRID_PATCH   = "gnosis.routers.search.hybrid_search"

@@ -6,14 +6,12 @@ list_orphan_notes, get_or_create_daily_note, _get_note_or_404 error paths.
 """
 from __future__ import annotations
 
-import math
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Fixtures / factories
@@ -40,7 +38,7 @@ def _note(
     is_deleted=False,
 ):
     n = MagicMock()
-    n.id = note_id or f"{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
+    n.id = note_id or f"{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
     n.title = title
     n.slug = slug
     n.body = body
@@ -56,8 +54,8 @@ def _note(
     n.vault_path = f"{folder}/{n.id}-test-note.md"
     n.source_url = None
     n.word_count = len(body.split())
-    n.created_at = datetime.now(timezone.utc)
-    n.modified_at = datetime.now(timezone.utc)
+    n.created_at = datetime.now(UTC)
+    n.modified_at = datetime.now(UTC)
     n.last_reviewed = None
     n.vector_indexed = False
     n.graph_indexed = False
@@ -178,6 +176,7 @@ async def test_get_note_by_title_returns_note():
 @pytest.mark.asyncio
 async def test_get_note_by_title_raises_404_when_missing():
     from fastapi import HTTPException
+
     from gnosis.routers.notes import get_note_by_title
 
     scalars_mock = MagicMock()
@@ -216,6 +215,7 @@ async def test_resolve_wikilink_returns_id_title_slug():
 @pytest.mark.asyncio
 async def test_resolve_wikilink_raises_404_when_missing():
     from fastapi import HTTPException
+
     from gnosis.routers.notes import resolve_wikilink
 
     result_mock = MagicMock()
@@ -384,6 +384,7 @@ async def test_list_orphan_notes_returns_items():
 @pytest.mark.asyncio
 async def test_get_note_or_404_raises_403_for_unowned_note():
     from fastapi import HTTPException
+
     from gnosis.routers.notes import _get_note_or_404
 
     n = _note(owner_id=99)
@@ -400,6 +401,7 @@ async def test_get_note_or_404_raises_403_for_unowned_note():
 @pytest.mark.asyncio
 async def test_get_note_or_404_raises_403_for_zero_owner():
     from fastapi import HTTPException
+
     from gnosis.routers.notes import _get_note_or_404
 
     n = _note(owner_id=0)

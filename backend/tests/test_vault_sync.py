@@ -12,12 +12,10 @@ Lines 345-360 : start_vault_watcher
 """
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -216,8 +214,9 @@ async def test_sync_file_returns_error_on_parse_failure(tmp_path):
 
 @pytest.mark.asyncio
 async def test_sync_file_handles_path_outside_vault(tmp_path):
-    from gnosis.services.vault_sync import _sync_file
     import tempfile
+
+    from gnosis.services.vault_sync import _sync_file
 
     with tempfile.TemporaryDirectory() as other_dir:
         md = Path(other_dir) / "outside.md"
@@ -552,8 +551,8 @@ async def test_handle_upsert_swallows_exception():
 
 @pytest.mark.asyncio
 async def test_handle_delete_soft_deletes_note(tmp_path):
-    from gnosis.services.vault_sync import VaultEventHandler
     import gnosis.services.vault_sync as vs_mod
+    from gnosis.services.vault_sync import VaultEventHandler
     vs_mod._VAULT_PATH = None
 
     handler = VaultEventHandler(owner_id=1)
@@ -583,8 +582,8 @@ async def test_handle_delete_soft_deletes_note(tmp_path):
 
 @pytest.mark.asyncio
 async def test_handle_delete_no_note_does_nothing(tmp_path):
-    from gnosis.services.vault_sync import VaultEventHandler
     import gnosis.services.vault_sync as vs_mod
+    from gnosis.services.vault_sync import VaultEventHandler
     vs_mod._VAULT_PATH = None
 
     handler = VaultEventHandler(owner_id=1)
@@ -608,8 +607,8 @@ async def test_handle_delete_no_note_does_nothing(tmp_path):
 
 @pytest.mark.asyncio
 async def test_handle_delete_vector_failure_is_nonfatal(tmp_path):
-    from gnosis.services.vault_sync import VaultEventHandler
     import gnosis.services.vault_sync as vs_mod
+    from gnosis.services.vault_sync import VaultEventHandler
     vs_mod._VAULT_PATH = None
 
     handler = VaultEventHandler(owner_id=1)

@@ -11,7 +11,6 @@ write — member can also create/edit/delete notes in the owner's vault
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -50,19 +49,19 @@ class SharedVault(Base):
     invited_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
-    accepted_at: Mapped[Optional[datetime]] = mapped_column(
+    accepted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Relationships
-    owner: Mapped["User"] = relationship(
+    owner: Mapped[User] = relationship(
         "User",
         back_populates="shared_vaults_as_owner",
         foreign_keys=[owner_id],
         lazy="selectin",
     )
-    member: Mapped["User"] = relationship(
+    member: Mapped[User] = relationship(
         "User",
         back_populates="shared_vault_memberships",
         foreign_keys=[member_id],

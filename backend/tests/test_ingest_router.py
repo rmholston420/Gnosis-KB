@@ -10,16 +10,13 @@ from __future__ import annotations
 
 import io
 import zipfile
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helper: minimal ParsedDocument stand-in
 # ---------------------------------------------------------------------------
-
 from gnosis.services.document_parser import ParsedDocument
 
 
@@ -156,6 +153,7 @@ async def test_ai_enrich_falls_back_on_malformed_json():
 @pytest.mark.asyncio
 async def test_ingest_file_rejects_missing_filename():
     from fastapi import HTTPException
+
     from gnosis.routers.ingest import ingest_file
     upload = MagicMock()
     upload.filename = ""
@@ -167,6 +165,7 @@ async def test_ingest_file_rejects_missing_filename():
 @pytest.mark.asyncio
 async def test_ingest_file_rejects_unsupported_extension():
     from fastapi import HTTPException
+
     from gnosis.routers.ingest import ingest_file
     upload = MagicMock()
     upload.filename = "archive.zip"
@@ -178,7 +177,8 @@ async def test_ingest_file_rejects_unsupported_extension():
 @pytest.mark.asyncio
 async def test_ingest_file_rejects_oversized_file():
     from fastapi import HTTPException
-    from gnosis.routers.ingest import ingest_file, _MAX_FILE_SIZE
+
+    from gnosis.routers.ingest import _MAX_FILE_SIZE, ingest_file
     upload = MagicMock()
     upload.filename = "big.pdf"
     upload.read = AsyncMock(return_value=b"x" * (_MAX_FILE_SIZE + 2))
@@ -190,6 +190,7 @@ async def test_ingest_file_rejects_oversized_file():
 @pytest.mark.asyncio
 async def test_ingest_file_returns_422_on_parse_error():
     from fastapi import HTTPException
+
     from gnosis.routers.ingest import ingest_file
     upload = MagicMock()
     upload.filename = "broken.pdf"
@@ -231,7 +232,7 @@ async def test_ingest_file_happy_path(tmp_path):
 
 @pytest.mark.asyncio
 async def test_ingest_url_happy_path(tmp_path):
-    from gnosis.routers.ingest import ingest_url, UrlIngestRequest
+    from gnosis.routers.ingest import UrlIngestRequest, ingest_url
     mock_llm = MagicMock()
     mock_llm.is_available = False
 
@@ -256,7 +257,8 @@ async def test_ingest_url_happy_path(tmp_path):
 @pytest.mark.asyncio
 async def test_ingest_url_returns_422_on_scrape_failure():
     from fastapi import HTTPException
-    from gnosis.routers.ingest import ingest_url, UrlIngestRequest
+
+    from gnosis.routers.ingest import UrlIngestRequest, ingest_url
     with (
         patch("gnosis.services.document_parser.parse_url",
               AsyncMock(side_effect=RuntimeError("timeout"))),
@@ -286,6 +288,7 @@ def _make_zip(files: dict[str, bytes]) -> bytes:
 @pytest.mark.asyncio
 async def test_ingest_batch_rejects_non_zip():
     from fastapi import HTTPException
+
     from gnosis.routers.ingest import ingest_batch
     upload = MagicMock()
     upload.filename = "notes.tar.gz"
@@ -298,6 +301,7 @@ async def test_ingest_batch_rejects_non_zip():
 @pytest.mark.asyncio
 async def test_ingest_batch_rejects_bad_zip():
     from fastapi import HTTPException
+
     from gnosis.routers.ingest import ingest_batch
     upload = MagicMock()
     upload.filename = "notes.zip"

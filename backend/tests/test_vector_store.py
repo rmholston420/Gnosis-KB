@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
-import pytest
-
 
 # ---------------------------------------------------------------------------
 # _note_id_to_uuid

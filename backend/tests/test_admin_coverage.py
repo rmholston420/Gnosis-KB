@@ -4,10 +4,13 @@ The /admin/reindex guard is: ``if current_user.id != 1 → 403``.
 Superuser flag is NOT checked.  Tests reflect this.
 """
 from __future__ import annotations
+
 from unittest.mock import AsyncMock, MagicMock
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from gnosis.core.auth import require_user
 from gnosis.database import get_db
 from gnosis.models.user import User

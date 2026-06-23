@@ -1,7 +1,7 @@
 """Note-related Pydantic schemas."""
 
 from datetime import date, datetime
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -13,7 +13,7 @@ class LinkSchema(BaseModel):
     target_id: str
     link_text: str
     link_type: str = "wikilink"
-    context: Optional[str] = None
+    context: str | None = None
 
 
 class NoteBase(BaseModel):
@@ -25,29 +25,29 @@ class NoteBase(BaseModel):
     status: str = Field(default="draft")
     folder: str = Field(default="10-zettelkasten")
     tags: list[str] = Field(default_factory=list)
-    source_url: Optional[str] = None
+    source_url: str | None = None
     frontmatter: dict[str, Any] = Field(default_factory=dict)
-    last_reviewed: Optional[date] = None
+    last_reviewed: date | None = None
 
 
 class NoteCreate(NoteBase):
     """Schema for creating a new note."""
 
-    id: Optional[str] = None  # If None, auto-generated timestamp ID
+    id: str | None = None  # If None, auto-generated timestamp ID
 
 
 class NoteUpdate(BaseModel):
     """Schema for partially updating a note (all fields optional)."""
 
-    title: Optional[str] = Field(default=None, min_length=1, max_length=500)
-    body: Optional[str] = None
-    note_type: Optional[str] = None
-    status: Optional[str] = None
-    folder: Optional[str] = None
-    tags: Optional[list[str]] = None
-    source_url: Optional[str] = None
-    frontmatter: Optional[dict[str, Any]] = None
-    last_reviewed: Optional[date] = None
+    title: str | None = Field(default=None, min_length=1, max_length=500)
+    body: str | None = None
+    note_type: str | None = None
+    status: str | None = None
+    folder: str | None = None
+    tags: list[str] | None = None
+    source_url: str | None = None
+    frontmatter: dict[str, Any] | None = None
+    last_reviewed: date | None = None
 
 
 class NoteRead(BaseModel):
@@ -60,13 +60,13 @@ class NoteRead(BaseModel):
     body_html: str
     note_type: str
     status: str
-    vault_path: Optional[str] = None
+    vault_path: str | None = None
     folder: str
-    source_url: Optional[str] = None
+    source_url: str | None = None
     word_count: int
-    created_at: Optional[datetime] = None
-    modified_at: Optional[datetime] = None
-    last_reviewed: Optional[date] = None
+    created_at: datetime | None = None
+    modified_at: datetime | None = None
+    last_reviewed: date | None = None
     is_deleted: bool
     vector_indexed: bool
     graph_indexed: bool
@@ -88,8 +88,8 @@ class NoteListItem(BaseModel):
     status: str
     folder: str
     word_count: int
-    created_at: Optional[datetime] = None
-    modified_at: Optional[datetime] = None
+    created_at: datetime | None = None
+    modified_at: datetime | None = None
     tags: list[str]
 
     model_config = {"from_attributes": True}

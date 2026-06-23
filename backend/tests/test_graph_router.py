@@ -12,18 +12,18 @@ Key implementation notes
 """
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 from fastapi import HTTPException
 
 from gnosis.routers.graph import (
+    get_clusters,
     get_full_graph,
+    get_graph_stats,
     get_neighborhood,
     get_path,
-    get_clusters,
-    get_graph_stats,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

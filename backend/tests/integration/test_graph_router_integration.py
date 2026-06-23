@@ -21,9 +21,9 @@ picks up the mock:
 """
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # get_path() → 404 when notes are disconnected  (line 171->170)

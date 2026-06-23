@@ -14,11 +14,10 @@ Pure unit tests targeting uncovered arcs in gnosis/routers/ai.py:
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Shared note factory
@@ -42,7 +41,7 @@ def _note(
     n.status = status
     n.is_deleted = False
     n.owner_id = owner_id
-    n.created_at = datetime.now(timezone.utc)
+    n.created_at = datetime.now(UTC)
     return n
 
 

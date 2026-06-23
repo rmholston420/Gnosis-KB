@@ -16,13 +16,11 @@ the test to return a FakeUser with id=2.
 
 from __future__ import annotations
 
-import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from gnosis.models.note import Note
 from gnosis.models.user import User
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -123,15 +121,15 @@ async def test_reindex_forbidden_for_non_admin(
     async_client: AsyncClient, test_db: AsyncSession
 ) -> None:
     """A user with id != 1 receives HTTP 403 Forbidden."""
+    import tempfile
     from dataclasses import dataclass
+    from pathlib import Path
+    from unittest.mock import AsyncMock, patch
+
+    from httpx import ASGITransport
+
     from gnosis.core.auth import require_user
     from gnosis.main import create_app
-    from httpx import ASGITransport
-    from sqlalchemy.ext.asyncio import async_sessionmaker
-    from gnosis.database import get_db
-    from unittest.mock import patch, AsyncMock
-    import tempfile
-    from pathlib import Path
 
     @dataclass
     class _NonAdminUser:

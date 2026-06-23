@@ -1,14 +1,13 @@
 """Tests for routers/admin.py — admin reindex endpoint."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from gnosis.models.note import Note
 from gnosis.models.user import User
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -42,7 +41,7 @@ async def _make_note(
         body_html="<p>legacy body</p>",
         folder="00-inbox",
         owner_id=owner_id,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     db.add(note)
     await db.commit()
@@ -86,12 +85,14 @@ async def test_reindex_fixes_legacy_notes(client, test_db):
 async def test_reindex_requires_admin_user(test_engine, vault_dir):
     """Non-admin user (id != 1) receives 403."""
     from dataclasses import dataclass
+    from unittest.mock import AsyncMock, patch
+
     from httpx import ASGITransport, AsyncClient
     from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from gnosis.core.auth import get_current_user, require_user
     from gnosis.database import get_db
     from gnosis.main import create_app
-    from gnosis.core.auth import require_user, get_current_user
-    from unittest.mock import patch, AsyncMock
 
     @dataclass
     class _NonAdminUser:

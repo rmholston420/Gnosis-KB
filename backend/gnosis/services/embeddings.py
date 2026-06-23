@@ -5,13 +5,12 @@ for Qdrant hybrid search. fastembed runs fully locally — no GPU required.
 """
 
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 # Lazy-loaded models (initialized on first use to avoid slow startup)
-_dense_model: Optional[object] = None
-_colbert_model: Optional[object] = None
+_dense_model: object | None = None
+_colbert_model: object | None = None
 
 
 def get_dense_model() -> object:

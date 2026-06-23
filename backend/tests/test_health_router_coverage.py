@@ -6,11 +6,14 @@ gnosis.routers.health. shutil is imported at the top of health.py,
 so it IS patchable as gnosis.routers.health.shutil.disk_usage.
 """
 from __future__ import annotations
+
 import shutil
 from unittest.mock import AsyncMock, MagicMock, patch
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from gnosis.database import get_db
 from gnosis.routers.health import router
 

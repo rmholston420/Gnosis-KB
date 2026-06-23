@@ -2,12 +2,7 @@
 from __future__ import annotations
 
 import textwrap
-from datetime import datetime, timezone
-from pathlib import Path
-from unittest.mock import patch
-
-import pytest
-
+from datetime import UTC, datetime
 
 # ---------------------------------------------------------------------------
 # generate_note_id
@@ -22,7 +17,7 @@ def test_generate_note_id_format():
 
 def test_generate_note_id_deterministic_with_dt():
     from gnosis.services.markdown_parser import generate_note_id
-    dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=timezone.utc)
+    dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=UTC)
     assert generate_note_id(dt) == "20240115-103045"
 
 
@@ -148,7 +143,7 @@ def test_build_default_frontmatter_custom_values():
 # ---------------------------------------------------------------------------
 
 def test_write_note_file_roundtrip(tmp_path):
-    from gnosis.services.markdown_parser import write_note_file, parse_note_file
+    from gnosis.services.markdown_parser import parse_note_file, write_note_file
     fm = {"id": "20240101-000000", "type": "permanent", "status": "draft", "tags": []}
     path = tmp_path / "output.md"
     write_note_file(path, "Round Trip", "Body content.", fm)

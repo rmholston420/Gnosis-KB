@@ -21,8 +21,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import AsyncGenerator
 from datetime import date
-from typing import AsyncGenerator
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -31,6 +31,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from gnosis.config import get_settings
 from gnosis.core.auth import get_current_user, get_vault_owner_ids
 from gnosis.core.namespace import scoped_note_stmt
 from gnosis.database import get_session
@@ -55,7 +56,6 @@ from gnosis.schemas.ai import (
 from gnosis.services.graph_rag import graph_rag
 from gnosis.services.llm_provider import llm_provider
 from gnosis.services.vector_store import hybrid_search
-from gnosis.config import get_settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ai", tags=["ai"])

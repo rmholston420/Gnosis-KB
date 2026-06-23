@@ -5,12 +5,9 @@ All I/O (DB, filesystem) is mocked so tests run without a real vault or DB.
 """
 from __future__ import annotations
 
-import asyncio
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # _get_vault_path (module-level cache)

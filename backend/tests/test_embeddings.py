@@ -11,8 +11,6 @@ All fastembed model loading is mocked via patch on the module-level getters.
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
-import pytest
-
 
 # ---------------------------------------------------------------------------
 # embed_dense

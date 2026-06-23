@@ -2,9 +2,7 @@
 
 import math
 import uuid
-from datetime import date, datetime, timezone
-from pathlib import Path
-from typing import Optional
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from slugify import slugify
@@ -12,7 +10,7 @@ from sqlalchemy import func, insert, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from gnosis.config import get_settings
+from gnosis.core.auth import get_current_user, get_vault_owner_ids
 from gnosis.core.exceptions import NoteConflictError, NoteNotFoundError, VaultWriteError
 from gnosis.core.namespace import scoped_note_stmt
 from gnosis.database import get_db
@@ -32,7 +30,6 @@ from gnosis.services.markdown_parser import (
     generate_note_id,
     write_note_file,
 )
-from gnosis.core.auth import get_current_user, get_vault_owner_ids
 
 router = APIRouter(prefix="/notes", tags=["notes"])
 
@@ -154,11 +151,11 @@ def _note_to_read(note: Note) -> NoteRead:
 
 @router.get("/", response_model=NoteListResponse, summary="List notes")
 async def list_notes(
-    folder: Optional[str] = Query(None),
-    note_type: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
-    tags: Optional[list[str]] = Query(None),
-    q: Optional[str] = Query(None),
+    folder: str | None = Query(None),
+    note_type: str | None = Query(None),
+    status: str | None = Query(None),
+    tags: list[str] | None = Query(None),
+    q: str | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
@@ -383,7 +380,6 @@ async def list_orphan_notes(
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> list[NoteListItem]:
     """Return notes with no incoming or outgoing wikilinks."""
-    from gnosis.models.link import Link
 
     linked_ids_stmt = select(Link.source_id).union(select(Link.target_id))
     stmt = scoped_note_stmt(
@@ -445,8 +441,8 @@ async def get_or_create_daily_note(
 
     # Create a new daily note
     import mistune
+
     from gnosis.services.markdown_parser import build_default_frontmatter, write_note_file
-    from gnosis.core.namespace import resolve_vault_path
 
     note_id = f"{generate_note_id(datetime.combine(today, datetime.min.time()))}-{uuid.uuid4().hex[:4]}"
     title = f"Daily Note — {today_str}"
@@ -508,7 +504,6 @@ async def update_note(
     current_user: User = Depends(get_current_user),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> NoteRead:
-    from gnosis.core.namespace import resolve_vault_path
     from sqlalchemy import delete
 
     note = await _get_note_or_404(note_id, db, owner_ids)

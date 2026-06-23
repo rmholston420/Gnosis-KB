@@ -13,12 +13,9 @@ Coverage targets (graph_rag.py)
 """
 from __future__ import annotations
 
-import sys
-import importlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helper: build a GraphRAGService with a fake LightRAG instance

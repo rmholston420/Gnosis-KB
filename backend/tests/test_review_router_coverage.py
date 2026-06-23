@@ -9,10 +9,13 @@ enroll_note makes TWO db.execute() calls:
   2. (never reached in the 404 path)
 """
 from __future__ import annotations
+
 from unittest.mock import AsyncMock, MagicMock
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from gnosis.database import get_db
 from gnosis.routers.review import router
 

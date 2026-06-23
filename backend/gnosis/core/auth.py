@@ -32,20 +32,19 @@ router body.  The dependency:
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from gnosis.config import settings
 from gnosis.database import get_db
 from gnosis.models.user import User
-from sqlalchemy import select
 
 ALGORITHM = "HS256"
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -71,9 +70,9 @@ def get_password_hash(plain: str) -> str:
     return pwd_context.hash(plain)
 
 
-def create_access_token(data: TokenData, expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(data: TokenData, expires_delta: timedelta | None = None) -> str:
     """Encode *data* into a signed JWT with configurable expiry."""
-    expire = datetime.now(timezone.utc) + (
+    expire = datetime.now(UTC) + (
         expires_delta or timedelta(minutes=settings.access_token_expire_minutes)
     )
     payload = {"sub": str(data.user_id), "email": data.email, "exp": expire}
@@ -81,9 +80,9 @@ def create_access_token(data: TokenData, expires_delta: Optional[timedelta] = No
 
 
 async def get_current_user(
-    token: Optional[str] = Depends(oauth2_scheme),
+    token: str | None = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),
-) -> Optional[User]:
+) -> User | None:
     """Decode JWT and return the corresponding User row, or None if unauthenticated.
 
     When AUTH_REQUIRED=false (default) this returns a synthetic admin user so
@@ -111,7 +110,7 @@ async def get_current_user(
     return user
 
 
-async def require_user(current: Optional[User] = Depends(get_current_user)) -> User:
+async def require_user(current: User | None = Depends(get_current_user)) -> User:
     """Dependency that raises 401 when no user is resolved."""
     if current is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Login required")

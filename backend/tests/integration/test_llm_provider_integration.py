@@ -16,12 +16,11 @@ Coverage targets (llm_provider.py)
 """
 from __future__ import annotations
 
-import pytest
-import pytest_asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from gnosis.services.llm_provider import LLMProvider
+import pytest
 
+from gnosis.services.llm_provider import LLMProvider
 
 # ---------------------------------------------------------------------------
 # Helpers

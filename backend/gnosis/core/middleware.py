@@ -14,8 +14,8 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from collections.abc import Callable
 from contextvars import ContextVar
-from typing import Callable
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request

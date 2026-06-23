@@ -17,7 +17,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -330,7 +329,7 @@ EXTENSION_MAP: dict[str, str] = {
 }
 
 
-def detect_format(filename: str) -> Optional[str]:
+def detect_format(filename: str) -> str | None:
     """Return the format key for a filename extension, or None if unsupported."""
     ext = Path(filename).suffix.lower()
     return EXTENSION_MAP.get(ext)

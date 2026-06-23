@@ -49,7 +49,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from gnosis.models.note import Note
-from gnosis.models.tag import Tag
 
 # ---------------------------------------------------------------------------
 # Constants

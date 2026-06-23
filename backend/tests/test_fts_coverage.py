@@ -9,12 +9,11 @@ All DB calls are mocked — no real Postgres needed.
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gnosis.services.fts import fulltext_search, suggest_completions
-
 
 _UNSET = object()  # sentinel so tags=None is preserved in mock rows
 
