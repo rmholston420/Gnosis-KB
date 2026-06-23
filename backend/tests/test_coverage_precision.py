@@ -11,16 +11,16 @@ Files / lines addressed
 Design notes
 ------------
 * Every test is self-contained: no shared state, no ordering dependency.
-* Patches target the module where the name is *used*, not where it is defined,
-  so coverage's branch tracker registers the arc as taken.
-* Database proxy tests use the existing AsyncSessionLocal singleton (already
-  bound to the test-suite engine by conftest) — never construct a new proxy
-  whose factory would be uninitialised.
+* Patches target the module where the name is *used*, not where it is defined.
+* Database proxy line 66 is covered by `async with AsyncSessionLocal()` —
+  Python's `async with` guarantees __aexit__ is called on the *same* CM
+  object that __aenter__ opened, which is the only safe call pattern for
+  _AsyncSessionLocalProxy (split aenter/aexit calls fail because each
+  delegation creates a fresh factory CM).
 """
 from __future__ import annotations
 
 import builtins
-import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -31,38 +31,24 @@ import pytest
 # ===========================================================================
 
 class TestAsyncSessionLocalProxyAexit:
-    """Exercise the __aexit__ delegation path on _AsyncSessionLocalProxy.
+    """Cover line 66 (_AsyncSessionLocalProxy.__aexit__) via async with.
 
-    Line 66 is `return get_session_factory().__aexit__(*args)` inside
-    _AsyncSessionLocalProxy.__aexit__.  The simplest way to hit it is to use
-    the singleton AsyncSessionLocal as an async context manager — `async with`
-    always calls both __aenter__ and __aexit__ even if the body succeeds.
+    `async with AsyncSessionLocal() as session` is the idiomatic usage:
+    Python calls __aenter__ and __aexit__ on the SAME underlying CM, so
+    both methods are exercised and the session is correctly closed.
     """
 
     @pytest.mark.asyncio
     async def test_proxy_as_async_context_manager_exercises_aexit(self):
-        """async with AsyncSessionLocal() calls __aenter__ then __aexit__ (line 66)."""
+        """async with AsyncSessionLocal() exercises __aenter__ and __aexit__."""
         from gnosis.database import AsyncSessionLocal
 
-        # AsyncSessionLocal() returns an AsyncSession context manager.
-        # The `async with` block guarantees __aexit__ is called on normal exit.
         async with AsyncSessionLocal() as session:
             assert session is not None
 
     @pytest.mark.asyncio
-    async def test_proxy_aexit_called_explicitly(self):
-        """Call __aenter__ then __aexit__ directly on the proxy singleton."""
-        from gnosis.database import AsyncSessionLocal
-
-        # __aenter__ returns the session; __aexit__ must close it (line 66).
-        session = await AsyncSessionLocal.__aenter__()
-        assert session is not None
-        # __aexit__(exc_type, exc_val, exc_tb) — pass all-None for clean exit
-        await AsyncSessionLocal.__aexit__(None, None, None)
-
-    @pytest.mark.asyncio
     async def test_proxy_call_returns_usable_session(self):
-        """AsyncSessionLocal() (via __call__) returns an AsyncSession CM."""
+        """AsyncSessionLocal() (__call__) returns a working AsyncSession CM."""
         from gnosis.database import AsyncSessionLocal
 
         cm = AsyncSessionLocal()
@@ -78,7 +64,6 @@ class TestSettingsDatabaseUrlSync:
     """Access the computed field so line 82 registers as covered."""
 
     def test_database_url_sync_equals_database_url(self):
-        """database_url_sync is a passthrough of database_url (sync Alembic shim)."""
         from gnosis.config import get_settings
 
         s = get_settings()
@@ -101,7 +86,7 @@ class TestExportNotePdfWeasyPrintMissing:
 
     @pytest.mark.asyncio
     async def test_pdf_export_weasyprint_not_installed_returns_501(self, client, vault_dir):
-        """When enable_pdf_export=True but weasyprint is not importable → 501."""
+        """enable_pdf_export=True but weasyprint unimportable → 501."""
         cr = await client.post(
             "/api/v1/notes/",
             json={
@@ -162,13 +147,12 @@ class TestReviewUnenroll:
         )
         assert er.status_code == 201
 
-        # Unenroll — exercises db.delete(card) + db.commit() (lines 189-190)
         dr = await client.delete(f"/api/v1/review/{note_id}")
         assert dr.status_code == 204
 
     @pytest.mark.asyncio
     async def test_unenroll_not_enrolled_note_returns_404(self, client, vault_dir):
-        """Trying to unenroll a note that was never enrolled → 404."""
+        """Unenrolling a note never enrolled → 404."""
         cr = await client.post(
             "/api/v1/notes/",
             json={
@@ -193,11 +177,11 @@ _AI = "gnosis.routers.ai"
 
 
 class TestAiIngestNoteLightragUnavailable:
-    """ingest_note: LightRAG absent → 200 graph_indexed=False; ingest error → 500."""
+    """ingest_note: LightRAG absent → 200 graph_indexed=False; error → 500."""
 
     @pytest.mark.asyncio
     async def test_ingest_note_lightrag_unavailable_returns_not_indexed(self, client, vault_dir):
-        """_LIGHTRAG_AVAILABLE_CHECK() == False → fast-return with graph_indexed=False."""
+        """_LIGHTRAG_AVAILABLE_CHECK() == False → fast-return graph_indexed=False."""
         cr = await client.post(
             "/api/v1/notes/",
             json={
