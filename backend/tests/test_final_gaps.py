@@ -19,6 +19,7 @@ All HTTP tests use the `async_client` fixture from conftest.py.
 """
 from __future__ import annotations
 
+import logging
 import sys
 import types
 from contextlib import asynccontextmanager
@@ -153,27 +154,23 @@ class TestAsyncSessionLocalProxy:
 # gnosis/main.py  lines 86-88
 # lifespan: graph_rag.initialize(user_id=1) raises -> logger.warning fires.
 #
-# The key technique: engine.begin() must return a real async context manager.
-# We build one via @asynccontextmanager so that `async with engine.begin() as
-# conn` works correctly -- setting __aenter__/__aexit__ as instance attributes
-# on a MagicMock does NOT work because Python's async protocol looks them up
-# on the *type*, not the instance.
+# lifespan is decorated with @asynccontextmanager, so it must be driven with
+# `async with lifespan(app)`, NOT with .__anext__().  We verify the warning
+# branch fired using assertLogs on the "gnosis.main" logger.
 # ---------------------------------------------------------------------------
 
 class TestMainLifespanWarning:
     @pytest.mark.anyio
     async def test_lifespan_graphrag_init_warning(self):
-        """When graph_rag.initialize raises, lifespan logs a warning and continues."""
+        """When graph_rag.initialize raises, lifespan logs a WARNING and continues."""
         from gnosis.main import lifespan
         from fastapi import FastAPI
 
         app = FastAPI()
 
-        # Build a fake async connection whose run_sync is awaitable
         fake_conn = MagicMock()
         fake_conn.run_sync = AsyncMock()
 
-        # Build a proper async context manager for engine.begin()
         @asynccontextmanager
         async def _fake_begin():
             yield fake_conn
@@ -181,7 +178,6 @@ class TestMainLifespanWarning:
         fake_engine = MagicMock()
         fake_engine.begin = _fake_begin
 
-        # Observer for vault watcher shutdown
         mock_obs = MagicMock()
 
         with (
@@ -192,19 +188,72 @@ class TestMainLifespanWarning:
             patch("gnosis.main.graph_rag") as mock_rag,
         ):
             mock_llm.initialize = AsyncMock()
-            # graph_rag.initialize raises -> except branch -> logger.warning (lines 86-88)
             mock_rag.initialize = AsyncMock(side_effect=RuntimeError("no ollama"))
 
-            gen = lifespan(app)
-            await gen.__anext__()      # startup: hits except -> logger.warning
-            try:
-                await gen.__anext__()  # shutdown (after yield)
-            except StopAsyncIteration:
+            # assertLogs captures the warning emitted on lines 86-88
+            with pytest.raises(Exception) if False else _noop_ctx():
                 pass
 
+            import logging as _logging
+            gnosis_logger = _logging.getLogger("gnosis.main")
+
+            with _capture_logs("gnosis.main", level=logging.WARNING) as log_watcher:
+                async with lifespan(app):
+                    # we are now past the yield - startup completed, warning fired
+                    pass
+
+        assert any(
+            "LightRAG warm-up skipped" in msg for msg in log_watcher
+        ), f"Expected warning not found. Captured: {log_watcher}"
         mock_rag.initialize.assert_called_once_with(user_id=1)
         mock_obs.stop.assert_called_once()
         mock_obs.join.assert_called_once()
+
+
+class _noop_ctx:
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+
+
+class _capture_logs:
+    """Minimal context manager that collects log messages for a given logger."""
+
+    def __init__(self, logger_name: str, level: int = logging.WARNING):
+        self._name = logger_name
+        self._level = level
+        self._messages: list[str] = []
+        self._handler: logging.Handler | None = None
+
+    def __enter__(self) -> list[str]:
+        logger = logging.getLogger(self._name)
+        handler = _ListHandler(self._messages)
+        handler.setLevel(self._level)
+        logger.addHandler(handler)
+        # Ensure the logger itself passes messages at this level
+        if logger.level == logging.NOTSET or logger.level > self._level:
+            self._orig_level = logger.level
+            logger.setLevel(self._level)
+        else:
+            self._orig_level = None
+        self._handler = handler
+        return self._messages
+
+    def __exit__(self, *args):
+        logger = logging.getLogger(self._name)
+        if self._handler:
+            logger.removeHandler(self._handler)
+        if self._orig_level is not None:
+            logger.setLevel(self._orig_level)
+        return False
+
+
+class _ListHandler(logging.Handler):
+    def __init__(self, store: list[str]):
+        super().__init__()
+        self._store = store
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self._store.append(self.format(record))
 
 
 # ---------------------------------------------------------------------------
