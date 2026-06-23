@@ -67,7 +67,7 @@ class Note(Base):
     outgoing_links: Mapped[list[Link]] = relationship(
         "Link",
         foreign_keys="Link.source_id",
-        back_populates="source",
+        back_populates="source_note",
         cascade="all, delete-orphan",
         lazy="noload",
     )
@@ -75,7 +75,7 @@ class Note(Base):
     incoming_links: Mapped[list[Link]] = relationship(
         "Link",
         foreign_keys="Link.target_id",
-        back_populates="target",
+        back_populates="target_note",
         cascade="all, delete-orphan",
         lazy="noload",
     )
