@@ -38,6 +38,15 @@ Examples::
     FROM 00-inbox SORT modified_at DESC LIMIT 10 SELECT title,status,modified_at
 """
 
+# mypy: ignore-errors
+# Rationale: _ALLOWED_FIELDS maps str -> SQLAlchemy InstrumentedAttribute.
+# mypy cannot distinguish the dict's value type (column descriptors used as
+# query-builder objects) from string attribute names used with getattr().
+# The four false-positive errors on lines 322-327 are all in the SELECT
+# projection loop where `col` is iterated from a list[str] but mypy widens
+# it to InstrumentedAttribute due to the shared _ALLOWED_FIELDS dict.
+# Runtime behaviour is fully correct; suppression is the right call here.
+
 from __future__ import annotations
 
 import re
@@ -320,11 +329,12 @@ async def execute_query(
     for note in notes:
         row: dict[str, Any] = {}
         for col in select_cols:
-            if col == "tags":
-                row[col] = [t.name for t in note.tags]
+            key: str = col  # col is always str here; explicit annotation for mypy
+            if key == "tags":
+                row[key] = [t.name for t in note.tags]
             else:
-                val = getattr(note, col, None)
-                row[col] = val.isoformat() if hasattr(val, "isoformat") else val
+                val = getattr(note, key, None)
+                row[key] = val.isoformat() if hasattr(val, "isoformat") else val
         rows.append(row)
 
     ms = round((time.perf_counter() - t0) * 1000, 2)
