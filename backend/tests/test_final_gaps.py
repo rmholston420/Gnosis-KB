@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import sys
 import types
+from contextlib import asynccontextmanager
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -28,7 +29,7 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# gnosis/models/tag.py  line 39 — Tag.__repr__
+# gnosis/models/tag.py  line 39 - Tag.__repr__
 # ---------------------------------------------------------------------------
 
 class TestTagRepr:
@@ -39,7 +40,7 @@ class TestTagRepr:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/models/link.py  line 43 — Link.__repr__
+# gnosis/models/link.py  line 43 - Link.__repr__
 # ---------------------------------------------------------------------------
 
 class TestLinkRepr:
@@ -53,7 +54,7 @@ class TestLinkRepr:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/models/review.py  line 57 — ReviewCard.__repr__
+# gnosis/models/review.py  line 57 - ReviewCard.__repr__
 # ---------------------------------------------------------------------------
 
 class TestReviewCardRepr:
@@ -73,7 +74,7 @@ class TestReviewCardRepr:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/models/shared_vault.py  line 74 — SharedVault.can_write property
+# gnosis/models/shared_vault.py  line 74 - SharedVault.can_write property
 # ---------------------------------------------------------------------------
 
 class TestSharedVaultCanWrite:
@@ -94,31 +95,26 @@ class TestSharedVaultCanWrite:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/models/attachment.py  line 36 — Attachment.__repr__
+# gnosis/models/attachment.py  line 36 - Attachment.__repr__
 # ---------------------------------------------------------------------------
 
 class TestAttachmentRepr:
     def test_repr(self):
         from gnosis.models.attachment import Attachment
-        a = Attachment(note_id="note-001", filename="photo.jpg",
-                       original_filename="photo.jpg", file_path="/vault/attachments/photo.jpg")
+        a = Attachment(
+            note_id="note-001",
+            filename="photo.jpg",
+            original_filename="photo.jpg",
+            file_path="/vault/attachments/photo.jpg",
+        )
         r = repr(a)
         assert "photo.jpg" in r
-        # id is None before DB flush — repr still formats cleanly
         assert "Attachment" in r
 
 
 # ---------------------------------------------------------------------------
 # gnosis/database.py  lines 66, 83, 86
 # _AsyncSessionLocalProxy.__call__ / __aenter__ / __aexit__
-#
-# These are exercised by using AsyncSessionLocal directly as:
-#   session = AsyncSessionLocal()          -> __call__ (line 66)
-#   async with AsyncSessionLocal() as s:   -> __aenter__ (line 83)
-#                                          -> __aexit__  (line 86)
-#
-# We must NOT touch the live engine during unit tests, so we patch
-# get_session_factory() to return a fake async_sessionmaker-like object.
 # ---------------------------------------------------------------------------
 
 class TestAsyncSessionLocalProxy:
@@ -141,7 +137,6 @@ class TestAsyncSessionLocalProxy:
         from gnosis.database import AsyncSessionLocal
 
         fake_session = MagicMock()
-        # The factory's __aenter__ must be an AsyncMock returning fake_session
         fake_factory = MagicMock()
         fake_factory.__aenter__ = AsyncMock(return_value=fake_session)
         fake_factory.__aexit__ = AsyncMock(return_value=False)
@@ -158,10 +153,11 @@ class TestAsyncSessionLocalProxy:
 # gnosis/main.py  lines 86-88
 # lifespan: graph_rag.initialize(user_id=1) raises -> logger.warning fires.
 #
-# We invoke create_app()'s lifespan by making a real test HTTP request through
-# an app instance whose lifespan is activated.  However the conftest app skips
-# the full lifespan startup.  Instead we call the lifespan coroutine directly
-# via its async generator interface, patching only graph_rag.initialize.
+# The key technique: engine.begin() must return a real async context manager.
+# We build one via @asynccontextmanager so that `async with engine.begin() as
+# conn` works correctly -- setting __aenter__/__aexit__ as instance attributes
+# on a MagicMock does NOT work because Python's async protocol looks them up
+# on the *type*, not the instance.
 # ---------------------------------------------------------------------------
 
 class TestMainLifespanWarning:
@@ -173,50 +169,47 @@ class TestMainLifespanWarning:
 
         app = FastAPI()
 
-        # Patch every I/O call inside lifespan except graph_rag.initialize
+        # Build a fake async connection whose run_sync is awaitable
+        fake_conn = MagicMock()
+        fake_conn.run_sync = AsyncMock()
+
+        # Build a proper async context manager for engine.begin()
+        @asynccontextmanager
+        async def _fake_begin():
+            yield fake_conn
+
+        fake_engine = MagicMock()
+        fake_engine.begin = _fake_begin
+
+        # Observer for vault watcher shutdown
+        mock_obs = MagicMock()
+
         with (
-            patch("gnosis.main.get_engine") as mock_engine,
+            patch("gnosis.main.get_engine", return_value=fake_engine),
             patch("gnosis.main.llm_provider") as mock_llm,
             patch("gnosis.main.ensure_collection"),
-            patch("gnosis.main.start_vault_watcher") as mock_watcher,
+            patch("gnosis.main.start_vault_watcher", new=AsyncMock(return_value=mock_obs)),
             patch("gnosis.main.graph_rag") as mock_rag,
         ):
-            # Engine: conn.run_sync must be awaitable
-            mock_conn = MagicMock()
-            mock_conn.run_sync = AsyncMock()
-            mock_engine.return_value.begin.return_value.__aenter__ = AsyncMock(
-                return_value=mock_conn
-            )
-            mock_engine.return_value.begin.return_value.__aexit__ = AsyncMock(
-                return_value=False
-            )
-
             mock_llm.initialize = AsyncMock()
-
-            # Observer returned by start_vault_watcher
-            mock_obs = MagicMock()
-            mock_obs.stop = MagicMock()
-            mock_obs.join = MagicMock()
-            mock_watcher.return_value = mock_obs
-
-            # graph_rag.initialize raises — this is the branch we want to cover
+            # graph_rag.initialize raises -> except branch -> logger.warning (lines 86-88)
             mock_rag.initialize = AsyncMock(side_effect=RuntimeError("no ollama"))
 
-            # Drive the async generator through startup and shutdown
             gen = lifespan(app)
-            await gen.__anext__()      # runs startup; hits except -> logger.warning
+            await gen.__anext__()      # startup: hits except -> logger.warning
             try:
-                await gen.__anext__()  # runs shutdown (after yield)
+                await gen.__anext__()  # shutdown (after yield)
             except StopAsyncIteration:
                 pass
 
-        # If we reach here without an unhandled exception, the warning path ran cleanly
         mock_rag.initialize.assert_called_once_with(user_id=1)
+        mock_obs.stop.assert_called_once()
+        mock_obs.join.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py — _parse_json_list  (arcs 138->142, 140-141)
-# Pure unit tests — no DB, no HTTP.
+# gnosis/routers/ai.py - _parse_json_list  (arcs 138->142, 140-141)
+# Pure unit tests - no DB, no HTTP.
 # ---------------------------------------------------------------------------
 
 class TestParseJsonList:
@@ -241,7 +234,7 @@ class TestParseJsonList:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ingest.py  lines 143-144 — _ai_enrich invalid-JSON fallback
+# gnosis/routers/ingest.py  lines 143-144 - _ai_enrich invalid-JSON fallback
 # ---------------------------------------------------------------------------
 
 class TestAiEnrichInvalidJson:
@@ -288,7 +281,7 @@ class TestAiEnrichInvalidJson:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/export.py  line 237 — PDF export note-not-found
+# gnosis/routers/export.py  line 237 - PDF export note-not-found
 # ---------------------------------------------------------------------------
 
 class TestExportPdfNotFound:
@@ -325,7 +318,7 @@ async def _create_note(
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py — suggest_links  (arcs 211->221, 215->221, 243-244)
+# gnosis/routers/ai.py - suggest_links  (arcs 211->221, 215->221, 243-244)
 # ---------------------------------------------------------------------------
 
 class TestSuggestLinksEdgeCases:
@@ -369,7 +362,7 @@ class TestSuggestLinksEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py — critique_note  (arc 343-344)
+# gnosis/routers/ai.py - critique_note  (arc 343-344)
 # ---------------------------------------------------------------------------
 
 class TestCritiqueEdgeCases:
@@ -406,7 +399,7 @@ class TestCritiqueEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py — orphan_audit  (lines 411-412)
+# gnosis/routers/ai.py - orphan_audit  (lines 411-412)
 # ---------------------------------------------------------------------------
 
 class TestOrphanAuditJsonDecodeError:
@@ -423,7 +416,7 @@ class TestOrphanAuditJsonDecodeError:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py — daily_review  (arcs 467->483, 481-482)
+# gnosis/routers/ai.py - daily_review  (arcs 467->483, 481-482)
 # ---------------------------------------------------------------------------
 
 class TestDailyReviewEdgeCases:
@@ -464,7 +457,7 @@ class TestDailyReviewEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py — stream_chat SSE exception path  (arcs 534-535)
+# gnosis/routers/ai.py - stream_chat SSE exception path  (arcs 534-535)
 # ---------------------------------------------------------------------------
 
 class TestStreamChatException:
@@ -484,13 +477,7 @@ class TestStreamChatException:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py — ingest_note LightRAG exception  (arcs 634-635)
-#
-# _LIGHTRAG_AVAILABLE_CHECK is called as _LIGHTRAG_AVAILABLE_CHECK() — it is
-# a regular function, not a coroutine.  patch() replaces it with a MagicMock;
-# when the endpoint does `_LIGHTRAG_AVAILABLE_CHECK()` the MagicMock is called
-# and returns its return_value (True).  graph_rag must also be truthy so the
-# `if not graph_rag or not _LIGHTRAG_AVAILABLE_CHECK():` guard is False.
+# gnosis/routers/ai.py - ingest_note LightRAG exception  (arcs 634-635)
 # ---------------------------------------------------------------------------
 
 class TestIngestNoteException:
@@ -501,8 +488,6 @@ class TestIngestNoteException:
             patch("gnosis.routers.ai.graph_rag") as mock_rag,
             patch("gnosis.routers.ai._LIGHTRAG_AVAILABLE_CHECK") as mock_check,
         ):
-            # graph_rag is truthy (MagicMock is truthy by default)
-            # _LIGHTRAG_AVAILABLE_CHECK() returns True -> guard is False -> try block entered
             mock_check.return_value = True
             mock_rag.ingest_note = AsyncMock(side_effect=RuntimeError("lightrag down"))
             resp = await async_client.post(f"/api/v1/ai/ingest-note/{note_id}")
@@ -511,7 +496,7 @@ class TestIngestNoteException:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py — generate_moc json-decode fallback  (lines 709-710)
+# gnosis/routers/ai.py - generate_moc json-decode fallback  (lines 709-710)
 # ---------------------------------------------------------------------------
 
 class TestGenerateMocJsonDecodeFallback:
