@@ -4,8 +4,8 @@ Endpoints
 ---------
 GET  /api/v1/review/queue          -- notes due today (paginated)
 GET  /api/v1/review/stats          -- queue statistics
-POST /api/v1/review/{note_id}      -- submit a rating and advance the card
 POST /api/v1/review/{note_id}/enroll -- enroll a note into the queue
+POST /api/v1/review/{note_id}      -- submit a rating and advance the card
 DELETE /api/v1/review/{note_id}    -- remove a note from the queue
 """
 
@@ -121,7 +121,8 @@ async def get_stats(db: AsyncSession = Depends(get_db)) -> ReviewStats:
 
 
 # ---------------------------------------------------------------------------
-# POST /{note_id}/enroll
+# POST /{note_id}/enroll  -- MUST be registered before POST /{note_id}
+# so FastAPI does not swallow "/x/enroll" as submit with note_id="x/enroll"
 # ---------------------------------------------------------------------------
 
 @router.post("/{note_id}/enroll", response_model=ReviewCardRead, status_code=status.HTTP_201_CREATED)

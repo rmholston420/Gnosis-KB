@@ -28,8 +28,8 @@ async def _create_note(client, note_id: str, title: str, body: str = "Test body.
 async def _enroll_review_card(client, note_id: str) -> None:
     """Enroll a note into the SM-2 review queue.
 
-    The endpoint is POST /api/v1/review/{note_id}/enroll.
-    ReviewEnroll schema requires note_id in the JSON body too.
+    Endpoint: POST /api/v1/review/{note_id}/enroll
+    ReviewEnroll schema requires note_id in the JSON body.
     """
     resp = await client.post(
         f"/api/v1/review/{note_id}/enroll",
@@ -41,12 +41,11 @@ async def _enroll_review_card(client, note_id: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/config.py  line 82 — get_settings cold-cache return path
+# gnosis/config.py  line 82 -- get_settings cold-cache return path
 # ---------------------------------------------------------------------------
 
 class TestConfigColdCache:
     def test_get_settings_cold_cache_returns_settings(self):
-        """Clear lru_cache so get_settings() executes line 82 (return settings) fresh."""
         from gnosis.config import get_settings, settings
         get_settings.cache_clear()
         try:
@@ -57,7 +56,7 @@ class TestConfigColdCache:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/database.py  line 66 — _AsyncSessionLocalProxy.__call__
+# gnosis/database.py  line 66 -- _AsyncSessionLocalProxy.__call__
 # ---------------------------------------------------------------------------
 
 class TestAsyncSessionLocalProxyCall:
@@ -72,18 +71,19 @@ class TestAsyncSessionLocalProxyCall:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/admin.py  line 95 — non-admin user triggers 403
+# gnosis/routers/admin.py  line 95 -- non-admin user triggers 403
 #
-# Line 95: if current_user.id != 1: raise HTTPException(403)
-#
-# We spin up a dedicated test client whose require_user + get_current_user
-# overrides return a user with id=2, exercising the 403 branch.
+# Spins up an isolated HTTPX client with require_user/get_current_user
+# overridden to return a user with id=2, exercising the 403 branch.
+# Uses the same _mock_start_vault_watcher pattern as conftest so the
+# lifespan completes cleanly.
 # ---------------------------------------------------------------------------
 
 class TestAdminReindexNonAdmin:
-    async def test_reindex_returns_403_for_non_admin(self, test_engine, vault_dir):
+    async def test_reindex_returns_403_for_non_admin(
+        self, test_engine, vault_dir
+    ):
         from dataclasses import dataclass
-        from unittest.mock import AsyncMock, patch
 
         from httpx import ASGITransport, AsyncClient
         from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -106,11 +106,25 @@ class TestAdminReindexNonAdmin:
         async def _non_admin_user():
             return _NonAdmin()
 
-        p1 = patch("gnosis.services.vector_store.ensure_collection", return_value=None)
-        p2 = patch("gnosis.services.vault_sync.start_vault_watcher",
-                   new=AsyncMock(return_value=MagicMock(stop=lambda: None, join=lambda: None)))
-        p3 = patch("gnosis.services.graph_rag.graph_rag.initialize",
-                   new=AsyncMock(return_value=None))
+        class _MockObserver:
+            def stop(self) -> None: ...
+            def join(self) -> None: ...
+
+        async def _mock_watcher(owner_id: int = 1) -> _MockObserver:
+            return _MockObserver()
+
+        p1 = patch(
+            "gnosis.services.vector_store.ensure_collection",
+            return_value=None,
+        )
+        p2 = patch(
+            "gnosis.services.vault_sync.start_vault_watcher",
+            new=_mock_watcher,
+        )
+        p3 = patch(
+            "gnosis.services.graph_rag.graph_rag.initialize",
+            new=AsyncMock(return_value=None),
+        )
 
         with p1, p2, p3:
             from gnosis import config
@@ -118,7 +132,9 @@ class TestAdminReindexNonAdmin:
             settings.vault_path = str(vault_dir)
 
             app = create_app()
-            session_factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+            session_factory = async_sessionmaker(
+                bind=test_engine, expire_on_commit=False
+            )
 
             async def override_get_db():
                 async with session_factory() as session:
@@ -140,7 +156,7 @@ class TestAdminReindexNonAdmin:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py  line 129 — summarize_note LLM unavailable → 503
+# gnosis/routers/ai.py  line 129 -- summarize_note LLM unavailable -> 503
 # ---------------------------------------------------------------------------
 
 class TestSummarizeNoteLlmUnavailable:
@@ -153,7 +169,7 @@ class TestSummarizeNoteLlmUnavailable:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py  138->142 — _parse_json_list bracket+invalid JSON
+# gnosis/routers/ai.py  138->142 -- _parse_json_list bracket+invalid JSON
 # ---------------------------------------------------------------------------
 
 class TestParseJsonListBracketInvalidJson:
@@ -210,7 +226,7 @@ class TestSuggestLinksEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py  lines 297-303 — set_model Ollama unavailable → 400
+# gnosis/routers/ai.py  lines 297-303 -- set_model Ollama unavailable -> 400
 # ---------------------------------------------------------------------------
 
 class TestSetModelOllamaUnavailable:
@@ -225,7 +241,7 @@ class TestSetModelOllamaUnavailable:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py  lines 343-344 — critique_note no JSON braces
+# gnosis/routers/ai.py  lines 343-344 -- critique_note no JSON braces
 # ---------------------------------------------------------------------------
 
 class TestCritiqueNoteNoBraces:
@@ -244,7 +260,7 @@ class TestCritiqueNoteNoBraces:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py  lines 411-412 — orphan_audit no JSON array
+# gnosis/routers/ai.py  lines 411-412 -- orphan_audit no JSON array
 # ---------------------------------------------------------------------------
 
 class TestOrphanAuditNoJsonArray:
@@ -261,7 +277,7 @@ class TestOrphanAuditNoJsonArray:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py  line 450 — daily_review notes exist but no LLM
+# gnosis/routers/ai.py  line 450 -- daily_review notes exist but no LLM
 # ---------------------------------------------------------------------------
 
 class TestDailyReviewNotesButNoLlm:
@@ -283,7 +299,7 @@ class TestDailyReviewNotesButNoLlm:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py  arcs 467->483 — daily_review valid JSON
+# gnosis/routers/ai.py  arcs 467->483 -- daily_review valid JSON
 # ---------------------------------------------------------------------------
 
 class TestDailyReviewValidJson:
@@ -309,7 +325,7 @@ class TestDailyReviewValidJson:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py  arcs 481-482 — daily_review invalid JSON fallback
+# gnosis/routers/ai.py  arcs 481-482 -- daily_review invalid JSON fallback
 # ---------------------------------------------------------------------------
 
 class TestDailyReviewInvalidJson:
@@ -334,7 +350,7 @@ class TestDailyReviewInvalidJson:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py  arcs 634-635 — ingest_note exception → 500
+# gnosis/routers/ai.py  arcs 634-635 -- ingest_note exception -> 500
 # ---------------------------------------------------------------------------
 
 class TestIngestNoteRaises500:
@@ -351,7 +367,7 @@ class TestIngestNoteRaises500:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py  line 670 — _LIGHTRAG_AVAILABLE_CHECK ImportError path
+# gnosis/routers/ai.py  line 670 -- _LIGHTRAG_AVAILABLE_CHECK ImportError path
 # ---------------------------------------------------------------------------
 
 class TestLightragAvailableCheckFalse:
@@ -363,7 +379,7 @@ class TestLightragAvailableCheckFalse:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/ai.py  lines 709-710 — generate_moc JSON decode error
+# gnosis/routers/ai.py  lines 709-710 -- generate_moc JSON decode error
 # ---------------------------------------------------------------------------
 
 class TestGenerateMocJsonDecodeError:
@@ -387,7 +403,7 @@ class TestGenerateMocJsonDecodeError:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/export.py  line 237 — export_note_pdf note not found → 404
+# gnosis/routers/export.py  line 237 -- export_note_pdf note not found -> 404
 # ---------------------------------------------------------------------------
 
 class TestExportPdfNoteNotFound:
@@ -405,7 +421,7 @@ class TestExportPdfNoteNotFound:
 
 
 # ---------------------------------------------------------------------------
-# gnosis/routers/notes.py  lines 54-57 — body_snippet truncation
+# gnosis/routers/notes.py  lines 54-57 -- body_snippet truncation
 # ---------------------------------------------------------------------------
 
 class TestNoteBodySnippet:
@@ -422,8 +438,7 @@ class TestNoteBodySnippet:
 
 # ---------------------------------------------------------------------------
 # gnosis/routers/review.py  lines 146-154, 157
-# submit_review — ReviewCard not found → 404
-# The submit endpoint is POST /{note_id} (no /submit suffix).
+# submit_review -- ReviewCard not found -> 404
 # ---------------------------------------------------------------------------
 
 class TestSubmitReviewNotFound:
@@ -437,7 +452,7 @@ class TestSubmitReviewNotFound:
 
 # ---------------------------------------------------------------------------
 # gnosis/routers/review.py  lines 188-189
-# delete_review_card — ReviewCard not found → 404
+# unenroll_note -- ReviewCard not found -> 404
 # ---------------------------------------------------------------------------
 
 class TestDeleteReviewCardNotFound:
@@ -448,7 +463,9 @@ class TestDeleteReviewCardNotFound:
 
 # ---------------------------------------------------------------------------
 # gnosis/routers/review.py  lines 146-154 (full submit path)
-# submit_review — happy path: enroll then POST /{note_id} to advance SM-2
+# Enroll a note then POST /{note_id} to advance SM-2 state.
+# The enroll route MUST be registered before the submit route in review.py
+# so FastAPI does not match "/x/enroll" as submit with note_id="x/enroll".
 # ---------------------------------------------------------------------------
 
 class TestSubmitReviewHappyPath:
@@ -457,7 +474,6 @@ class TestSubmitReviewHappyPath:
             async_client, "rev-submit-001", "Review Submit Note"
         )
         await _enroll_review_card(async_client, note_id)
-        # Submit endpoint: POST /api/v1/review/{note_id}
         resp = await async_client.post(
             f"/api/v1/review/{note_id}",
             json={"quality": 4},
