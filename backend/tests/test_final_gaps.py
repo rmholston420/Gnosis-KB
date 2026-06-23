@@ -132,7 +132,6 @@ class TestAsyncSessionLocalProxy:
         fake_factory.assert_called_once()
         assert result is fake_session
 
-    @pytest.mark.anyio
     async def test_aenter_aexit(self):
         """__aenter__ (line 83) and __aexit__ (line 86): async context manager path."""
         from gnosis.database import AsyncSessionLocal
@@ -160,10 +159,14 @@ class TestAsyncSessionLocalProxy:
 #   - patch graph_rag.initialize to raise RuntimeError.
 #   - assert the WARNING log is emitted and shutdown hooks are called.
 #   - ALL assertions live INSIDE the patch context so mocks are still active.
+#
+# NOTE: No @pytest.mark.anyio here. The project uses pytest-asyncio with
+# asyncio_mode = "auto", so async test methods run automatically.
+# Using @pytest.mark.anyio would cause pytest-anyio to parametrize the test
+# over [asyncio, trio], which is NOT what we want.
 # ---------------------------------------------------------------------------
 
 class TestMainLifespanWarning:
-    @pytest.mark.anyio
     async def test_lifespan_graphrag_init_warning(self):
         """When graph_rag.initialize raises, lifespan logs a WARNING and continues."""
         from gnosis.main import lifespan
@@ -173,8 +176,6 @@ class TestMainLifespanWarning:
 
         # Build a real async context manager for engine.begin() so that
         # `async with get_engine().begin() as conn` works correctly.
-        # fake_engine.begin is a callable that returns an AsyncContextManager
-        # when invoked — matching how SQLAlchemy's engine.begin() works.
         fake_conn = MagicMock()
         fake_conn.run_sync = AsyncMock()
 
@@ -243,7 +244,6 @@ class TestParseJsonList:
 # ---------------------------------------------------------------------------
 
 class TestAiEnrichInvalidJson:
-    @pytest.mark.anyio
     async def test_ai_enrich_brace_match_invalid_json_fallback(self):
         from gnosis.routers.ingest import _ai_enrich
         from gnosis.services.document_parser import ParsedDocument
@@ -264,7 +264,6 @@ class TestAiEnrichInvalidJson:
         assert summary == parsed.text[:500]
         assert tags == []
 
-    @pytest.mark.anyio
     async def test_ai_enrich_no_brace_match_fallback(self):
         from gnosis.routers.ingest import _ai_enrich
         from gnosis.services.document_parser import ParsedDocument
@@ -290,7 +289,6 @@ class TestAiEnrichInvalidJson:
 # ---------------------------------------------------------------------------
 
 class TestExportPdfNotFound:
-    @pytest.mark.anyio
     async def test_export_pdf_note_not_found(self, async_client):
         fake_wp = types.ModuleType("weasyprint")
         fake_wp.HTML = MagicMock()
@@ -327,7 +325,6 @@ async def _create_note(
 # ---------------------------------------------------------------------------
 
 class TestSuggestLinksEdgeCases:
-    @pytest.mark.anyio
     async def test_suggest_links_no_brackets(self, async_client):
         note_id = await _create_note(async_client, "sl-no-brackets", "SL No Brackets")
         with patch("gnosis.routers.ai.llm_provider") as mock_llm:
@@ -339,7 +336,6 @@ class TestSuggestLinksEdgeCases:
         assert data["suggestions"] == []
         assert data["rationale"] == []
 
-    @pytest.mark.anyio
     async def test_suggest_links_first_array_invalid_json(self, async_client):
         note_id = await _create_note(async_client, "sl-bad-first", "SL Bad First Array")
         with patch("gnosis.routers.ai.llm_provider") as mock_llm:
@@ -352,7 +348,6 @@ class TestSuggestLinksEdgeCases:
         assert isinstance(resp.json()["suggestions"], list)
         assert resp.json()["rationale"] == []
 
-    @pytest.mark.anyio
     async def test_suggest_links_invalid_rationale_json(self, async_client):
         note_id = await _create_note(async_client, "sl-bad-rationale", "SL Bad Rationale")
         with patch("gnosis.routers.ai.llm_provider") as mock_llm:
@@ -371,7 +366,6 @@ class TestSuggestLinksEdgeCases:
 # ---------------------------------------------------------------------------
 
 class TestCritiqueEdgeCases:
-    @pytest.mark.anyio
     async def test_critique_no_json(self, async_client):
         note_id = await _create_note(async_client, "crit-no-json", "Critique No JSON")
         with patch("gnosis.routers.ai.llm_provider") as mock_llm:
@@ -386,7 +380,6 @@ class TestCritiqueEdgeCases:
         assert data["connectivity"] == ""
         assert data["overall"] == ""
 
-    @pytest.mark.anyio
     async def test_critique_invalid_json_braces(self, async_client):
         note_id = await _create_note(async_client, "crit-bad-json", "Critique Bad JSON")
         with patch("gnosis.routers.ai.llm_provider") as mock_llm:
@@ -408,7 +401,6 @@ class TestCritiqueEdgeCases:
 # ---------------------------------------------------------------------------
 
 class TestOrphanAuditJsonDecodeError:
-    @pytest.mark.anyio
     async def test_orphan_audit_invalid_json(self, async_client):
         with patch("gnosis.routers.ai.llm_provider") as mock_llm:
             mock_llm.is_available = True
@@ -425,7 +417,6 @@ class TestOrphanAuditJsonDecodeError:
 # ---------------------------------------------------------------------------
 
 class TestDailyReviewEdgeCases:
-    @pytest.mark.anyio
     async def test_daily_review_no_notes_today(self, async_client):
         resp = await async_client.post("/api/v1/ai/daily-review")
         assert resp.status_code == 200
@@ -433,7 +424,6 @@ class TestDailyReviewEdgeCases:
         assert isinstance(data["summary"], str)
         assert isinstance(data["action_items"], list)
 
-    @pytest.mark.anyio
     async def test_daily_review_invalid_json(self, async_client):
         import datetime
         today = datetime.date.today().isoformat()
@@ -466,7 +456,6 @@ class TestDailyReviewEdgeCases:
 # ---------------------------------------------------------------------------
 
 class TestStreamChatException:
-    @pytest.mark.anyio
     async def test_stream_chat_sse_exception_path(self, async_client):
         with (
             patch("gnosis.routers.ai.graph_rag") as mock_rag,
@@ -486,7 +475,6 @@ class TestStreamChatException:
 # ---------------------------------------------------------------------------
 
 class TestIngestNoteException:
-    @pytest.mark.anyio
     async def test_ingest_note_lightrag_raises(self, async_client):
         note_id = await _create_note(async_client, "ingest-exc-001", "Ingest Exception Note")
         with (
@@ -505,7 +493,6 @@ class TestIngestNoteException:
 # ---------------------------------------------------------------------------
 
 class TestGenerateMocJsonDecodeFallback:
-    @pytest.mark.anyio
     async def test_generate_moc_invalid_json_sections(self, async_client):
         for i in range(3):
             await _create_note(
