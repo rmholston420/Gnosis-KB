@@ -6,6 +6,7 @@ Multi-provider LLM service with three-tier auto-fallback:
 
 All providers share the OpenAI-compatible API surface.
 """
+
 from __future__ import annotations
 
 import logging

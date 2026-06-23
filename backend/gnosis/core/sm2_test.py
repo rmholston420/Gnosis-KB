@@ -2,6 +2,7 @@
 
 Run with:  pytest backend/gnosis/core/sm2_test.py -v
 """
+
 from datetime import date, timedelta
 
 import pytest

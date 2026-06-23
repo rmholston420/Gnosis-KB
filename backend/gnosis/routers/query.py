@@ -26,6 +26,7 @@ GQL syntax examples::
     WHERE tags CONTAINS eeg SORT created_at DESC
     FROM 00-inbox SORT modified_at DESC SELECT title,status,modified_at
 """
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -52,6 +53,7 @@ router = APIRouter(prefix="/query", tags=["query"])
 # One-off query execution
 # ---------------------------------------------------------------------------
 
+
 @router.post("/run", response_model=QueryResult, summary="Execute a GQL query")
 async def run_query(
     payload: QueryRun,
@@ -72,6 +74,7 @@ async def run_query(
 # Saved dashboards CRUD
 # ---------------------------------------------------------------------------
 
+
 @router.get("/saved", response_model=list[SavedQueryRead], summary="List saved dashboards")
 async def list_saved(
     db: AsyncSession = Depends(get_db),
@@ -79,9 +82,7 @@ async def list_saved(
 ) -> list[SavedQuery]:
     """Return saved dashboards owned by the current user, ordered by name."""
     result = await db.execute(
-        select(SavedQuery)
-        .where(SavedQuery.owner_id == current_user.id)
-        .order_by(SavedQuery.name)
+        select(SavedQuery).where(SavedQuery.owner_id == current_user.id).order_by(SavedQuery.name)
     )
     return list(result.scalars().all())
 
@@ -210,6 +211,8 @@ async def run_saved(
     try:
         parsed = parse_query(sq.query)
     except GQLParseError as exc:
-        raise HTTPException(status_code=422, detail=f"Saved query has invalid syntax: {exc}") from exc
+        raise HTTPException(
+            status_code=422, detail=f"Saved query has invalid syntax: {exc}"
+        ) from exc
     rows, ms = await execute_query(parsed, db, owner_ids=owner_ids)
     return QueryResult(rows=rows, total=len(rows), query_time_ms=ms)

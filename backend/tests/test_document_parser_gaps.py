@@ -29,6 +29,7 @@ Uncovered lines
   235-236  : except ImportError -> raise (pytesseract absent)
   287      : tag.decompose() loop body
 """
+
 from __future__ import annotations
 
 import sys
@@ -41,8 +42,10 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 class _BlockImport:
     """Context manager: makes `import <name>` raise ImportError."""
+
     def __init__(self, name: str):
         self._name = name
         self._saved = None
@@ -82,9 +85,11 @@ def _restore_module(snapshot: dict):
 # parse_pdf -- line 61: for-page loop body
 # ---------------------------------------------------------------------------
 
+
 class TestParsePdfLoop:
     def test_parse_pdf_iterates_pages(self, tmp_path):
         from gnosis.services.document_parser import parse_pdf
+
         pdf = tmp_path / "test.pdf"
         pdf.write_bytes(b"%PDF-1.4 fake")
         mock_page = MagicMock()
@@ -108,12 +113,14 @@ class TestParsePdfLoop:
         with _BlockImport("fitz"):
             with pytest.raises(RuntimeError, match="PyMuPDF"):
                 from gnosis.services.document_parser import parse_pdf
+
                 parse_pdf(pdf)
 
 
 # ---------------------------------------------------------------------------
 # parse_docx -- lines 97-98
 # ---------------------------------------------------------------------------
+
 
 class TestParseDocxImportError:
     def test_parse_docx_no_docx_raises(self, tmp_path):
@@ -122,12 +129,14 @@ class TestParseDocxImportError:
         with _BlockImport("docx"):
             with pytest.raises(RuntimeError, match="python-docx"):
                 from gnosis.services.document_parser import parse_docx
+
                 parse_docx(docx)
 
 
 # ---------------------------------------------------------------------------
 # parse_pptx -- lines 133-134 + branch arcs 143->142, 145->140
 # ---------------------------------------------------------------------------
+
 
 class TestParsePptxImportError:
     def test_parse_pptx_no_pptx_raises(self, tmp_path):
@@ -136,6 +145,7 @@ class TestParsePptxImportError:
         with _BlockImport("pptx"):
             with pytest.raises(RuntimeError, match="python-pptx"):
                 from gnosis.services.document_parser import parse_pptx
+
                 parse_pptx(pptx_file)
 
 
@@ -163,6 +173,7 @@ class TestParsePptxBranchArcs:
 
     def test_parse_pptx_shape_without_text_attr(self, tmp_path):
         from gnosis.services.document_parser import parse_pptx
+
         pptx_file = tmp_path / "deck.pptx"
         pptx_file.write_bytes(b"PK fake")
         fake_mod, _ = self._fake_pptx_module([[(False, "")]])
@@ -175,6 +186,7 @@ class TestParsePptxBranchArcs:
 
     def test_parse_pptx_shape_with_empty_text(self, tmp_path):
         from gnosis.services.document_parser import parse_pptx
+
         pptx_file = tmp_path / "deck.pptx"
         pptx_file.write_bytes(b"PK fake")
         fake_mod, _ = self._fake_pptx_module([[(True, "   ")]])
@@ -187,12 +199,15 @@ class TestParsePptxBranchArcs:
 
     def test_parse_pptx_slide_with_no_text_shapes(self, tmp_path):
         from gnosis.services.document_parser import parse_pptx
+
         pptx_file = tmp_path / "deck.pptx"
         pptx_file.write_bytes(b"PK fake")
-        fake_mod, _ = self._fake_pptx_module([
-            [(False, "")],
-            [(True, "Real content")],
-        ])
+        fake_mod, _ = self._fake_pptx_module(
+            [
+                [(False, "")],
+                [(True, "Real content")],
+            ]
+        )
         snap = _inject_module("pptx", fake_mod)
         try:
             result = parse_pptx(pptx_file)
@@ -207,6 +222,7 @@ class TestParsePptxBranchArcs:
 # parse_xlsx -- lines 177-178
 # ---------------------------------------------------------------------------
 
+
 class TestParseXlsxImportError:
     def test_parse_xlsx_no_openpyxl_raises(self, tmp_path):
         xlsx = tmp_path / "test.xlsx"
@@ -214,12 +230,14 @@ class TestParseXlsxImportError:
         with _BlockImport("openpyxl"):
             with pytest.raises(RuntimeError, match="openpyxl"):
                 from gnosis.services.document_parser import parse_xlsx
+
                 parse_xlsx(xlsx)
 
 
 # ---------------------------------------------------------------------------
 # parse_image -- lines 235-236
 # ---------------------------------------------------------------------------
+
 
 class TestParseImageImportError:
     def test_parse_image_no_pytesseract_raises(self, tmp_path):
@@ -228,12 +246,14 @@ class TestParseImageImportError:
         with _BlockImport("pytesseract"):
             with pytest.raises(RuntimeError, match="pytesseract"):
                 from gnosis.services.document_parser import parse_image
+
                 parse_image(img)
 
 
 # ---------------------------------------------------------------------------
 # parse_url -- line 287: tag.decompose() loop body
 # ---------------------------------------------------------------------------
+
 
 class TestParseUrlDecompose:
     """
@@ -279,9 +299,7 @@ class TestParseUrlDecompose:
 
         mock_soup = MagicMock()
         mock_soup.find.side_effect = lambda *a, **kw: (
-            title_tag if a and a[0] == "title" else
-            main_tag  if a and a[0] == "main" else
-            None
+            title_tag if a and a[0] == "title" else main_tag if a and a[0] == "main" else None
         )
         mock_soup.find_all.return_value = [boilerplate_tag, boilerplate_tag]
 

@@ -22,6 +22,7 @@ def get_dense_model() -> object:
     if _dense_model is None:
         try:
             from fastembed import TextEmbedding  # type: ignore[import-untyped]
+
             _dense_model = TextEmbedding(model_name="BAAI/bge-base-en-v1.5")
             logger.info("Dense embedding model loaded: BAAI/bge-base-en-v1.5")
         except Exception as e:
@@ -39,6 +40,7 @@ def get_colbert_model() -> object:
     if _colbert_model is None:
         try:
             from fastembed import LateInteractionTextEmbedding  # type: ignore[import-untyped]
+
             _colbert_model = LateInteractionTextEmbedding(model_name="colbert-ir/colbertv2.0")
             logger.info("ColBERT model loaded: colbertv2.0")
         except Exception as e:

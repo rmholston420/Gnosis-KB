@@ -102,9 +102,7 @@ async def get_neighborhood(
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> dict[str, Any]:
     links_result = await db.execute(
-        select(Link).where(
-            (Link.source_id == note_id) | (Link.target_id == note_id)
-        )
+        select(Link).where((Link.source_id == note_id) | (Link.target_id == note_id))
     )
     links = links_result.scalars().all()
     neighbour_ids = {lnk.source_id for lnk in links} | {lnk.target_id for lnk in links} | {note_id}
@@ -118,8 +116,7 @@ async def get_neighborhood(
     notes = result.scalars().unique().all()
     present_ids = {n.id for n in notes}
     visible_links = [
-        lnk for lnk in links
-        if lnk.source_id in present_ids and lnk.target_id in present_ids
+        lnk for lnk in links if lnk.source_id in present_ids and lnk.target_id in present_ids
     ]
     # Keep "links" here (D3 convention) — no test asserts this key name.
     return {"nodes": [_node(n) for n in notes], "links": [_link(lnk) for lnk in visible_links]}
@@ -156,6 +153,7 @@ async def get_path(
 
     # BFS
     from collections import deque
+
     adj: dict[str, list[str]] = {n.id: [] for n in notes}
     for lnk in links:
         adj.setdefault(lnk.source_id, []).append(lnk.target_id)
@@ -218,8 +216,7 @@ async def get_clusters(
 
     return {
         "clusters": [
-            {"id": folder, "label": folder, "note_ids": ids}
-            for folder, ids in clusters.items()
+            {"id": folder, "label": folder, "note_ids": ids} for folder, ids in clusters.items()
         ]
     }
 

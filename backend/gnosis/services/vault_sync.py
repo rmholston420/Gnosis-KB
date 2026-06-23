@@ -155,9 +155,7 @@ async def _sync_file(path: Path, owner_id: int, db_session: object) -> str:
             tag = Tag(name=tag_name)
             db.add(tag)
             await db.flush()
-        await db.execute(
-            NoteTag.insert().values(note_id=note_id, tag_id=tag_name)
-        )
+        await db.execute(NoteTag.insert().values(note_id=note_id, tag_id=tag_name))
 
     # Sync wikilinks
     wikilinks = WIKILINK_RE.findall(body)
@@ -316,9 +314,7 @@ class VaultEventHandler(FileSystemEventHandler):
 
         async with AsyncSessionFactory() as db:
             db_session: AsyncSession = db
-            result = await db_session.execute(
-                select(Note).where(Note.vault_path == rel_path)
-            )
+            result = await db_session.execute(select(Note).where(Note.vault_path == rel_path))
             note = result.scalar_one_or_none()
             if note:
                 note.is_deleted = True

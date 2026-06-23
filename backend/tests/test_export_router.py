@@ -4,6 +4,7 @@ Covers: _iso, _note_to_markdown, _note_to_dict, _fetch_user_notes,
 export_vault (markdown + json), export_vault_zip, export_note_md
 (found + 404), export_note_pdf (disabled + no weasyprint).
 """
+
 from __future__ import annotations
 
 import json
@@ -16,6 +17,7 @@ import pytest
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _tag(name="zettelkasten"):
     t = MagicMock()
@@ -58,29 +60,35 @@ def _db_notes(notes):
 # Pure helpers
 # ---------------------------------------------------------------------------
 
+
 def test_iso_datetime():
     from gnosis.routers.export import _iso
+
     dt = datetime(2025, 1, 15, 12, 0, 0, tzinfo=UTC)
     assert "2025-01-15" in _iso(dt)
 
 
 def test_iso_date():
     from gnosis.routers.export import _iso
+
     assert _iso(date(2025, 3, 5)) == "2025-03-05"
 
 
 def test_iso_none_returns_empty_string():
     from gnosis.routers.export import _iso
+
     assert _iso(None) == ""
 
 
 def test_iso_string_passthrough():
     from gnosis.routers.export import _iso
+
     assert _iso("2025-01-01") == "2025-01-01"
 
 
 def test_note_to_markdown_contains_frontmatter():
     from gnosis.routers.export import _note_to_markdown
+
     note = _note()
     md = _note_to_markdown(note)
     assert "---" in md
@@ -91,6 +99,7 @@ def test_note_to_markdown_contains_frontmatter():
 
 def test_note_to_dict_structure():
     from gnosis.routers.export import _note_to_dict
+
     note = _note()
     d = _note_to_dict(note)
     assert d["id"] == "n1"
@@ -103,9 +112,11 @@ def test_note_to_dict_structure():
 # _fetch_user_notes
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_fetch_user_notes_returns_list():
     from gnosis.routers.export import _fetch_user_notes
+
     note = _note()
     db = _db_notes([note])
     result = await _fetch_user_notes(db, owner_id=1)
@@ -116,9 +127,11 @@ async def test_fetch_user_notes_returns_list():
 # GET /export/?format=markdown
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_export_vault_markdown_returns_zip():
     from gnosis.routers.export import export_vault
+
     note = _note()
     db = _db_notes([note])
 
@@ -138,6 +151,7 @@ async def test_export_vault_markdown_returns_zip():
 @pytest.mark.asyncio
 async def test_export_vault_json_returns_array():
     from gnosis.routers.export import export_vault
+
     note = _note()
     db = _db_notes([note])
 
@@ -151,9 +165,11 @@ async def test_export_vault_json_returns_array():
 # GET /export/vault.zip
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_export_vault_zip_streams_zip():
     from gnosis.routers.export import export_vault_zip
+
     note = _note()
     db = _db_notes([note])
 
@@ -171,9 +187,11 @@ async def test_export_vault_zip_streams_zip():
 # GET /export/note/{id}.md
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_export_note_md_returns_content():
     from gnosis.routers.export import export_note_md
+
     note = _note()
     db = _db_notes([note])
 
@@ -188,6 +206,7 @@ async def test_export_note_md_returns_404_when_missing():
     from fastapi import HTTPException
 
     from gnosis.routers.export import export_note_md
+
     db = _db_notes([])
 
     with pytest.raises(HTTPException) as exc_info:
@@ -198,6 +217,7 @@ async def test_export_note_md_returns_404_when_missing():
 # ---------------------------------------------------------------------------
 # GET /export/note/{id}.pdf
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_export_note_pdf_returns_501_when_disabled():
@@ -228,6 +248,7 @@ async def test_export_note_pdf_returns_501_when_weasyprint_missing():
     with patch("gnosis.routers.export.settings") as mock_settings:
         mock_settings.enable_pdf_export = True
         import sys
+
         # Temporarily remove weasyprint from sys.modules if present
         weasyprint_backup = sys.modules.pop("weasyprint", None)
         try:

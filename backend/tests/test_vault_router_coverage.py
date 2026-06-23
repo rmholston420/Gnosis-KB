@@ -6,6 +6,7 @@ Actual router:
 
 Dependency used: get_current_user (NOT require_user, NOT get_db).
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
@@ -44,6 +45,7 @@ def _make_app(user: User | None = None) -> FastAPI:
 # POST /vault/sync  (background mode, default)
 # ---------------------------------------------------------------------------
 
+
 def test_vault_sync_background_returns_202():
     """POST /vault/sync without stream=true returns 202."""
     with patch("gnosis.routers.vault._run_sync_background", new_callable=AsyncMock):
@@ -57,6 +59,7 @@ def test_vault_sync_background_returns_202():
 
 def test_vault_sync_stream_returns_200():
     """POST /vault/sync?stream=true returns 200 with text/event-stream."""
+
     async def _fake_sse(user_id: int):
         yield "data: synced: 00-inbox/note.md\n\n"
         yield "data: [done]\n\n"
@@ -71,9 +74,11 @@ def test_vault_sync_stream_returns_200():
 # GET /vault/sync/status
 # ---------------------------------------------------------------------------
 
+
 def test_vault_sync_status_idle():
     """GET /vault/sync/status returns idle when no sync has run."""
     import gnosis.routers.vault as vault_router
+
     # Ensure no status entry for user 1
     vault_router._sync_status.pop(1, None)
 
@@ -88,6 +93,7 @@ def test_vault_sync_status_running():
     import time
 
     import gnosis.routers.vault as vault_router
+
     vault_router._sync_status[1] = {
         "state": "running",
         "started": time.time(),
@@ -109,6 +115,7 @@ def test_vault_sync_status_done():
     import time
 
     import gnosis.routers.vault as vault_router
+
     vault_router._sync_status[1] = {
         "state": "done",
         "started": time.time() - 5,

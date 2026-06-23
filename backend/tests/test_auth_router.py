@@ -5,6 +5,7 @@ slowapi's @auth_limit decorator wraps the function but still exposes the
 original coroutine via the closure — we extract it with inspect rather than
 reloading the module.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -41,6 +42,7 @@ def _get_handler(decorated_fn):
     function.  Walk the chain until we find a plain coroutinefunction.
     """
     import inspect
+
     fn = decorated_fn
     while hasattr(fn, "__wrapped__"):
         fn = fn.__wrapped__
@@ -53,6 +55,7 @@ def _get_handler(decorated_fn):
 # ---------------------------------------------------------------------------
 # POST /auth/token
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_login_valid_credentials_returns_token():
@@ -103,6 +106,7 @@ async def test_login_unknown_user_returns_401():
 # POST /auth/register
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_register_new_user_calls_commit():
     from gnosis.routers.auth import register
@@ -140,6 +144,7 @@ async def test_register_duplicate_email_returns_400():
 # ---------------------------------------------------------------------------
 # GET /auth/me
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_me_returns_current_user():

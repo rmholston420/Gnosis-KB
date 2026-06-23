@@ -36,6 +36,7 @@ router = APIRouter(prefix="/review", tags=["review"])
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _card_to_with_note(card: ReviewCard) -> ReviewCardWithNote:
     return ReviewCardWithNote(
         note_id=card.note_id,
@@ -70,6 +71,7 @@ async def _get_card_or_404(note_id: str, db: AsyncSession) -> ReviewCard:
 # GET /queue  -- cards due today
 # ---------------------------------------------------------------------------
 
+
 @router.get("/queue", response_model=list[ReviewCardWithNote])
 async def get_due_queue(
     limit: int = Query(default=20, ge=1, le=100),
@@ -94,22 +96,17 @@ async def get_due_queue(
 # GET /stats
 # ---------------------------------------------------------------------------
 
+
 @router.get("/stats", response_model=ReviewStats)
 async def get_stats(db: AsyncSession = Depends(get_db)) -> ReviewStats:
     """Return aggregate queue statistics."""
     today = date.today()
     week_end = today + timedelta(days=7)
 
-    due_today_count = await db.scalar(
-        select(func.count()).where(ReviewCard.due_date <= today)
-    )
-    due_week_count = await db.scalar(
-        select(func.count()).where(ReviewCard.due_date <= week_end)
-    )
+    due_today_count = await db.scalar(select(func.count()).where(ReviewCard.due_date <= today))
+    due_week_count = await db.scalar(select(func.count()).where(ReviewCard.due_date <= week_end))
     total_count = await db.scalar(select(func.count(ReviewCard.note_id)))
-    reviewed_today_count = await db.scalar(
-        select(func.count()).where(ReviewCard.due_date == today)
-    )
+    reviewed_today_count = await db.scalar(select(func.count()).where(ReviewCard.due_date == today))
 
     return ReviewStats(
         due_today=due_today_count or 0,
@@ -125,7 +122,10 @@ async def get_stats(db: AsyncSession = Depends(get_db)) -> ReviewStats:
 # so FastAPI does not swallow "/x/enroll" as submit with note_id="x/enroll"
 # ---------------------------------------------------------------------------
 
-@router.post("/{note_id}/enroll", response_model=ReviewCardRead, status_code=status.HTTP_201_CREATED)
+
+@router.post(
+    "/{note_id}/enroll", response_model=ReviewCardRead, status_code=status.HTTP_201_CREATED
+)
 async def enroll_note(
     note_id: str,
     payload: ReviewEnroll,
@@ -138,9 +138,7 @@ async def enroll_note(
     if note_result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail=f"Note {note_id!r} not found.")
 
-    existing = await db.execute(
-        select(ReviewCard).where(ReviewCard.note_id == note_id)
-    )
+    existing = await db.execute(select(ReviewCard).where(ReviewCard.note_id == note_id))
     if card := existing.scalar_one_or_none():
         return ReviewCardRead.model_validate(card)
 
@@ -161,6 +159,7 @@ async def enroll_note(
 # ---------------------------------------------------------------------------
 # POST /{note_id}  -- submit a rating
 # ---------------------------------------------------------------------------
+
 
 @router.post("/{note_id}", response_model=ReviewCardRead)
 async def submit_review(
@@ -187,6 +186,7 @@ async def submit_review(
     note_result = await db.execute(select(Note).where(Note.id == note_id))
     if note := note_result.scalar_one_or_none():
         from datetime import date as _date
+
         note.last_reviewed = _date.today()
 
     await db.commit()
@@ -197,6 +197,7 @@ async def submit_review(
 # ---------------------------------------------------------------------------
 # DELETE /{note_id}  -- unenroll
 # ---------------------------------------------------------------------------
+
 
 @router.delete("/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def unenroll_note(

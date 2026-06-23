@@ -29,6 +29,7 @@ merges the answers via a lightweight LLM synthesis call.  ``stream()``
 yields the caller's own graph tokens first, then appends a merged
 synthesis block from shared vaults as a final chunk.
 """
+
 from __future__ import annotations
 
 import logging
@@ -92,20 +93,24 @@ class GraphRAGService:
                 embedding_func=ollama_embed,
                 embedding_model=settings.ollama_embed_model,
                 entity_types=[
-                    "concept", "person", "project", "tool",
-                    "technique", "insight", "question",
+                    "concept",
+                    "person",
+                    "project",
+                    "tool",
+                    "technique",
+                    "insight",
+                    "question",
                 ],
             )
             self._instances[user_id] = instance
             logger.info(
                 "GraphRAGService: LightRAG initialised for user %s at %s",
-                user_id, working_dir,
+                user_id,
+                working_dir,
             )
             return instance
         except Exception as exc:  # noqa: BLE001
-            logger.error(
-                "GraphRAGService: LightRAG init failed for user %s: %s", user_id, exc
-            )
+            logger.error("GraphRAGService: LightRAG init failed for user %s: %s", user_id, exc)
             return None
 
     async def initialize(self, user_id: int = _LEGACY_USER_ID) -> None:
@@ -134,9 +139,7 @@ class GraphRAGService:
         try:
             await instance.ainsert(f"{title}\n\n{body}")
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "GraphRAGService.ingest_note failed for user %s: %s", user_id, exc
-            )
+            logger.warning("GraphRAGService.ingest_note failed for user %s: %s", user_id, exc)
 
     async def query(
         self,
@@ -175,7 +178,11 @@ class GraphRAGService:
         answers: list[str] = []
         for uid in sorted(target_ids):
             answer = await self._query_single(uid, question, mode)
-            if answer and not answer.startswith("Graph-RAG is unavailable") and not answer.startswith("Query failed"):
+            if (
+                answer
+                and not answer.startswith("Graph-RAG is unavailable")
+                and not answer.startswith("Query failed")
+            ):
                 answers.append(f"[Vault {uid}]\n{answer}")
 
         if not answers:
@@ -201,9 +208,7 @@ class GraphRAGService:
         try:
             return await instance.aquery(question, param=QueryParam(mode=mode))
         except Exception as exc:  # noqa: BLE001
-            logger.error(
-                "GraphRAGService.query failed for user %s: %s", user_id, exc
-            )
+            logger.error("GraphRAGService.query failed for user %s: %s", user_id, exc)
             return f"Query failed: {exc}"
 
     async def _synthesise(self, question: str, answers: list[str]) -> str:
@@ -286,7 +291,11 @@ class GraphRAGService:
         shared_answers: list[str] = []
         for uid in sorted(shared_ids):
             answer = await self._query_single(uid, question, mode)
-            if answer and not answer.startswith("Graph-RAG is unavailable") and not answer.startswith("Query failed"):
+            if (
+                answer
+                and not answer.startswith("Graph-RAG is unavailable")
+                and not answer.startswith("Query failed")
+            ):
                 shared_answers.append(f"[Vault {uid}]\n{answer}")
 
         if shared_answers:

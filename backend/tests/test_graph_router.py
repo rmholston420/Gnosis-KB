@@ -10,6 +10,7 @@ Key implementation notes
   — does NOT use scalar_one().
 - get_clusters: issues ONE query and groups by note.folder.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -29,15 +30,21 @@ from gnosis.routers.graph import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _note(id, title="T", folder="00-inbox", note_type="permanent"):
     n = MagicMock()
-    n.id = id; n.title = title; n.folder = folder; n.note_type = note_type
+    n.id = id
+    n.title = title
+    n.folder = folder
+    n.note_type = note_type
     return n
 
 
 def _link(src, tgt, link_type="wikilink"):
     lnk = MagicMock()
-    lnk.source_id = src; lnk.target_id = tgt; lnk.link_type = link_type
+    lnk.source_id = src
+    lnk.target_id = tgt
+    lnk.link_type = link_type
     return lnk
 
 
@@ -50,6 +57,7 @@ def _sess_seq(*row_lists):
     """
     lists = list(row_lists)
     call = [0]
+
     async def _exec(stmt, *a, **kw):
         rows = lists[min(call[0], len(lists) - 1)]
         call[0] += 1
@@ -57,6 +65,7 @@ def _sess_seq(*row_lists):
         r.scalars.return_value.unique.return_value.all.return_value = rows
         r.scalars.return_value.all.return_value = rows
         return r
+
     sess = AsyncMock()
     sess.execute = _exec
     return sess
@@ -65,6 +74,7 @@ def _sess_seq(*row_lists):
 # ---------------------------------------------------------------------------
 # GET /graph/  — full graph
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_get_full_graph_empty():
@@ -88,6 +98,7 @@ async def test_get_full_graph_nodes_and_edges():
 # GET /graph/neighborhood/{note_id}
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_get_neighborhood_no_links():
     sess = _sess_seq([], [])  # links=[], then notes=[]
@@ -98,7 +109,8 @@ async def test_get_neighborhood_no_links():
 
 @pytest.mark.asyncio
 async def test_get_neighborhood_with_links():
-    n1 = _note("n1"); n2 = _note("n2")
+    n1 = _note("n1")
+    n2 = _note("n2")
     lnk = _link("n1", "n2")
     # get_neighborhood: 1st query=links, 2nd query=notes for neighbour ids
     sess = _sess_seq([lnk], [n1, n2])
@@ -112,6 +124,7 @@ async def test_get_neighborhood_with_links():
 # get_path issues: 1st query = notes, 2nd query = links
 # Returns {"path": [{"id": ..., "label": ...}, ...]}
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_get_path_same_node():
@@ -139,7 +152,8 @@ async def test_get_path_no_path_raises_404():
 @pytest.mark.asyncio
 async def test_get_path_direct_link():
     """n1 → n2 via a single wikilink."""
-    n1 = _note("n1", title="Alpha"); n2 = _note("n2", title="Beta")
+    n1 = _note("n1", title="Alpha")
+    n2 = _note("n2", title="Beta")
     lnk = _link("n1", "n2")
     sess = _sess_seq([n1, n2], [lnk])  # notes first, links second
     result = await get_path(from_id="n1", to_id="n2", db=sess, owner_ids={1})
@@ -151,6 +165,7 @@ async def test_get_path_direct_link():
 # ---------------------------------------------------------------------------
 # GET /graph/clusters
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_get_clusters_empty():
@@ -183,6 +198,7 @@ async def test_get_clusters_groups_by_folder():
 # Returns node_count=len(notes), link_count=len(links)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_get_graph_stats_empty():
     sess = _sess_seq([], [])  # notes=[], links=[]
@@ -194,7 +210,7 @@ async def test_get_graph_stats_empty():
 @pytest.mark.asyncio
 async def test_get_graph_stats_values():
     notes = [_note(f"n{i}") for i in range(10)]
-    links = [_link(f"n{i}", f"n{i+1}") for i in range(5)]
+    links = [_link(f"n{i}", f"n{i + 1}") for i in range(5)]
     sess = _sess_seq(notes, links)
     result = await get_graph_stats(db=sess, owner_ids={1})
     assert result["node_count"] == 10

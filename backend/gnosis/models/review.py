@@ -1,4 +1,5 @@
 """ReviewCard SQLAlchemy model for SM-2 spaced-repetition scheduling."""
+
 from __future__ import annotations
 
 from datetime import date
@@ -42,7 +43,7 @@ class ReviewCard(Base):
     # Using selectin here caused a conflict with the Note model's
     # eagerly-loaded attribute 'Note.tags' which collapsed Note.tags to a
     # scalar and broke the tags API response.
-    note: Mapped["Note"] = relationship(  # type: ignore[name-defined]
+    note: Mapped[Note] = relationship(  # type: ignore[name-defined]
         "Note",
         back_populates="review_card",
         lazy="select",

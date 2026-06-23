@@ -102,11 +102,7 @@ def ensure_collection() -> None:
                 hnsw_config=models.HnswConfigDiff(m=0),  # reranking only
             ),
         },
-        sparse_vectors_config={
-            "sparse": models.SparseVectorParams(
-                modifier=models.Modifier.IDF
-            )
-        },
+        sparse_vectors_config={"sparse": models.SparseVectorParams(modifier=models.Modifier.IDF)},
     )
     logger.info("Qdrant collection '%s' created", collection_name)
 

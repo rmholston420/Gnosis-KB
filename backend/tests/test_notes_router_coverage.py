@@ -7,6 +7,7 @@ list_notes issues TWO db.execute calls:
 All other endpoints issue a single execute whose scalars().unique().one_or_none()
 returns None to trigger 404.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -57,7 +58,10 @@ def _make_app(db=None):
     app = FastAPI()
     app.include_router(router, prefix="/api/v1")
     _db = db or _make_db_not_found()
-    async def _get_db(): yield _db
+
+    async def _get_db():
+        yield _db
+
     app.dependency_overrides[get_db] = _get_db
     app.dependency_overrides[get_current_user] = lambda: _user()
     app.dependency_overrides[get_vault_owner_ids] = lambda: {1}

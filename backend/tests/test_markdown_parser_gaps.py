@@ -2,6 +2,7 @@
 
 Line 31→33: generate_note_id(dt=<explicit datetime>) — the non-None branch.
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -19,7 +20,7 @@ def test_generate_note_id_with_explicit_datetime():
 def test_generate_note_id_without_argument_returns_string():
     """Calling with no argument (None path) returns a valid timestamp string."""
     result = generate_note_id()
-    assert len(result) == 15          # YYYYMMDD-HHmmss
+    assert len(result) == 15  # YYYYMMDD-HHmmss
     assert result[8] == "-"
     assert result.replace("-", "").isdigit()
 
@@ -27,5 +28,5 @@ def test_generate_note_id_without_argument_returns_string():
 def test_generate_note_id_format_is_sortable():
     """IDs generated from consecutive datetimes sort lexicographically."""
     early = generate_note_id(datetime(2020, 1, 1, 0, 0, 0, tzinfo=UTC))
-    late  = generate_note_id(datetime(2025, 12, 31, 23, 59, 59, tzinfo=UTC))
+    late = generate_note_id(datetime(2025, 12, 31, 23, 59, 59, tzinfo=UTC))
     assert early < late

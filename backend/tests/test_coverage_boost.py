@@ -19,6 +19,7 @@ Covers the low-hanging gaps that kept total coverage below 50 %:
   - routers/notes (notes router)
   - database helpers
 """
+
 from __future__ import annotations
 
 import datetime
@@ -29,6 +30,7 @@ import pytest
 # ---------------------------------------------------------------------------
 # query_parser — pure logic, no DB needed for parse_query
 # ---------------------------------------------------------------------------
+
 
 class TestTokenise:
     def test_basic(self):
@@ -592,8 +594,15 @@ class TestFTS:
     async def test_fulltext_search_returns_dict(self):
         mock_row = MagicMock()
         mock_row.__getitem__ = lambda self, key: {
-            "note_id": "1", "title": "Test", "slug": "", "folder": "",
-            "note_type": "", "status": "", "score": 0.5, "highlight": "", "tags": [],
+            "note_id": "1",
+            "title": "Test",
+            "slug": "",
+            "folder": "",
+            "note_type": "",
+            "status": "",
+            "score": 0.5,
+            "highlight": "",
+            "tags": [],
         }[key]
         mock_result = MagicMock()
         mock_result.mappings.return_value.all.return_value = []
@@ -693,7 +702,9 @@ class TestHybridSearch:
         assert isinstance(result["results"], list)
 
     def test_embed_failure_returns_empty(self):
-        with patch("gnosis.services.hybrid_search.embed_dense", side_effect=Exception("embed failed")):
+        with patch(
+            "gnosis.services.hybrid_search.embed_dense", side_effect=Exception("embed failed")
+        ):
             result = hs_hybrid_search("test", owner_ids={1})
         assert result["results"] == []
 
@@ -701,8 +712,14 @@ class TestHybridSearch:
         points = []
         for i in range(20):
             p = MagicMock()
-            p.payload = {"note_id": str(i), "title": f"Note {i}", "folder": "",
-                         "note_type": "", "status": "", "tags": []}
+            p.payload = {
+                "note_id": str(i),
+                "title": f"Note {i}",
+                "folder": "",
+                "note_type": "",
+                "status": "",
+                "tags": [],
+            }
             p.score = 0.9 - i * 0.01
             points.append(p)
 

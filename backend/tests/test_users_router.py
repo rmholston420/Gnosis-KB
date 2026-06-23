@@ -6,6 +6,7 @@ Uses synchronous TestClient (not AsyncClient) with async generator session
 override so coverage.py's tracer is active.  All user fixtures are real
 SQLAlchemy User instances so UserProfile.model_validate() succeeds.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -21,6 +22,7 @@ from gnosis.routers.users import router
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_user(user_id: int = 1, superuser: bool = False, **kw) -> User:
     u = User(
@@ -66,6 +68,7 @@ def _make_app(user: User, session_mock: AsyncMock | None = None):
 # GET /users/me
 # ---------------------------------------------------------------------------
 
+
 def test_get_me_profile_email():
     user = _make_user()
     app, _ = _make_app(user)
@@ -78,6 +81,7 @@ def test_get_me_profile_email():
 # ---------------------------------------------------------------------------
 # PATCH /users/me  — slug conflict 409
 # ---------------------------------------------------------------------------
+
 
 def test_patch_me_slug_conflict_returns_409():
     user = _make_user()
@@ -95,6 +99,7 @@ def test_patch_me_slug_conflict_returns_409():
 # ---------------------------------------------------------------------------
 # POST /users/me/vaults/invite
 # ---------------------------------------------------------------------------
+
 
 def test_invite_unknown_user_returns_404():
     user = _make_user()
@@ -137,6 +142,7 @@ def test_invite_invalid_permission_returns_422():
 # GET /users/me/vaults
 # ---------------------------------------------------------------------------
 
+
 def test_list_my_vaults_empty():
     user = _make_user()
     app, _ = _make_app(user)
@@ -150,6 +156,7 @@ def test_list_my_vaults_empty():
 # PATCH /users/me/vaults/{grant_id}
 # ---------------------------------------------------------------------------
 
+
 def test_update_grant_invalid_permission_422():
     user = _make_user()
     app, _ = _make_app(user)
@@ -162,6 +169,7 @@ def test_update_grant_invalid_permission_422():
 # DELETE /users/me/vaults/{grant_id}
 # ---------------------------------------------------------------------------
 
+
 def test_revoke_grant_not_found():
     user = _make_user()
     app, _ = _make_app(user)
@@ -173,6 +181,7 @@ def test_revoke_grant_not_found():
 # ---------------------------------------------------------------------------
 # POST /users/ — superuser create with vault slug
 # ---------------------------------------------------------------------------
+
 
 def test_create_user_with_vault_slug_201():
     """Exercises lines 222-243 with full create path including vault_slug."""
@@ -202,6 +211,7 @@ def test_create_user_with_vault_slug_201():
 # ---------------------------------------------------------------------------
 # PATCH /users/me — vault_path as superuser (line 150-151)
 # ---------------------------------------------------------------------------
+
 
 def test_patch_me_vault_path_superuser_200():
     """line 150-151: superuser sets explicit vault_path."""

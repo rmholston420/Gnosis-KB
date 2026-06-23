@@ -11,6 +11,7 @@ Covers the last missing lines across 4 files:
 
 No DB, no HTTP client, no conftest fixtures required.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -21,13 +22,16 @@ import pytest
 # config.py:82  — get_settings() return value
 # ===========================================================================
 
+
 class TestGetSettings:
     def test_get_settings_returns_settings_singleton(self):
         from gnosis.config import get_settings, settings
+
         assert get_settings() is settings
 
     def test_get_settings_called_twice_returns_same_object(self):
         from gnosis.config import get_settings
+
         assert get_settings() is get_settings()
 
 
@@ -38,6 +42,7 @@ class TestGetSettings:
 # (a plain bytes object).  body_iterator is a sync list [self.body], NOT an
 # async iterable.  Read response.body directly.
 # ===========================================================================
+
 
 class TestGnosisExceptionHandler:
     @pytest.mark.asyncio
@@ -95,6 +100,7 @@ class TestGnosisExceptionHandler:
 # database.py:66  — _AsyncSessionLocalProxy.__aexit__
 # ===========================================================================
 
+
 class TestAsyncSessionLocalProxyAexit:
     @pytest.mark.asyncio
     async def test_proxy_aexit_delegates_to_factory(self):
@@ -104,7 +110,9 @@ class TestAsyncSessionLocalProxyAexit:
         fake_maker.__aenter__ = AsyncMock(return_value=MagicMock())
         fake_maker.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("gnosis.database.get_session_factory", return_value=MagicMock(return_value=fake_maker)):
+        with patch(
+            "gnosis.database.get_session_factory", return_value=MagicMock(return_value=fake_maker)
+        ):
             result = AsyncSessionLocal.__aexit__(None, None, None)
             assert result is not None
 
@@ -116,7 +124,9 @@ class TestAsyncSessionLocalProxyAexit:
         fake_maker.__aenter__ = AsyncMock(return_value=MagicMock())
         fake_maker.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("gnosis.database.get_session_factory", return_value=MagicMock(return_value=fake_maker)):
+        with patch(
+            "gnosis.database.get_session_factory", return_value=MagicMock(return_value=fake_maker)
+        ):
             # __aexit__ returns get_session_factory().__aexit__(*args)
             # The factory mock's __aexit__ is an AsyncMock so its return is awaitable
             coro = AsyncSessionLocal.__aexit__(None, None, None)
@@ -126,6 +136,7 @@ class TestAsyncSessionLocalProxyAexit:
 # ===========================================================================
 # services/fts.py:87-90  — except branch when db.execute raises
 # ===========================================================================
+
 
 class TestFulltextSearchExceptBranch:
     @pytest.mark.asyncio
@@ -162,6 +173,7 @@ class TestFulltextSearchExceptBranch:
 # (patching gnosis.core.auth.* has no effect because the name is resolved
 # fresh from gnosis.core.namespace on every call).
 # ===========================================================================
+
 
 class TestGetVaultOwnerIdsReturnTargetId:
     @pytest.mark.asyncio

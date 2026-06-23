@@ -14,6 +14,7 @@ unauthenticated_client — AsyncClient with no auth headers
 All tests are async and use anyio marks so they run under both asyncio and
 trio backends (though only asyncio is active in CI via pytest-anyio config).
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
@@ -24,12 +25,18 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
-async def _create_note(client, *, title: str = "Test Note", body: str = "Test body",
-                       folder: str = "00-inbox", tags: list[str] | None = None,
-                       note_type: str = "note") -> dict:
+
+async def _create_note(
+    client,
+    *,
+    title: str = "Test Note",
+    body: str = "Test body",
+    folder: str = "00-inbox",
+    tags: list[str] | None = None,
+    note_type: str = "note",
+) -> dict:
     """Helper: POST /api/v1/notes/ and return the created note dict."""
-    payload: dict = {"title": title, "body": body, "folder": folder,
-                     "note_type": note_type}
+    payload: dict = {"title": title, "body": body, "folder": folder, "note_type": note_type}
     if tags:
         payload["tags"] = tags
     resp = await client.post("/api/v1/notes/", json=payload)
@@ -40,6 +47,7 @@ async def _create_note(client, *, title: str = "Test Note", body: str = "Test bo
 # ===========================================================================
 # Auth Guard
 # ===========================================================================
+
 
 class TestAuthGuard:
     """Verify that protected endpoints reject unauthenticated requests."""
@@ -98,13 +106,13 @@ class TestAuthGuard:
 # Notes CRUD
 # ===========================================================================
 
+
 class TestNotesCRUD:
     """Full CRUD lifecycle for notes."""
 
     @pytest.mark.anyio
     async def test_create_note(self, async_client):
-        note = await _create_note(async_client, title="CRUD Test Note",
-                                  body="Body for CRUD test.")
+        note = await _create_note(async_client, title="CRUD Test Note", body="Body for CRUD test.")
         assert note["title"] == "CRUD Test Note"
         assert "id" in note
 
@@ -131,8 +139,7 @@ class TestNotesCRUD:
     async def test_update_note(self, async_client):
         note = await _create_note(async_client, title="Update Note Original")
         nid = note["id"]
-        resp = await async_client.put(f"/api/v1/notes/{nid}",
-                                      json={"title": "Update Note Revised"})
+        resp = await async_client.put(f"/api/v1/notes/{nid}", json={"title": "Update Note Revised"})
         assert resp.status_code == 200
         assert resp.json()["title"] == "Update Note Revised"
 
@@ -167,8 +174,7 @@ class TestNotesCRUD:
 
     @pytest.mark.anyio
     async def test_list_notes_filter_by_folder(self, async_client):
-        await _create_note(async_client, title="Folder Filter Note",
-                           folder="10-zettelkasten")
+        await _create_note(async_client, title="Folder Filter Note", folder="10-zettelkasten")
         resp = await async_client.get("/api/v1/notes/?folder=10-zettelkasten")
         assert resp.status_code == 200
         for note in resp.json()["items"]:
@@ -187,11 +193,11 @@ class TestNotesCRUD:
 # TagCount schema: {"tag": str, "count": int}
 # ===========================================================================
 
+
 class TestTags:
     @pytest.mark.anyio
     async def test_tag_list_reflects_notes(self, async_client):
-        await _create_note(async_client, title="Tag Reflect Note",
-                           tags=["e2e-reflect-tag"])
+        await _create_note(async_client, title="Tag Reflect Note", tags=["e2e-reflect-tag"])
         resp = await async_client.get("/api/v1/tags/")
         assert resp.status_code == 200
         tags = resp.json()
@@ -213,6 +219,7 @@ class TestTags:
 # Response schema: SearchResponse {"results": [...], "elapsed_ms": N, "mode": "..."}
 # ===========================================================================
 
+
 class TestSearch:
     @pytest.mark.anyio
     async def test_fulltext_search(self, async_client):
@@ -226,24 +233,24 @@ class TestSearch:
         # Keys must match what _map_results() expects: note_id, title, slug,
         # folder, note_type, status, score, highlight, tags.
         fts_result = {
-            "results": [{
-                "note_id": "1",
-                "title": "E2E FTS Search Note",
-                "slug": "e2e-fts-search-note",
-                "folder": "00-inbox",
-                "note_type": "note",
-                "status": "active",
-                "score": 1.0,
-                "highlight": "",
-                "tags": [],
-            }],
+            "results": [
+                {
+                    "note_id": "1",
+                    "title": "E2E FTS Search Note",
+                    "slug": "e2e-fts-search-note",
+                    "folder": "00-inbox",
+                    "note_type": "note",
+                    "status": "active",
+                    "score": 1.0,
+                    "highlight": "",
+                    "tags": [],
+                }
+            ],
             "elapsed_ms": 1,
         }
         with patch("gnosis.routers.search.fulltext_search", new_callable=AsyncMock) as mock_fts:
             mock_fts.return_value = fts_result
-            resp = await async_client.get(
-                "/api/v1/search/?q=dependent+origination&mode=fulltext"
-            )
+            resp = await async_client.get("/api/v1/search/?q=dependent+origination&mode=fulltext")
         assert resp.status_code == 200
         data = resp.json()
         # SearchResponse uses "results", not "items"
@@ -260,9 +267,7 @@ class TestSearch:
         """Semantic search with the hybrid_search function patched to return empty."""
         with patch("gnosis.routers.search.hybrid_search") as mock_hs:
             mock_hs.return_value = {"results": [], "elapsed_ms": 0, "mode": "semantic"}
-            resp = await async_client.get(
-                "/api/v1/search/?q=consciousness&mode=semantic"
-            )
+            resp = await async_client.get("/api/v1/search/?q=consciousness&mode=semantic")
         assert resp.status_code == 200
 
 
@@ -270,13 +275,12 @@ class TestSearch:
 # Graph
 # ===========================================================================
 
+
 class TestGraph:
     @pytest.mark.anyio
     async def test_graph_nodes_and_edges(self, async_client):
-        note_a = await _create_note(async_client, title="Graph Node A",
-                                    body="[[Graph Node B]]")
-        note_b = await _create_note(async_client, title="Graph Node B",
-                                    body="No links here.")
+        note_a = await _create_note(async_client, title="Graph Node A", body="[[Graph Node B]]")
+        note_b = await _create_note(async_client, title="Graph Node B", body="No links here.")
         resp = await async_client.get("/api/v1/graph/")
         assert resp.status_code == 200
         data = resp.json()
@@ -298,6 +302,7 @@ class TestGraph:
 # ===========================================================================
 # AI Endpoints
 # ===========================================================================
+
 
 class TestAI:
     @pytest.mark.anyio
@@ -356,6 +361,7 @@ class TestAI:
 #         PUT /query/saved/{id}, DELETE /query/saved/{id}
 # ===========================================================================
 
+
 class TestSavedQueries:
     @pytest.mark.anyio
     async def test_query_crud(self, async_client):
@@ -407,6 +413,7 @@ class TestSavedQueries:
 #         POST /review/{id}      — submit rating
 #         DELETE /review/{id}    — remove from deck
 # ===========================================================================
+
 
 class TestReview:
     @pytest.mark.anyio
@@ -461,6 +468,7 @@ class TestReview:
 #         GET /export/note/{id}.pdf      (single note PDF, feature-flagged 501)
 # ===========================================================================
 
+
 class TestExport:
     @pytest.mark.anyio
     async def test_export_note_markdown(self, async_client):
@@ -506,6 +514,7 @@ class TestExport:
 # Routes: POST /vault/sync, GET /vault/sync/status
 # ===========================================================================
 
+
 class TestVault:
     @pytest.mark.anyio
     async def test_sync_trigger(self, async_client):
@@ -527,6 +536,7 @@ class TestVault:
 # ===========================================================================
 # Full Workflow Integration
 # ===========================================================================
+
 
 class TestFullWorkflow:
     @pytest.mark.anyio
@@ -602,25 +612,19 @@ class TestFullWorkflow:
         # Suggest tags via AI — response key is "suggested_tags" not "tags"
         with patch("gnosis.routers.ai.llm_provider") as mock_llm:
             mock_llm.is_available = True
-            mock_llm.complete = AsyncMock(
-                return_value='["bodhicitta", "mahayana", "compassion"]'
-            )
+            mock_llm.complete = AsyncMock(return_value='["bodhicitta", "mahayana", "compassion"]')
             tag_resp = await async_client.post(f"/api/v1/ai/suggest-tags/{nid}")
         assert tag_resp.status_code == 200
         suggested = tag_resp.json()["suggested_tags"]
         assert len(suggested) > 0
 
         # Apply the suggested tags via update
-        update_resp = await async_client.put(
-            f"/api/v1/notes/{nid}", json={"tags": suggested}
-        )
+        update_resp = await async_client.put(f"/api/v1/notes/{nid}", json={"tags": suggested})
         assert update_resp.status_code == 200
         assert set(update_resp.json()["tags"]) == set(suggested)
 
         # Search by one of the applied tags
-        search_resp = await async_client.get(
-            f"/api/v1/notes/?tags={suggested[0]}"
-        )
+        search_resp = await async_client.get(f"/api/v1/notes/?tags={suggested[0]}")
         assert search_resp.status_code == 200
         ids = [n["id"] for n in search_resp.json()["items"]]
         assert nid in ids

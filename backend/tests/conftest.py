@@ -132,8 +132,15 @@ def vault_dir():
     with tempfile.TemporaryDirectory() as tmpdir:
         vault = Path(tmpdir)
         for folder in [
-            "00-inbox", "10-zettelkasten", "20-projects", "30-areas",
-            "40-resources", "50-archive", "60-journals", "70-sources", "80-meta",
+            "00-inbox",
+            "10-zettelkasten",
+            "20-projects",
+            "30-areas",
+            "40-resources",
+            "50-archive",
+            "60-journals",
+            "70-sources",
+            "80-meta",
         ]:
             (vault / folder).mkdir()
         yield vault
@@ -234,7 +241,9 @@ async def _make_client(
 
         settings = config.get_settings()
         settings.vault_path = str(vault_dir)
-        import gnosis.core.namespace as _ns; _ns.VAULT_ROOT = vault_dir
+        import gnosis.core.namespace as _ns
+
+        _ns.VAULT_ROOT = vault_dir
 
         app = create_app()
         session_factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
@@ -258,7 +267,8 @@ async def _make_client(
 async def async_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, None]:
     """Authenticated HTTPX client — all requests resolve to FakeUser(id=1)."""
     async for c in _make_client(
-        test_engine, vault_dir,
+        test_engine,
+        vault_dir,
         auth_override=_fake_require_user,
         vault_owner_override=_fake_vault_owner_ids,
     ):
@@ -269,7 +279,8 @@ async def async_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, No
 async def client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, None]:
     """Alias for async_client (backward-compat)."""
     async for c in _make_client(
-        test_engine, vault_dir,
+        test_engine,
+        vault_dir,
         auth_override=_fake_require_user,
         vault_owner_override=_fake_vault_owner_ids,
     ):
@@ -285,7 +296,8 @@ async def unauthenticated_client(test_engine, vault_dir) -> AsyncGenerator[Async
     resolves first.
     """
     async for c in _make_client(
-        test_engine, vault_dir,
+        test_engine,
+        vault_dir,
         auth_override=_fake_deny_user,
         vault_owner_override=_fake_deny_vault_owner_ids,
     ):
@@ -304,8 +316,15 @@ def _sync_app():
     with tempfile.TemporaryDirectory() as tmpdir:
         vault = Path(tmpdir)
         for folder in [
-            "00-inbox", "10-zettelkasten", "20-projects", "30-areas",
-            "40-resources", "50-archive", "60-journals", "70-sources", "80-meta",
+            "00-inbox",
+            "10-zettelkasten",
+            "20-projects",
+            "30-areas",
+            "40-resources",
+            "50-archive",
+            "60-journals",
+            "70-sources",
+            "80-meta",
         ]:
             (vault / folder).mkdir()
 
@@ -336,9 +355,7 @@ def _sync_app():
                 settings.vault_path = str(vault)
 
                 app = create_app()
-                session_factory = async_sessionmaker(
-                    bind=async_engine, expire_on_commit=False
-                )
+                session_factory = async_sessionmaker(bind=async_engine, expire_on_commit=False)
 
                 async def override_get_db():
                     async with session_factory() as session:
@@ -356,6 +373,7 @@ def _sync_app():
             sync_engine.dispose()
 
             import asyncio
+
             loop = asyncio.new_event_loop()
             try:
                 loop.run_until_complete(async_engine.dispose())

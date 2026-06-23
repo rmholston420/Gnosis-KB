@@ -84,7 +84,11 @@ async def _run_sync_background(user_id: int) -> None:
         async for line in run_full_sync_for_user(user_id):
             status = _sync_status.get(user_id, {})
             # Count processed files from the log lines
-            if line.startswith("synced:") or line.startswith("skipped:") or line.startswith("deleted:"):
+            if (
+                line.startswith("synced:")
+                or line.startswith("skipped:")
+                or line.startswith("deleted:")
+            ):
                 status["files_processed"] = int(status.get("files_processed", 0)) + 1  # type: ignore[assignment]
             elif line.startswith("total:"):
                 try:

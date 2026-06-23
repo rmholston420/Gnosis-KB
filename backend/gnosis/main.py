@@ -17,6 +17,7 @@ Routers registered:
   /api/v1/users    — user profiles + vault sharing (multi-user)
   /api/v1/admin    — admin utilities (reindex, etc.)
 """
+
 from __future__ import annotations
 
 import logging
@@ -132,20 +133,20 @@ def create_app() -> FastAPI:
     )
 
     _api_v1 = "/api/v1"  # noqa: N806 — lowercase per ruff N806
-    application.include_router(health.router,        prefix=_api_v1)
-    application.include_router(auth.router,          prefix=_api_v1)
-    application.include_router(notes.router,         prefix=_api_v1)
-    application.include_router(search.router,        prefix=_api_v1)
-    application.include_router(ai.router,            prefix=_api_v1)
-    application.include_router(graph.router,         prefix=_api_v1)
-    application.include_router(query.router,         prefix=_api_v1)
-    application.include_router(review.router,        prefix=_api_v1)
-    application.include_router(export.router,        prefix=_api_v1)
-    application.include_router(tags.router,          prefix=_api_v1)
-    application.include_router(vault_router.router,  prefix=_api_v1)  # Slice 15
-    application.include_router(ingest.router,        prefix=_api_v1)
-    application.include_router(users.router,         prefix=_api_v1)
-    application.include_router(admin_router.router,  prefix=_api_v1)  # Slice 18
+    application.include_router(health.router, prefix=_api_v1)
+    application.include_router(auth.router, prefix=_api_v1)
+    application.include_router(notes.router, prefix=_api_v1)
+    application.include_router(search.router, prefix=_api_v1)
+    application.include_router(ai.router, prefix=_api_v1)
+    application.include_router(graph.router, prefix=_api_v1)
+    application.include_router(query.router, prefix=_api_v1)
+    application.include_router(review.router, prefix=_api_v1)
+    application.include_router(export.router, prefix=_api_v1)
+    application.include_router(tags.router, prefix=_api_v1)
+    application.include_router(vault_router.router, prefix=_api_v1)  # Slice 15
+    application.include_router(ingest.router, prefix=_api_v1)
+    application.include_router(users.router, prefix=_api_v1)
+    application.include_router(admin_router.router, prefix=_api_v1)  # Slice 18
 
     return application
 

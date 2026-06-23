@@ -1,4 +1,5 @@
 """Coverage-focused tests for gnosis/services/graph_rag.py edge branches."""
+
 from __future__ import annotations
 
 from pathlib import Path

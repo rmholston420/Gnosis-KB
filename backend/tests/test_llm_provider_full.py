@@ -5,6 +5,7 @@ attributes that don't exist. This replacement uses the real API:
   complete(prompt) -> str
   stream(prompt)   -> AsyncGenerator[str, None]
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -32,9 +33,7 @@ def _make_client(content="response text"):
     """Build an AsyncOpenAI mock that returns content from chat.completions.create."""
     mo = AsyncMock()
     mo.chat.completions.create = AsyncMock(
-        return_value=MagicMock(
-            choices=[MagicMock(message=MagicMock(content=content))]
-        )
+        return_value=MagicMock(choices=[MagicMock(message=MagicMock(content=content))])
     )
     return mo
 
@@ -42,6 +41,7 @@ def _make_client(content="response text"):
 # ---------------------------------------------------------------------------
 # complete() via each provider
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_get_completion_openai():
@@ -73,6 +73,7 @@ async def test_get_completion_ollama():
 # ---------------------------------------------------------------------------
 # stream() test
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_stream_completion_yields_chunks():

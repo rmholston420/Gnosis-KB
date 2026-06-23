@@ -13,7 +13,7 @@ class SearchResult(BaseModel):
     note_type: str
     status: str
     score: float
-    highlight: str   # may contain <mark>...</mark> tags from ts_headline
+    highlight: str  # may contain <mark>...</mark> tags from ts_headline
     tags: list[str]
 
 
@@ -21,7 +21,7 @@ class SearchResponse(BaseModel):
     """Search results response."""
 
     query: str
-    mode: str           # 'hybrid' | 'semantic' | 'fulltext'
+    mode: str  # 'hybrid' | 'semantic' | 'fulltext'
     results: list[SearchResult]
     total: int
     elapsed_ms: float

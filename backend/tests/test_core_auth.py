@@ -6,6 +6,7 @@ auth_required=False: returns first active user),
 require_user (None raises 401),
 get_vault_owner_ids (no header, own-vault header, invalid header, no-grant header).
 """
+
 from __future__ import annotations
 
 from datetime import timedelta
@@ -17,8 +18,10 @@ import pytest
 # Password helpers
 # ---------------------------------------------------------------------------
 
+
 def test_get_password_hash_and_verify():
     from gnosis.core.auth import get_password_hash, verify_password
+
     hashed = get_password_hash("mysecret")
     assert verify_password("mysecret", hashed) is True
     assert verify_password("wrong", hashed) is False
@@ -29,6 +32,7 @@ def test_create_access_token_encodes_user_id():
 
     from gnosis.config import settings
     from gnosis.core.auth import TokenData, create_access_token
+
     token = create_access_token(TokenData(user_id=42, email="u@example.com"))
     payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
     assert payload["sub"] == "42"
@@ -37,13 +41,17 @@ def test_create_access_token_encodes_user_id():
 
 def test_create_access_token_custom_expiry():
     from gnosis.core.auth import TokenData, create_access_token
-    token = create_access_token(TokenData(user_id=1, email="a@b.com"), expires_delta=timedelta(hours=1))
+
+    token = create_access_token(
+        TokenData(user_id=1, email="a@b.com"), expires_delta=timedelta(hours=1)
+    )
     assert token
 
 
 # ---------------------------------------------------------------------------
 # get_current_user — auth_required=True
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_get_current_user_returns_user_on_valid_token():
@@ -139,6 +147,7 @@ async def test_get_current_user_auth_not_required_returns_first_user():
 # require_user
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_require_user_raises_401_when_none():
     from fastapi import HTTPException
@@ -164,6 +173,7 @@ async def test_require_user_returns_user_when_present():
 # get_vault_owner_ids
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_get_vault_owner_ids_no_header_returns_accessible():
     """When X-Vault-Owner-Id header is absent, delegate to get_accessible_owner_ids."""
@@ -177,9 +187,12 @@ async def test_get_vault_owner_ids_no_header_returns_accessible():
 
     # get_accessible_owner_ids is imported locally inside get_vault_owner_ids
     # from gnosis.core.namespace — patch it there.
-    with patch("gnosis.core.namespace.get_accessible_owner_ids", new=AsyncMock(return_value={1, 2})):
+    with patch(
+        "gnosis.core.namespace.get_accessible_owner_ids", new=AsyncMock(return_value={1, 2})
+    ):
         # Force the lazy import inside the function to pick up our patch
         import gnosis.core.namespace as _ns
+
         original = _ns.get_accessible_owner_ids
         _ns.get_accessible_owner_ids = AsyncMock(return_value={1, 2})
         try:
@@ -237,6 +250,7 @@ async def test_get_vault_owner_ids_no_grant_returns_403():
     db = AsyncMock()
 
     import gnosis.core.namespace as _ns
+
     original = _ns.get_accessible_owner_ids
     _ns.get_accessible_owner_ids = AsyncMock(side_effect=ValueError("no grant"))
     try:

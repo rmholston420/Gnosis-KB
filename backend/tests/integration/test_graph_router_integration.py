@@ -19,6 +19,7 @@ picks up the mock:
 
     patch("gnosis.services.graph_rag.graph_rag", ...)
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -29,15 +30,18 @@ import pytest
 # get_path() → 404 when notes are disconnected  (line 171->170)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_get_path_404_when_no_connection(client):
     """Two notes with no wikilink between them → 404 Not Found."""
-    r1 = await client.post("/api/v1/notes/", json={
-        "title": "Note Alpha", "body": "No links here.", "folder": "10-zettelkasten"
-    })
-    r2 = await client.post("/api/v1/notes/", json={
-        "title": "Note Beta", "body": "No links here either.", "folder": "10-zettelkasten"
-    })
+    r1 = await client.post(
+        "/api/v1/notes/",
+        json={"title": "Note Alpha", "body": "No links here.", "folder": "10-zettelkasten"},
+    )
+    r2 = await client.post(
+        "/api/v1/notes/",
+        json={"title": "Note Beta", "body": "No links here either.", "folder": "10-zettelkasten"},
+    )
     assert r1.status_code == 201
     assert r2.status_code == 201
     id1 = r1.json()["id"]
@@ -51,6 +55,7 @@ async def test_get_path_404_when_no_connection(client):
 # ---------------------------------------------------------------------------
 # get_lightrag_graph() – export_graph raises → empty graph  (lines 292-308)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_lightrag_graph_returns_empty_on_exception(client):
@@ -97,6 +102,7 @@ async def test_lightrag_graph_returns_nodes_on_success(client):
 # ---------------------------------------------------------------------------
 # get_graph_entities() – graceful fallback + limit slicing  (lines 335-358)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_graph_entities_returns_empty_on_exception(client):

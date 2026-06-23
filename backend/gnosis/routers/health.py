@@ -11,6 +11,7 @@ Docker / k8s usage
   HEALTHCHECK --interval=30s --timeout=5s --retries=3 \\
     CMD wget -qO- http://localhost:8010/api/v1/health/ping || exit 1
 """
+
 from __future__ import annotations
 
 import shutil
@@ -46,6 +47,7 @@ async def health(response: Response, db: AsyncSession = Depends(get_db)) -> dict
     # Qdrant ping
     try:
         import httpx
+
         async with httpx.AsyncClient(timeout=2) as client:
             resp = await client.get(f"{settings.qdrant_url}/healthz")
         checks["qdrant"] = "ok" if resp.status_code == 200 else f"http {resp.status_code}"
@@ -56,7 +58,7 @@ async def health(response: Response, db: AsyncSession = Depends(get_db)) -> dict
     try:
         vault_path = getattr(settings, "vault_path", "/vault")
         usage = shutil.disk_usage(vault_path)
-        free_gb = round(usage.free / (1024 ** 3), 2)
+        free_gb = round(usage.free / (1024**3), 2)
         if usage.free < _MIN_FREE_BYTES:
             checks["disk"] = f"low: {free_gb} GiB free"
         else:

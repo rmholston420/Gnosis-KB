@@ -3,6 +3,7 @@
 The /admin/reindex guard is: ``if current_user.id != 1 → 403``.
 Superuser flag is NOT checked.  Tests reflect this.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -18,8 +19,12 @@ from gnosis.routers.admin import router
 
 
 # id=1 → admin (passes guard); id=2 → non-admin (fails guard)
-def _admin_user(): return User(id=1, email="admin@t.com", hashed_password="x", is_active=True, is_superuser=False)
-def _regular_user(): return User(id=2, email="user@t.com", hashed_password="x", is_active=True, is_superuser=False)
+def _admin_user():
+    return User(id=1, email="admin@t.com", hashed_password="x", is_active=True, is_superuser=False)
+
+
+def _regular_user():
+    return User(id=2, email="user@t.com", hashed_password="x", is_active=True, is_superuser=False)
 
 
 def _make_db():
@@ -39,7 +44,10 @@ def _make_app(user=None, db=None):
     app.include_router(router, prefix="/api/v1")
     _u = user or _regular_user()
     _db = db or _make_db()
-    async def _get_db(): yield _db
+
+    async def _get_db():
+        yield _db
+
     app.dependency_overrides[require_user] = lambda: _u
     app.dependency_overrides[get_db] = _get_db
     return app
@@ -68,6 +76,7 @@ def test_reindex_admin_id_no_legacy_notes_returns_200():
     primary_user = _admin_user()
 
     call_count = 0
+
     async def _execute(stmt, *args, **kwargs):
         nonlocal call_count
         call_count += 1

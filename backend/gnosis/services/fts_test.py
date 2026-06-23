@@ -8,6 +8,7 @@ These tests use SQLite + the gnosis Note model to verify:
 For a true tsvector test, spin up the Docker stack and run against
 PostgreSQL:  pytest -m integration --db postgresql://...
 """
+
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

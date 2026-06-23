@@ -122,25 +122,52 @@ async def two_users_and_notes(iso_db: AsyncSession, iso_engine):
     id_leg = _uid()
 
     note_a = Note(
-        id=id_a, title="Alice Note", slug=f"alice-note-{id_a}",
-        body="# Alice\n[[Bob Note]]", body_html="", note_type="permanent",
-        status="active", vault_path=f"00-inbox/a-{id_a}.md", folder="00-inbox",
-        word_count=2, is_deleted=False, vector_indexed=False,
-        graph_indexed=False, owner_id=1,
+        id=id_a,
+        title="Alice Note",
+        slug=f"alice-note-{id_a}",
+        body="# Alice\n[[Bob Note]]",
+        body_html="",
+        note_type="permanent",
+        status="active",
+        vault_path=f"00-inbox/a-{id_a}.md",
+        folder="00-inbox",
+        word_count=2,
+        is_deleted=False,
+        vector_indexed=False,
+        graph_indexed=False,
+        owner_id=1,
     )
     note_b = Note(
-        id=id_b, title="Bob Note", slug=f"bob-note-{id_b}",
-        body="# Bob", body_html="", note_type="permanent",
-        status="active", vault_path=f"00-inbox/b-{id_b}.md", folder="00-inbox",
-        word_count=1, is_deleted=False, vector_indexed=False,
-        graph_indexed=False, owner_id=2,
+        id=id_b,
+        title="Bob Note",
+        slug=f"bob-note-{id_b}",
+        body="# Bob",
+        body_html="",
+        note_type="permanent",
+        status="active",
+        vault_path=f"00-inbox/b-{id_b}.md",
+        folder="00-inbox",
+        word_count=1,
+        is_deleted=False,
+        vector_indexed=False,
+        graph_indexed=False,
+        owner_id=2,
     )
     note_legacy = Note(
-        id=id_leg, title="Legacy Note", slug=f"legacy-note-{id_leg}",
-        body="# Legacy", body_html="", note_type="permanent",
-        status="active", vault_path=f"00-inbox/l-{id_leg}.md", folder="00-inbox",
-        word_count=1, is_deleted=False, vector_indexed=False,
-        graph_indexed=False, owner_id=0,
+        id=id_leg,
+        title="Legacy Note",
+        slug=f"legacy-note-{id_leg}",
+        body="# Legacy",
+        body_html="",
+        note_type="permanent",
+        status="active",
+        vault_path=f"00-inbox/l-{id_leg}.md",
+        folder="00-inbox",
+        word_count=1,
+        is_deleted=False,
+        vector_indexed=False,
+        graph_indexed=False,
+        owner_id=0,
     )
     iso_db.add_all([note_a, note_b, note_legacy])
     await iso_db.commit()
@@ -150,6 +177,7 @@ async def two_users_and_notes(iso_db: AsyncSession, iso_engine):
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_list_notes_scoped(two_users_and_notes, iso_app):

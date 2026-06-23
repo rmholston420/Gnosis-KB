@@ -1,4 +1,5 @@
 """Coverage-focused tests for gnosis/routers/review.py edge branches."""
+
 from __future__ import annotations
 
 from datetime import date
@@ -15,7 +16,9 @@ from gnosis.schemas.review import ReviewEnroll, ReviewSubmit
 async def test_enroll_note_returns_existing_card_without_creating_new_one(test_db):
     from gnosis.routers.review import enroll_note
 
-    note = Note(id="note-1", title="Existing", slug="existing", body="body", owner_id=1, is_deleted=False)
+    note = Note(
+        id="note-1", title="Existing", slug="existing", body="body", owner_id=1, is_deleted=False
+    )
     existing = ReviewCard(
         note_id="note-1",
         easiness=2.5,
@@ -34,7 +37,9 @@ async def test_enroll_note_returns_existing_card_without_creating_new_one(test_d
     test_db.commit = AsyncMock()
     test_db.refresh = AsyncMock()
 
-    result = await enroll_note("note-1", ReviewEnroll(note_id="note-1", due_today=False), db=test_db)
+    result = await enroll_note(
+        "note-1", ReviewEnroll(note_id="note-1", due_today=False), db=test_db
+    )
 
     assert result.note_id == "note-1"
     test_db.add.assert_not_called()

@@ -1,4 +1,5 @@
 """Tests for gnosis/routers/health.py — readiness + liveness probes."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -9,9 +10,11 @@ import pytest
 # ping — trivial liveness
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_ping_returns_pong():
     from gnosis.routers.health import ping
+
     result = await ping()
     assert result == {"status": "pong"}
 
@@ -19,6 +22,7 @@ async def test_ping_returns_pong():
 # ---------------------------------------------------------------------------
 # health — readiness (all checks pass)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_health_all_ok():
@@ -39,9 +43,11 @@ async def test_health_all_ok():
     mock_client.__aexit__ = AsyncMock(return_value=False)
     mock_client.get = AsyncMock(return_value=qdrant_resp)
 
-    with patch("gnosis.routers.health.shutil.disk_usage") as mock_disk, \
-         patch("httpx.AsyncClient", return_value=mock_client):
-        mock_disk.return_value = MagicMock(free=10 * 1024 ** 3)  # 10 GiB free
+    with (
+        patch("gnosis.routers.health.shutil.disk_usage") as mock_disk,
+        patch("httpx.AsyncClient", return_value=mock_client),
+    ):
+        mock_disk.return_value = MagicMock(free=10 * 1024**3)  # 10 GiB free
         result = await health(response=mock_response, db=db)
 
     assert result["status"] == "healthy"
@@ -68,9 +74,11 @@ async def test_health_db_failure_returns_degraded():
     mock_client.__aexit__ = AsyncMock(return_value=False)
     mock_client.get = AsyncMock(return_value=qdrant_resp)
 
-    with patch("gnosis.routers.health.shutil.disk_usage") as mock_disk, \
-         patch("httpx.AsyncClient", return_value=mock_client):
-        mock_disk.return_value = MagicMock(free=10 * 1024 ** 3)
+    with (
+        patch("gnosis.routers.health.shutil.disk_usage") as mock_disk,
+        patch("httpx.AsyncClient", return_value=mock_client),
+    ):
+        mock_disk.return_value = MagicMock(free=10 * 1024**3)
         result = await health(response=mock_response, db=db)
 
     assert result["status"] == "degraded"
@@ -93,9 +101,11 @@ async def test_health_qdrant_failure_returns_degraded():
     mock_client.__aexit__ = AsyncMock(return_value=False)
     mock_client.get = AsyncMock(side_effect=Exception("Qdrant unreachable"))
 
-    with patch("gnosis.routers.health.shutil.disk_usage") as mock_disk, \
-         patch("httpx.AsyncClient", return_value=mock_client):
-        mock_disk.return_value = MagicMock(free=10 * 1024 ** 3)
+    with (
+        patch("gnosis.routers.health.shutil.disk_usage") as mock_disk,
+        patch("httpx.AsyncClient", return_value=mock_client),
+    ):
+        mock_disk.return_value = MagicMock(free=10 * 1024**3)
         result = await health(response=mock_response, db=db)
 
     assert result["status"] == "degraded"
@@ -119,10 +129,12 @@ async def test_health_low_disk_returns_degraded():
     mock_client.__aexit__ = AsyncMock(return_value=False)
     mock_client.get = AsyncMock(return_value=qdrant_resp)
 
-    with patch("gnosis.routers.health.shutil.disk_usage") as mock_disk, \
-         patch("httpx.AsyncClient", return_value=mock_client):
+    with (
+        patch("gnosis.routers.health.shutil.disk_usage") as mock_disk,
+        patch("httpx.AsyncClient", return_value=mock_client),
+    ):
         # 100 MiB — below the 500 MiB threshold
-        mock_disk.return_value = MagicMock(free=100 * 1024 ** 2)
+        mock_disk.return_value = MagicMock(free=100 * 1024**2)
         result = await health(response=mock_response, db=db)
 
     assert result["status"] == "degraded"
@@ -145,9 +157,11 @@ async def test_health_qdrant_non_200_status():
     mock_client.__aexit__ = AsyncMock(return_value=False)
     mock_client.get = AsyncMock(return_value=qdrant_resp)
 
-    with patch("gnosis.routers.health.shutil.disk_usage") as mock_disk, \
-         patch("httpx.AsyncClient", return_value=mock_client):
-        mock_disk.return_value = MagicMock(free=10 * 1024 ** 3)
+    with (
+        patch("gnosis.routers.health.shutil.disk_usage") as mock_disk,
+        patch("httpx.AsyncClient", return_value=mock_client),
+    ):
+        mock_disk.return_value = MagicMock(free=10 * 1024**3)
         result = await health(response=mock_response, db=db)
 
     assert result["status"] == "degraded"
@@ -170,8 +184,10 @@ async def test_health_disk_error_returns_degraded():
     mock_client.__aexit__ = AsyncMock(return_value=False)
     mock_client.get = AsyncMock(return_value=qdrant_resp)
 
-    with patch("gnosis.routers.health.shutil.disk_usage", side_effect=OSError("no path")), \
-         patch("httpx.AsyncClient", return_value=mock_client):
+    with (
+        patch("gnosis.routers.health.shutil.disk_usage", side_effect=OSError("no path")),
+        patch("httpx.AsyncClient", return_value=mock_client),
+    ):
         result = await health(response=mock_response, db=db)
 
     assert result["status"] == "degraded"

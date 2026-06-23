@@ -49,32 +49,50 @@ async def search(
     """Search the vault (scoped to the caller's accessible vaults)."""
     if mode == "fulltext":
         raw = await fulltext_search(
-            db, q, owner_ids=owner_ids,
-            limit=limit, folder=folder, note_type=note_type, tags=tags,
+            db,
+            q,
+            owner_ids=owner_ids,
+            limit=limit,
+            folder=folder,
+            note_type=note_type,
+            tags=tags,
         )
         results = _map_results(raw["results"])
         return SearchResponse(
-            query=q, mode=mode, results=results,
-            total=len(results), elapsed_ms=raw["elapsed_ms"],
+            query=q,
+            mode=mode,
+            results=results,
+            total=len(results),
+            elapsed_ms=raw["elapsed_ms"],
         )
 
     try:
         raw = hybrid_search(
-            q, owner_ids=owner_ids,
-            limit=limit, folder=folder, note_type=note_type, tags=tags,
+            q,
+            owner_ids=owner_ids,
+            limit=limit,
+            folder=folder,
+            note_type=note_type,
+            tags=tags,
         )
         results = _map_results(raw["results"])
         return SearchResponse(
-            query=q, mode=mode, results=results,
-            total=len(results), elapsed_ms=raw["elapsed_ms"],
+            query=q,
+            mode=mode,
+            results=results,
+            total=len(results),
+            elapsed_ms=raw["elapsed_ms"],
         )
     except Exception as exc:
-        logger.warning(
-            "Qdrant search failed (%s); falling back to PostgreSQL FTS", exc
-        )
+        logger.warning("Qdrant search failed (%s); falling back to PostgreSQL FTS", exc)
         raw = await fulltext_search(
-            db, q, owner_ids=owner_ids,
-            limit=limit, folder=folder, note_type=note_type, tags=tags,
+            db,
+            q,
+            owner_ids=owner_ids,
+            limit=limit,
+            folder=folder,
+            note_type=note_type,
+            tags=tags,
         )
         results = _map_results(raw["results"])
         return SearchResponse(

@@ -3,6 +3,7 @@ Unit tests for vault_sync.py pure-Python helpers.
 
 All I/O (DB, filesystem) is mocked so tests run without a real vault or DB.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,6 +13,7 @@ import pytest
 # ---------------------------------------------------------------------------
 # _get_vault_path (module-level cache)
 # ---------------------------------------------------------------------------
+
 
 def test_get_vault_path_returns_resolved_path(tmp_path):
     from gnosis.services import vault_sync
@@ -42,15 +44,19 @@ def test_get_vault_path_caches_result(tmp_path):
 # run_full_sync_for_user — missing vault path
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.anyio
 async def test_run_full_sync_missing_vault_yields_error(tmp_path):
     nonexistent = tmp_path / "does_not_exist"
 
     from gnosis.services import vault_sync
+
     vault_sync._VAULT_PATH = None
 
-    with patch("gnosis.services.vault_sync.get_settings") as mock_settings, \
-         patch("gnosis.services.vault_sync._resolve_owner_id", AsyncMock(return_value=1)):
+    with (
+        patch("gnosis.services.vault_sync.get_settings") as mock_settings,
+        patch("gnosis.services.vault_sync._resolve_owner_id", AsyncMock(return_value=1)),
+    ):
         mock_settings.return_value.vault_path = str(nonexistent)
         lines = [line async for line in vault_sync.run_full_sync_for_user(1)]
 
@@ -62,18 +68,22 @@ async def test_run_full_sync_missing_vault_yields_error(tmp_path):
 # run_full_sync_for_user — empty vault (no .md files)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.anyio
 async def test_run_full_sync_empty_vault(tmp_path):
     from gnosis.services import vault_sync
+
     vault_sync._VAULT_PATH = None
 
     mock_db = AsyncMock()
     mock_db.__aenter__ = AsyncMock(return_value=mock_db)
     mock_db.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("gnosis.services.vault_sync.get_settings") as mock_settings, \
-         patch("gnosis.services.vault_sync._resolve_owner_id", AsyncMock(return_value=1)), \
-         patch("gnosis.services.vault_sync.AsyncSessionFactory", return_value=mock_db):
+    with (
+        patch("gnosis.services.vault_sync.get_settings") as mock_settings,
+        patch("gnosis.services.vault_sync._resolve_owner_id", AsyncMock(return_value=1)),
+        patch("gnosis.services.vault_sync.AsyncSessionFactory", return_value=mock_db),
+    ):
         mock_settings.return_value.vault_path = str(tmp_path)
         lines = [line async for line in vault_sync.run_full_sync_for_user(1)]
 
@@ -86,6 +96,7 @@ async def test_run_full_sync_empty_vault(tmp_path):
 # run_full_sync_for_user — filters dot directories
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.anyio
 async def test_run_full_sync_skips_dot_dirs(tmp_path):
     dot_dir = tmp_path / ".obsidian"
@@ -97,6 +108,7 @@ async def test_run_full_sync_skips_dot_dirs(tmp_path):
     (normal_dir / "visible.md").write_text("---\ntitle: Visible\n---\nHello")
 
     from gnosis.services import vault_sync
+
     vault_sync._VAULT_PATH = None
 
     mock_db = AsyncMock()
@@ -110,10 +122,12 @@ async def test_run_full_sync_skips_dot_dirs(tmp_path):
     mock_db.commit = AsyncMock()
     mock_db.add = MagicMock()
 
-    with patch("gnosis.services.vault_sync.get_settings") as mock_settings, \
-         patch("gnosis.services.vault_sync._resolve_owner_id", AsyncMock(return_value=1)), \
-         patch("gnosis.services.vault_sync.AsyncSessionFactory", return_value=mock_db), \
-         patch("gnosis.services.vault_sync.upsert_note"):
+    with (
+        patch("gnosis.services.vault_sync.get_settings") as mock_settings,
+        patch("gnosis.services.vault_sync._resolve_owner_id", AsyncMock(return_value=1)),
+        patch("gnosis.services.vault_sync.AsyncSessionFactory", return_value=mock_db),
+        patch("gnosis.services.vault_sync.upsert_note"),
+    ):
         mock_settings.return_value.vault_path = str(tmp_path)
         lines = [line async for line in vault_sync.run_full_sync_for_user(1)]
 
@@ -126,6 +140,7 @@ async def test_run_full_sync_skips_dot_dirs(tmp_path):
 # ---------------------------------------------------------------------------
 # VaultEventHandler — ignores directories and non-.md files
 # ---------------------------------------------------------------------------
+
 
 def test_vault_event_handler_ignores_directories():
     from gnosis.services.vault_sync import VaultEventHandler
@@ -190,6 +205,7 @@ def test_vault_event_handler_dispatches_md_delete():
 # ---------------------------------------------------------------------------
 # VaultEventHandler._dispatch_coroutine — loop not running branch
 # ---------------------------------------------------------------------------
+
 
 def test_dispatch_coroutine_handles_exception_gracefully():
     from gnosis.services.vault_sync import VaultEventHandler

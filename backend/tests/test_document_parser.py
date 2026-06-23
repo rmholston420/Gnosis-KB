@@ -4,6 +4,7 @@ Unit tests for document_parser.py.
 All heavy optional dependencies (fitz, docx, pptx, openpyxl, pytesseract, bs4)
 are mocked so no binaries or optional packages are required.
 """
+
 from __future__ import annotations
 
 import sys
@@ -23,6 +24,7 @@ from gnosis.services.document_parser import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_fake_httpx(html: str):
     """Fake httpx module whose AsyncClient returns `html` as resp.text."""
@@ -60,6 +62,7 @@ def _make_fake_bs4(title_text: str, body_text: str):
     mock_soup = MagicMock()
     # soup.find_all([...]) for boilerplate removal -- return empty list
     mock_soup.find_all.return_value = []
+
     # soup.find('title') -> mock_title_tag
     # soup.find('main') -> mock_main
     # soup.find(id=...) etc -> None (so falls through to main)
@@ -69,6 +72,7 @@ def _make_fake_bs4(title_text: str, body_text: str):
         if tag == "main":
             return mock_main
         return None
+
     mock_soup.find.side_effect = _soup_find
     mock_soup.get_text.return_value = body_text
 
@@ -83,6 +87,7 @@ def _make_fake_bs4(title_text: str, body_text: str):
 # ---------------------------------------------------------------------------
 # ParsedDocument dataclass
 # ---------------------------------------------------------------------------
+
 
 def test_parsed_document_defaults():
     doc = ParsedDocument(title="T", text="body")
@@ -112,25 +117,29 @@ def test_parsed_document_fields():
 # detect_format
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("filename,expected", [
-    ("report.pdf", "pdf"),
-    ("thesis.PDF", "pdf"),
-    ("notes.docx", "docx"),
-    ("notes.doc", "docx"),
-    ("deck.pptx", "pptx"),
-    ("deck.ppt", "pptx"),
-    ("data.xlsx", "xlsx"),
-    ("data.xls", "xlsx"),
-    ("photo.png", "image"),
-    ("photo.jpg", "image"),
-    ("photo.jpeg", "image"),
-    ("photo.webp", "image"),
-    ("scan.tiff", "image"),
-    ("scan.tif", "image"),
-    ("README.md", None),
-    ("archive.zip", None),
-    ("no_extension", None),
-])
+
+@pytest.mark.parametrize(
+    "filename,expected",
+    [
+        ("report.pdf", "pdf"),
+        ("thesis.PDF", "pdf"),
+        ("notes.docx", "docx"),
+        ("notes.doc", "docx"),
+        ("deck.pptx", "pptx"),
+        ("deck.ppt", "pptx"),
+        ("data.xlsx", "xlsx"),
+        ("data.xls", "xlsx"),
+        ("photo.png", "image"),
+        ("photo.jpg", "image"),
+        ("photo.jpeg", "image"),
+        ("photo.webp", "image"),
+        ("scan.tiff", "image"),
+        ("scan.tif", "image"),
+        ("README.md", None),
+        ("archive.zip", None),
+        ("no_extension", None),
+    ],
+)
 def test_detect_format(filename, expected):
     assert detect_format(filename) == expected
 
@@ -138,6 +147,7 @@ def test_detect_format(filename, expected):
 # ---------------------------------------------------------------------------
 # parse_file dispatcher
 # ---------------------------------------------------------------------------
+
 
 def test_parse_file_unsupported_raises():
     with pytest.raises(ValueError, match="Unsupported file format"):
@@ -147,6 +157,7 @@ def test_parse_file_unsupported_raises():
 # ---------------------------------------------------------------------------
 # parse_pdf (mocked fitz)
 # ---------------------------------------------------------------------------
+
 
 def test_parse_pdf_uses_filename_as_title_when_no_meta():
     fake_fitz = MagicMock()
@@ -188,6 +199,7 @@ def test_parse_pdf_missing_fitz_raises_runtime():
 # parse_docx (mocked python-docx)
 # ---------------------------------------------------------------------------
 
+
 def test_parse_docx_extracts_paragraphs():
     p1, p2 = MagicMock(), MagicMock()
     p1.text = "Introduction"
@@ -227,6 +239,7 @@ def test_parse_docx_empty_doc_uses_stem_as_title():
 # parse_pptx (mocked python-pptx)
 # ---------------------------------------------------------------------------
 
+
 def test_parse_pptx_extracts_slide_text():
     shape = MagicMock()
     shape.text = "  Hello Slide  "
@@ -250,6 +263,7 @@ def test_parse_pptx_extracts_slide_text():
 # ---------------------------------------------------------------------------
 # parse_xlsx (mocked openpyxl)
 # ---------------------------------------------------------------------------
+
 
 def test_parse_xlsx_builds_markdown_table():
     header_row = ("Name", "Age", "Score")
@@ -296,6 +310,7 @@ def test_parse_xlsx_skips_empty_sheet():
 # parse_image (mocked pytesseract / Pillow)
 # ---------------------------------------------------------------------------
 
+
 def test_parse_image_extracts_ocr_text():
     fake_pil = MagicMock()
     fake_pil.Image.open.return_value = MagicMock()
@@ -315,16 +330,20 @@ def test_parse_image_extracts_ocr_text():
 # parse_url
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_parse_url_extracts_title_and_text():
     html = (
         "<html><head><title>Test Page</title></head>"
         "<body><main><p>Main content here.</p></main></body></html>"
     )
-    with patch.dict(sys.modules, {
-        "httpx": _make_fake_httpx(html),
-        "bs4": _make_fake_bs4("Test Page", "Main content here."),
-    }):
+    with patch.dict(
+        sys.modules,
+        {
+            "httpx": _make_fake_httpx(html),
+            "bs4": _make_fake_bs4("Test Page", "Main content here."),
+        },
+    ):
         result = await dp.parse_url("https://example.com")
 
     assert result.raw_format == "url"
@@ -348,6 +367,7 @@ async def test_parse_url_fallback_without_bs4():
 # ---------------------------------------------------------------------------
 # parse_file dispatcher
 # ---------------------------------------------------------------------------
+
 
 def test_parse_file_routes_pdf():
     with patch("gnosis.services.document_parser.parse_pdf") as mock_pdf:

@@ -8,6 +8,7 @@ Actual API:
 There is NO build_search_context function. The old tests assumed an LLM-based
 async parse_query — the real implementation is a pure regex/token parser.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -17,6 +18,7 @@ from gnosis.services.query_parser import GQLParseError, ParsedQuery, parse_query
 # ---------------------------------------------------------------------------
 # parse_query (sync) tests
 # ---------------------------------------------------------------------------
+
 
 def test_parse_query_empty_returns_defaults():
     """Empty string → ParsedQuery with defaults."""

@@ -4,6 +4,7 @@ Revision ID: 0002
 Revises:     001_initial
 Create Date: 2026-06-19
 """
+
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -18,7 +19,8 @@ depends_on = None
 
 def upgrade() -> None:
     conn = op.get_bind()
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         CREATE TABLE IF NOT EXISTS review_cards (
             note_id     VARCHAR(20) NOT NULL PRIMARY KEY
                         REFERENCES notes(id) ON DELETE CASCADE,
@@ -28,11 +30,11 @@ def upgrade() -> None:
             due_date    DATE    NOT NULL,
             last_quality INTEGER
         )
-    """))
-    conn.execute(sa.text(
-        "CREATE INDEX IF NOT EXISTS ix_review_cards_due_date"
-        " ON review_cards (due_date)"
-    ))
+    """)
+    )
+    conn.execute(
+        sa.text("CREATE INDEX IF NOT EXISTS ix_review_cards_due_date ON review_cards (due_date)")
+    )
 
 
 def downgrade() -> None:

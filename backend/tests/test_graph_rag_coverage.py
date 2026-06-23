@@ -1,4 +1,5 @@
 """Coverage tests for gnosis/services/graph_rag.py."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -10,20 +11,25 @@ def _make_rag():
     """Construct a GraphRAGService with LightRAG stubbed out."""
     # Patch the module-level import guard so _LIGHTRAG_AVAILABLE stays True
     # and _instances lookup works without a real Ollama/LightRAG install.
-    with patch("gnosis.services.graph_rag._LIGHTRAG_AVAILABLE", True), \
-         patch("gnosis.services.graph_rag.LightRAG", MagicMock(), create=True), \
-         patch("gnosis.services.graph_rag.settings") as s:
+    with (
+        patch("gnosis.services.graph_rag._LIGHTRAG_AVAILABLE", True),
+        patch("gnosis.services.graph_rag.LightRAG", MagicMock(), create=True),
+        patch("gnosis.services.graph_rag.settings") as s,
+    ):
         s.lightrag_data_dir = "/tmp/lightrag_test"
         from gnosis.services.graph_rag import GraphRAGService
+
         svc = GraphRAGService.__new__(GraphRAGService)
         svc._instances = {}
         from pathlib import Path
+
         svc._base_dir = Path("/tmp/lightrag_test")
         return svc
 
 
 def test_graph_rag_instantiates():
     from gnosis.services.graph_rag import GraphRAGService
+
     # Minimal smoke-test: the class can be imported and has expected attrs.
     assert hasattr(GraphRAGService, "ingest_note")
     assert hasattr(GraphRAGService, "query")

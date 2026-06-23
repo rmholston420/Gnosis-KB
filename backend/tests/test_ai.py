@@ -3,6 +3,7 @@ Tests for AI router endpoints.
 
 Uses mock LLM provider to avoid real API calls in CI.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, PropertyMock, patch
@@ -16,7 +17,9 @@ from gnosis.services.llm_provider import llm_provider
 @pytest.mark.asyncio
 async def test_chat_no_provider(client: AsyncClient) -> None:
     """POST /ai/chat returns 503 when no provider is available."""
-    with patch.object(type(llm_provider), "is_available", new_callable=PropertyMock, return_value=False):
+    with patch.object(
+        type(llm_provider), "is_available", new_callable=PropertyMock, return_value=False
+    ):
         with patch("gnosis.routers.ai.graph_rag.is_available", new=AsyncMock(return_value=False)):
             resp = await client.post(
                 "/api/v1/ai/chat",
@@ -36,7 +39,9 @@ async def test_stream_chat_endpoint_exists(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_summarize_not_found(client: AsyncClient, auth_headers: dict) -> None:
     """POST /ai/summarize/nonexistent returns 404."""
-    with patch.object(type(llm_provider), "is_available", new_callable=PropertyMock, return_value=True):
+    with patch.object(
+        type(llm_provider), "is_available", new_callable=PropertyMock, return_value=True
+    ):
         resp = await client.post(
             "/api/v1/ai/summarize/nonexistent-note-id",
             headers=auth_headers,
@@ -47,7 +52,9 @@ async def test_summarize_not_found(client: AsyncClient, auth_headers: dict) -> N
 @pytest.mark.asyncio
 async def test_suggest_tags_not_found(client: AsyncClient, auth_headers: dict) -> None:
     """POST /ai/suggest-tags/nonexistent returns 404."""
-    with patch.object(type(llm_provider), "is_available", new_callable=PropertyMock, return_value=True):
+    with patch.object(
+        type(llm_provider), "is_available", new_callable=PropertyMock, return_value=True
+    ):
         resp = await client.post(
             "/api/v1/ai/suggest-tags/nonexistent-note-id",
             headers=auth_headers,

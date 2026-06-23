@@ -5,6 +5,7 @@ get_sync_status (idle, running, done, error),
 _run_sync_background (success + exception),
 _sync_sse_generator (success + exception).
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -27,6 +28,7 @@ async def _async_gen(*lines):
 # trigger_vault_sync — background (non-streaming)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_trigger_vault_sync_background_returns_202():
     from gnosis.routers.vault import trigger_vault_sync
@@ -45,6 +47,7 @@ async def test_trigger_vault_sync_background_returns_202():
 # trigger_vault_sync — streaming (SSE)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_trigger_vault_sync_stream_returns_streaming_response():
     from fastapi.responses import StreamingResponse
@@ -54,7 +57,9 @@ async def test_trigger_vault_sync_stream_returns_streaming_response():
     bg = MagicMock()
     user = _user(2)
 
-    with patch("gnosis.routers.vault.run_full_sync_for_user", return_value=_async_gen("synced: a.md")):
+    with patch(
+        "gnosis.routers.vault.run_full_sync_for_user", return_value=_async_gen("synced: a.md")
+    ):
         result = await trigger_vault_sync(background_tasks=bg, stream=True, current_user=user)
 
     assert isinstance(result, StreamingResponse)
@@ -64,6 +69,7 @@ async def test_trigger_vault_sync_stream_returns_streaming_response():
 # ---------------------------------------------------------------------------
 # get_sync_status
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_get_sync_status_idle_when_no_entry():
@@ -141,6 +147,7 @@ async def test_get_sync_status_error():
 # _run_sync_background
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_run_sync_background_success():
     from gnosis.routers import vault as vault_mod
@@ -166,7 +173,9 @@ async def test_run_sync_background_exception_sets_error():
         raise RuntimeError("disk error")
         yield  # make it an async generator
 
-    with patch("gnosis.routers.vault.run_full_sync_for_user", side_effect=RuntimeError("disk error")):
+    with patch(
+        "gnosis.routers.vault.run_full_sync_for_user", side_effect=RuntimeError("disk error")
+    ):
         await _run_sync_background(user_id=21)
 
     assert vault_mod._sync_status[21]["state"] == "error"
@@ -176,6 +185,7 @@ async def test_run_sync_background_exception_sets_error():
 # ---------------------------------------------------------------------------
 # _sync_sse_generator
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_sync_sse_generator_yields_sse_lines():

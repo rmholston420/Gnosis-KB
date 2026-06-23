@@ -3,6 +3,7 @@
 LLMProvider imports httpx and openai at MODULE LEVEL, so they must be
 patched as module-level attributes (patch('gnosis.services.llm_provider.httpx', ...)).
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -13,9 +14,11 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_provider(available: list[str] | None = None):
     """Return an LLMProvider with _available pre-set (skips async initialize())."""
     from gnosis.services.llm_provider import LLMProvider
+
     p = LLMProvider()
     if available is not None:
         p._available = list(available)
@@ -25,6 +28,7 @@ def _make_provider(available: list[str] | None = None):
 # ---------------------------------------------------------------------------
 # Properties
 # ---------------------------------------------------------------------------
+
 
 def test_is_available_false_when_no_providers():
     p = _make_provider([])
@@ -81,6 +85,7 @@ def test_active_model_none_when_empty():
 # swap_model
 # ---------------------------------------------------------------------------
 
+
 def test_swap_model_updates_model_name():
     p = _make_provider(["ollama"])
     p.swap_model("mistral:7b")
@@ -96,6 +101,7 @@ def test_swap_model_raises_when_not_ollama():
 # ---------------------------------------------------------------------------
 # _get_client_and_model
 # ---------------------------------------------------------------------------
+
 
 def test_get_client_and_model_raises_when_empty():
     p = _make_provider([])
@@ -115,6 +121,7 @@ def test_get_client_and_model_returns_ollama_first():
 # initialize() — patches httpx so no real network calls
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_initialize_detects_ollama_when_available():
     from gnosis.services.llm_provider import LLMProvider
@@ -131,8 +138,10 @@ async def test_initialize_detects_ollama_when_available():
     fake_httpx.AsyncClient.return_value = fake_client
 
     p = LLMProvider()
-    with patch("gnosis.services.llm_provider.httpx", fake_httpx), \
-         patch("gnosis.services.llm_provider.AsyncOpenAI", MagicMock()):
+    with (
+        patch("gnosis.services.llm_provider.httpx", fake_httpx),
+        patch("gnosis.services.llm_provider.AsyncOpenAI", MagicMock()),
+    ):
         await p.initialize()
 
     assert "ollama" in p._available
@@ -151,8 +160,10 @@ async def test_initialize_skips_ollama_when_unreachable():
     fake_httpx.AsyncClient.return_value = fake_client
 
     p = LLMProvider()
-    with patch("gnosis.services.llm_provider.httpx", fake_httpx), \
-         patch("gnosis.services.llm_provider.AsyncOpenAI", MagicMock()):
+    with (
+        patch("gnosis.services.llm_provider.httpx", fake_httpx),
+        patch("gnosis.services.llm_provider.AsyncOpenAI", MagicMock()),
+    ):
         await p.initialize()
 
     assert "ollama" not in p._available
@@ -161,6 +172,7 @@ async def test_initialize_skips_ollama_when_unreachable():
 # ---------------------------------------------------------------------------
 # complete() — end-to-end with a mocked AsyncOpenAI client
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_complete_returns_string():

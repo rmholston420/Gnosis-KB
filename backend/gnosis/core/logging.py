@@ -6,6 +6,7 @@ When LOG_FORMAT=text (default in dev), falls back to human-readable output.
 Every log line emitted inside a request will carry a `request_id` field
 (populated by RequestIDFilter installed at startup).
 """
+
 from __future__ import annotations
 
 import json
@@ -40,9 +41,7 @@ def configure_logging() -> None:
         handler.setFormatter(JSONFormatter())
     else:
         handler.setFormatter(
-            logging.Formatter(
-                "%(asctime)s %(levelname)-8s [%(request_id)s] %(name)s — %(message)s"
-            )
+            logging.Formatter("%(asctime)s %(levelname)-8s [%(request_id)s] %(name)s — %(message)s")
         )
     root = logging.getLogger()
     root.setLevel(level)

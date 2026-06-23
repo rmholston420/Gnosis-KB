@@ -1,4 +1,5 @@
 """Unit tests for multi-user namespace helpers."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ class FakeUser:
     Using a dataclass here means object construction never touches SQLAlchemy's
     instrumented __init__, so object.__setattr__ calls work without error.
     """
+
     id: int = 1
     email: str = "test@example.com"
     vault_slug: str | None = None
@@ -27,6 +29,7 @@ def _make_user(**kwargs) -> FakeUser:
 # ---------------------------------------------------------------------------
 # resolve_vault_path
 # ---------------------------------------------------------------------------
+
 
 def test_resolve_vault_path_explicit(tmp_path: Path):
     """Explicit vault_path overrides everything."""
@@ -51,6 +54,7 @@ def test_resolve_vault_path_uses_id_when_no_slug():
 # ---------------------------------------------------------------------------
 # scoped_note_stmt
 # ---------------------------------------------------------------------------
+
 
 def test_scoped_note_stmt_includes_null_owner():
     """With include_null_owner=True, legacy notes (owner_id IS NULL) are included."""

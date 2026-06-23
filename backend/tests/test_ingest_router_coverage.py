@@ -8,6 +8,7 @@ The router:
   - Uses get_session (not get_db)
   - No ParsedDocument import needed in tests
 """
+
 from __future__ import annotations
 
 import io
@@ -32,7 +33,10 @@ def _make_app():
     app = FastAPI()
     app.include_router(router, prefix="/api/v1")
     _db = AsyncMock(spec=AsyncSession)
-    async def _get_session(): yield _db
+
+    async def _get_session():
+        yield _db
+
     app.dependency_overrides[get_current_user] = lambda: _user()
     app.dependency_overrides[get_session] = _get_session
     return app
@@ -47,11 +51,19 @@ def _fake_parsed():
 
 def test_ingest_file_pdf_calls_parse():
     """POST /ingest/file with a .pdf should reach parse_file and return 200."""
-    with patch("gnosis.routers.ingest.parse_file", return_value=_fake_parsed()), \
-         patch("gnosis.routers.ingest._ai_enrich", new_callable=AsyncMock,
-               return_value=("Title", "Summary", ["tag1"])), \
-         patch("gnosis.routers.ingest._write_vault_note", new_callable=AsyncMock,
-               return_value="70-sources/20260101-title.md"):
+    with (
+        patch("gnosis.routers.ingest.parse_file", return_value=_fake_parsed()),
+        patch(
+            "gnosis.routers.ingest._ai_enrich",
+            new_callable=AsyncMock,
+            return_value=("Title", "Summary", ["tag1"]),
+        ),
+        patch(
+            "gnosis.routers.ingest._write_vault_note",
+            new_callable=AsyncMock,
+            return_value="70-sources/20260101-title.md",
+        ),
+    ):
         resp = TestClient(_make_app()).post(
             "/api/v1/ingest/file",
             files={"file": ("doc.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
@@ -84,20 +96,46 @@ def test_ingest_file_parse_error_returns_422():
 def test_ingest_url_ok():
     """POST /ingest/url with a valid URL should return 200."""
     fake = MagicMock()
-    fake.title = "Article"; fake.text = "Body."
-    with patch("gnosis.routers.ingest.parse_url" if hasattr(__import__("gnosis.routers.ingest", fromlist=["parse_url"]), "parse_url") else "gnosis.services.document_parser.parse_url",
-               new_callable=AsyncMock, return_value=fake, create=True), \
-         patch("gnosis.routers.ingest._ai_enrich", new_callable=AsyncMock,
-               return_value=("Article", "Summary", [])), \
-         patch("gnosis.routers.ingest._write_vault_note", new_callable=AsyncMock,
-               return_value="70-sources/article.md"):
+    fake.title = "Article"
+    fake.text = "Body."
+    with (
+        patch(
+            "gnosis.routers.ingest.parse_url"
+            if hasattr(__import__("gnosis.routers.ingest", fromlist=["parse_url"]), "parse_url")
+            else "gnosis.services.document_parser.parse_url",
+            new_callable=AsyncMock,
+            return_value=fake,
+            create=True,
+        ),
+        patch(
+            "gnosis.routers.ingest._ai_enrich",
+            new_callable=AsyncMock,
+            return_value=("Article", "Summary", []),
+        ),
+        patch(
+            "gnosis.routers.ingest._write_vault_note",
+            new_callable=AsyncMock,
+            return_value="70-sources/article.md",
+        ),
+    ):
         # patch parse_url at the right level
         import gnosis.routers.ingest as ingest_mod
-        with patch.object(ingest_mod, "_ai_enrich", new=AsyncMock(return_value=("Article","S",[]))), \
-             patch.object(ingest_mod, "_write_vault_note", new=AsyncMock(return_value="70-sources/a.md")):
+
+        with (
+            patch.object(
+                ingest_mod, "_ai_enrich", new=AsyncMock(return_value=("Article", "S", []))
+            ),
+            patch.object(
+                ingest_mod, "_write_vault_note", new=AsyncMock(return_value="70-sources/a.md")
+            ),
+        ):
             # patch the lazy import
-            with patch("gnosis.services.document_parser.parse_url",
-                       new_callable=AsyncMock, return_value=fake, create=True):
+            with patch(
+                "gnosis.services.document_parser.parse_url",
+                new_callable=AsyncMock,
+                return_value=fake,
+                create=True,
+            ):
                 resp = TestClient(_make_app()).post(
                     "/api/v1/ingest/url",
                     json={"url": "https://example.com/article"},

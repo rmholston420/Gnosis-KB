@@ -7,6 +7,7 @@ Covers:
 - filter branches: folder, note_type, tags
 - output shape and elapsed_ms
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -16,9 +17,16 @@ import pytest
 from gnosis.services.hybrid_search import hybrid_search
 
 
-def _make_point(note_id="n1", title="T", folder="00-inbox",
-               note_type="permanent", status="draft", tags=None,
-               score=0.9, text_snippet="snippet"):
+def _make_point(
+    note_id="n1",
+    title="T",
+    folder="00-inbox",
+    note_type="permanent",
+    status="draft",
+    tags=None,
+    score=0.9,
+    text_snippet="snippet",
+):
     p = MagicMock()
     p.id = "uuid-1"
     p.score = score
@@ -51,9 +59,7 @@ def _patch_deps(monkeypatch):
     """Patch get_qdrant_client, get_settings, and embed_dense for every test."""
     settings = MagicMock()
     settings.qdrant_collection_name = "gnosis_notes"
-    monkeypatch.setattr(
-        "gnosis.services.hybrid_search.get_settings", lambda: settings
-    )
+    monkeypatch.setattr("gnosis.services.hybrid_search.get_settings", lambda: settings)
 
 
 def test_empty_owner_ids_returns_empty():

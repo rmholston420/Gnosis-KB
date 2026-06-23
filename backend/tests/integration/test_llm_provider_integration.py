@@ -14,6 +14,7 @@ Coverage targets (llm_provider.py)
   181->179 complete() falls through to next provider on exception
   184-187  stream() provider exception fallback path
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -25,6 +26,7 @@ from gnosis.services.llm_provider import LLMProvider
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _mock_ollama_response():
     """Minimal httpx.Response-like mock for /api/tags returning 200."""
@@ -58,21 +60,26 @@ async def _async_iter(items):
 # initialize() – Ollama probe succeeds
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_initialize_ollama_available():
     """When Ollama /api/tags returns 200 the provider adds 'ollama' to _available."""
     provider = LLMProvider()
     mock_resp = _mock_ollama_response()
 
-    with patch("gnosis.services.llm_provider.settings") as mock_settings, \
-         patch("gnosis.services.llm_provider.httpx.AsyncClient") as mock_http:
+    with (
+        patch("gnosis.services.llm_provider.settings") as mock_settings,
+        patch("gnosis.services.llm_provider.httpx.AsyncClient") as mock_http,
+    ):
         mock_settings.ollama_base_url = "http://localhost:11434"
         mock_settings.ollama_llm_model = "llama3"
         mock_settings.groq_api_key = ""
         mock_settings.openai_api_key = ""
 
         mock_client_cm = AsyncMock()
-        mock_client_cm.__aenter__ = AsyncMock(return_value=AsyncMock(get=AsyncMock(return_value=mock_resp)))
+        mock_client_cm.__aenter__ = AsyncMock(
+            return_value=AsyncMock(get=AsyncMock(return_value=mock_resp))
+        )
         mock_client_cm.__aexit__ = AsyncMock(return_value=False)
         mock_http.return_value = mock_client_cm
 
@@ -87,20 +94,25 @@ async def test_initialize_ollama_available():
 # initialize() – Ollama unreachable, Groq key set
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_initialize_ollama_unreachable_groq_fallback():
     """When Ollama is unreachable and groq_api_key is set, 'groq' is registered."""
     provider = LLMProvider()
 
-    with patch("gnosis.services.llm_provider.settings") as mock_settings, \
-         patch("gnosis.services.llm_provider.httpx.AsyncClient") as mock_http:
+    with (
+        patch("gnosis.services.llm_provider.settings") as mock_settings,
+        patch("gnosis.services.llm_provider.httpx.AsyncClient") as mock_http,
+    ):
         mock_settings.ollama_base_url = "http://localhost:11434"
         mock_settings.ollama_llm_model = "llama3"
         mock_settings.groq_api_key = "gsk_test_key"
         mock_settings.openai_api_key = ""
 
         mock_client_cm = AsyncMock()
-        mock_client_cm.__aenter__ = AsyncMock(return_value=AsyncMock(get=AsyncMock(side_effect=Exception("refused"))))
+        mock_client_cm.__aenter__ = AsyncMock(
+            return_value=AsyncMock(get=AsyncMock(side_effect=Exception("refused")))
+        )
         mock_client_cm.__aexit__ = AsyncMock(return_value=False)
         mock_http.return_value = mock_client_cm
 
@@ -116,20 +128,25 @@ async def test_initialize_ollama_unreachable_groq_fallback():
 # initialize() – OpenAI only
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_initialize_openai_only():
     """When only openai_api_key is set, 'openai' is registered."""
     provider = LLMProvider()
 
-    with patch("gnosis.services.llm_provider.settings") as mock_settings, \
-         patch("gnosis.services.llm_provider.httpx.AsyncClient") as mock_http:
+    with (
+        patch("gnosis.services.llm_provider.settings") as mock_settings,
+        patch("gnosis.services.llm_provider.httpx.AsyncClient") as mock_http,
+    ):
         mock_settings.ollama_base_url = "http://localhost:11434"
         mock_settings.ollama_llm_model = "llama3"
         mock_settings.groq_api_key = ""
         mock_settings.openai_api_key = "sk-test"
 
         mock_client_cm = AsyncMock()
-        mock_client_cm.__aenter__ = AsyncMock(return_value=AsyncMock(get=AsyncMock(side_effect=Exception("refused"))))
+        mock_client_cm.__aenter__ = AsyncMock(
+            return_value=AsyncMock(get=AsyncMock(side_effect=Exception("refused")))
+        )
         mock_client_cm.__aexit__ = AsyncMock(return_value=False)
         mock_http.return_value = mock_client_cm
 
@@ -144,6 +161,7 @@ async def test_initialize_openai_only():
 # swap_model() – Ollama not available raises RuntimeError  (line 125)
 # ---------------------------------------------------------------------------
 
+
 def test_swap_model_raises_when_ollama_unavailable():
     provider = LLMProvider()
     # _available is empty by default
@@ -155,6 +173,7 @@ def test_swap_model_raises_when_ollama_unavailable():
 # complete() – first provider fails, second succeeds  (lines 181->179)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_complete_falls_back_on_provider_failure():
     """complete() should skip a failing provider and succeed on the next one."""
@@ -165,7 +184,9 @@ async def test_complete_falls_back_on_provider_failure():
     failing_client.chat.completions.create = AsyncMock(side_effect=Exception("groq down"))
 
     succeeding_client = AsyncMock()
-    succeeding_client.chat.completions.create = AsyncMock(return_value=_mock_chat_response("fallback answer"))
+    succeeding_client.chat.completions.create = AsyncMock(
+        return_value=_mock_chat_response("fallback answer")
+    )
 
     provider._groq_client = failing_client
     provider._openai_client = succeeding_client
@@ -177,6 +198,7 @@ async def test_complete_falls_back_on_provider_failure():
 # ---------------------------------------------------------------------------
 # complete() – all providers fail → RuntimeError
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_complete_raises_when_all_providers_fail():
@@ -194,6 +216,7 @@ async def test_complete_raises_when_all_providers_fail():
 # ---------------------------------------------------------------------------
 # stream() – provider exception falls back to next  (lines 184-187)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_stream_falls_back_on_provider_failure():

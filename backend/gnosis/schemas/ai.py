@@ -1,4 +1,5 @@
 """Pydantic schemas for AI router requests and responses."""
+
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
@@ -12,9 +13,7 @@ class ChatRequest(BaseModel):
         default="hybrid",
         description="LightRAG query mode: local | global | hybrid",
     )
-    session_id: str | None = Field(
-        default=None, description="Optional chat session ID for history"
-    )
+    session_id: str | None = Field(default=None, description="Optional chat session ID for history")
 
 
 class ChatResponse(BaseModel):
@@ -36,12 +35,8 @@ class LinkSuggestionsResponse(BaseModel):
     """Response from /ai/suggest-links/{note_id}."""
 
     note_id: str
-    suggestions: list[str] = Field(
-        description="List of suggested note titles to link to"
-    )
-    rationale: list[str] = Field(
-        description="Matching rationale for each suggestion"
-    )
+    suggestions: list[str] = Field(description="List of suggested note titles to link to")
+    rationale: list[str] = Field(description="Matching rationale for each suggestion")
 
 
 class TagSuggestionsResponse(BaseModel):
@@ -57,9 +52,7 @@ class CritiqueResponse(BaseModel):
     note_id: str
     atomicity: str = Field(description="Is there exactly one idea?")
     connectivity: str = Field(description="Does it have sufficient outgoing links?")
-    self_containedness: str = Field(
-        description="Can it be understood without external context?"
-    )
+    self_containedness: str = Field(description="Can it be understood without external context?")
     insight_density: str = Field(description="Does it capture why this matters?")
     overall: str = Field(description="Overall Zettelkasten quality assessment")
 
@@ -101,16 +94,13 @@ class IngestNoteResponse(BaseModel):
 # MOC Generator
 # ---------------------------------------------------------------------------
 
+
 class MocSection(BaseModel):
     """A single H2 section within a generated MOC."""
 
     heading: str = Field(description="Section heading (used as H2 in the MOC note)")
-    wikilinks: list[str] = Field(
-        description="Titles of notes to link under this heading"
-    )
-    summary: str = Field(
-        description="1-2 sentence description of what this section covers"
-    )
+    wikilinks: list[str] = Field(description="Titles of notes to link under this heading")
+    summary: str = Field(description="1-2 sentence description of what this section covers")
 
 
 class MocRequest(BaseModel):
@@ -145,7 +135,5 @@ class MocResponse(BaseModel):
     moc_title: str = Field(description="Suggested title for the MOC note")
     vault_path: str = Field(description="Suggested file path: 80-meta/<slug>.md")
     sections: list[MocSection]
-    markdown: str = Field(
-        description="Complete ready-to-save Markdown body for the MOC note"
-    )
+    markdown: str = Field(description="Complete ready-to-save Markdown body for the MOC note")
     note_count: int = Field(description="Number of vault notes scanned")

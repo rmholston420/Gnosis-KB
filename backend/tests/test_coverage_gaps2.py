@@ -1,4 +1,5 @@
 """Coverage for miscellaneous gaps – admin reindex, review scheduling/unenroll."""
+
 from __future__ import annotations
 
 import pytest
@@ -10,6 +11,7 @@ pytestmark = pytest.mark.asyncio
 # ---------------------------------------------------------------------------
 # Admin – POST /admin/reindex
 # ---------------------------------------------------------------------------
+
 
 class TestAdminReindex:
     async def test_admin_reindex_no_legacy_notes(self, async_client, test_db):
@@ -33,6 +35,7 @@ class TestAdminReindex:
 # Admin – unknown action 404
 # ---------------------------------------------------------------------------
 
+
 class TestAdminUnknownAction:
     async def test_admin_unknown_action(self, async_client):
         resp = await async_client.post("/api/v1/admin/action", json={"action": "noop"})
@@ -46,6 +49,7 @@ class TestAdminUnknownAction:
 # (self, client, vault_dir) — vault_dir is required so conftest wires
 # settings.vault_path to a real temp directory before the app starts.
 # ---------------------------------------------------------------------------
+
 
 class TestReviewScheduling:
     async def test_submit_review_updates_note(self, client, vault_dir):
@@ -81,6 +85,7 @@ class TestReviewScheduling:
 # Review unenroll – enroll then DELETE
 # ---------------------------------------------------------------------------
 
+
 class TestReviewUnenroll:
     async def test_unenroll_note(self, client, vault_dir):
         note_resp = await client.post(
@@ -113,9 +118,11 @@ class TestReviewUnenroll:
 # LightRAG availability (unit)
 # ---------------------------------------------------------------------------
 
+
 class TestLightragAvailableCheckFalse:
     def test_returns_bool(self):
         from gnosis.routers.ai import _lightrag_available
+
         result = _lightrag_available()
         assert isinstance(result, bool)
 
@@ -124,17 +131,25 @@ class TestLightragAvailableCheckFalse:
 # ingest_note 500
 # ---------------------------------------------------------------------------
 
+
 class TestIngestNoteRaises500:
     async def test_ingest_note_exception_returns_500(self, client, vault_dir):
         note_resp = await client.post(
             "/api/v1/notes/",
-            json={"title": "Ingest err note", "body": "body", "folder": "10-zettelkasten", "tags": []},
+            json={
+                "title": "Ingest err note",
+                "body": "body",
+                "folder": "10-zettelkasten",
+                "tags": [],
+            },
         )
         assert note_resp.status_code == 201
         note_id = note_resp.json()["id"]
 
-        with patch("gnosis.routers.ai._lightrag_available", return_value=True), \
-             patch("gnosis.routers.ai.graph_rag") as mock_gr:
+        with (
+            patch("gnosis.routers.ai._lightrag_available", return_value=True),
+            patch("gnosis.routers.ai.graph_rag") as mock_gr,
+        ):
             mock_gr.ingest_note = AsyncMock(side_effect=RuntimeError("fail"))
             resp = await client.post(f"/api/v1/ai/ingest-note/{note_id}")
 

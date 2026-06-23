@@ -18,6 +18,7 @@ To get a superuser client we import conftest._make_client and
 conftest._fake_require_user patterns, then override with our own
 _fake_superuser.  This ensures the exact same instrumented app is used.
 """
+
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
@@ -35,6 +36,7 @@ from gnosis.main import create_app
 # ---------------------------------------------------------------------------
 # Superuser fake (vault_display_name required by UserProfile.model_validate)
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class _SuperUser:
@@ -56,6 +58,7 @@ async def _fake_superuser() -> _SuperUser:
 # superuser_client — mirrors conftest._make_client exactly,
 # only differs in auth_override=_fake_superuser
 # ---------------------------------------------------------------------------
+
 
 @pytest_asyncio.fixture
 async def superuser_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient, None]:
@@ -107,6 +110,7 @@ async def superuser_client(test_engine, vault_dir) -> AsyncGenerator[AsyncClient
 # GET /users/me  (line 134)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_get_me_superuser(superuser_client):
     """GET /users/me returns 200 with superuser data."""
@@ -120,6 +124,7 @@ async def test_get_me_superuser(superuser_client):
 # ---------------------------------------------------------------------------
 # GET /users/  (lines 222-243)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_list_users_superuser(superuser_client):
@@ -143,14 +148,18 @@ async def test_list_users_forbidden_normal_user(client):
 # POST /users/  (create_user superuser guard)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_create_user_superuser(superuser_client):
     """Superuser POST /users/ does NOT get 403 — 201 or env-level error is fine."""
-    resp = await superuser_client.post("/api/v1/users/", json={
-        "email": "newuser@gnosis.local",
-        "password": "securepassword",
-        "full_name": "New User",
-    })
+    resp = await superuser_client.post(
+        "/api/v1/users/",
+        json={
+            "email": "newuser@gnosis.local",
+            "password": "securepassword",
+            "full_name": "New User",
+        },
+    )
     # 403 = guard wrongly triggered (test failure)
     # 201 = full success
     # 422/500 = env issue (acceptable; guard was bypassed)
@@ -160,16 +169,20 @@ async def test_create_user_superuser(superuser_client):
 @pytest.mark.asyncio
 async def test_create_user_forbidden_normal_user(client):
     """Normal user POST /users/ → 403."""
-    resp = await client.post("/api/v1/users/", json={
-        "email": "hacker@evil.com",
-        "password": "password123",
-    })
+    resp = await client.post(
+        "/api/v1/users/",
+        json={
+            "email": "hacker@evil.com",
+            "password": "password123",
+        },
+    )
     assert resp.status_code == 403
 
 
 # ---------------------------------------------------------------------------
 # PATCH /users/me/vaults/{grant_id}  (lines 284-288)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_update_grant_404_not_found(superuser_client):
@@ -184,6 +197,7 @@ async def test_update_grant_404_not_found(superuser_client):
 # ---------------------------------------------------------------------------
 # DELETE /users/me/vaults/{grant_id}  (lines 325-326)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_revoke_grant_404_not_found(superuser_client):

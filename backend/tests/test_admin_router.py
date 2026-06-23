@@ -1,4 +1,5 @@
 """Tests for routers/admin.py — admin reindex endpoint."""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -12,6 +13,7 @@ from gnosis.models.user import User
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 async def _make_user(db, user_id: int = 1, email: str = "admin@gnosis.local") -> User:
     user = User(
@@ -52,6 +54,7 @@ async def _make_note(
 # ---------------------------------------------------------------------------
 # POST /api/v1/admin/reindex
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_reindex_no_legacy_notes(client, test_db):
@@ -113,6 +116,7 @@ async def test_reindex_requires_admin_user(test_engine, vault_dir):
 
     with p1, p2, p3:
         from gnosis import config
+
         settings = config.get_settings()
         settings.vault_path = str(vault_dir)
 

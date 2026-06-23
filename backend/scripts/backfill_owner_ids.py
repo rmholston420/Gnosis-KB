@@ -14,6 +14,7 @@ After stamping the DB rows the script calls ``vector_upsert_note`` for each
 affected note so Qdrant payloads are updated with the correct owner_id
 filter field.  This is idempotent — safe to run multiple times.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -39,9 +40,7 @@ logging.basicConfig(
 logger = logging.getLogger("backfill_owner_ids")
 
 
-async def _resolve_owner_for_vault_path(
-    vault_path: str, users: list[User]
-) -> int | None:
+async def _resolve_owner_for_vault_path(vault_path: str, users: list[User]) -> int | None:
     """Return user.id whose vault root is a prefix of *vault_path*, or None."""
     p = Path(vault_path)
     # vault_path is stored relative to VAULT_ROOT in the DB
@@ -83,9 +82,7 @@ async def run_backfill() -> None:
         stamped = 0
         unresolved = 0
         for note in orphan_notes:
-            owner_id = await _resolve_owner_for_vault_path(
-                note.vault_path or "", users
-            )
+            owner_id = await _resolve_owner_for_vault_path(note.vault_path or "", users)
             if owner_id is not None:
                 await db.execute(
                     update(Note)
@@ -98,13 +95,15 @@ async def run_backfill() -> None:
                 unresolved += 1
                 logger.debug(
                     "Could not resolve owner for note %s (vault_path=%s) — skipping",
-                    note.id, note.vault_path,
+                    note.id,
+                    note.vault_path,
                 )
 
         await db.commit()
         logger.info(
             "Backfill DB phase complete: %d stamped, %d unresolved",
-            stamped, unresolved,
+            stamped,
+            unresolved,
         )
 
         # 4. Re-upsert affected notes into Qdrant with corrected owner_id
@@ -125,6 +124,7 @@ async def run_backfill() -> None:
                     )
                     # Fetch tags for this note via the association table
                     from gnosis.models.tag import NoteTag, Tag
+
                     tag_rows = await db.execute(
                         select(Tag.name)
                         .join(NoteTag, NoteTag.c.tag_id == Tag.name)
@@ -143,14 +143,10 @@ async def run_backfill() -> None:
                         owner_id=note.owner_id,
                     )
                     await db.execute(
-                        update(Note)
-                        .where(Note.id == note.id)
-                        .values(vector_indexed=True)
+                        update(Note).where(Note.id == note.id).values(vector_indexed=True)
                     )
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "Qdrant re-index failed for note %s: %s", note.id, exc
-                    )
+                    logger.warning("Qdrant re-index failed for note %s: %s", note.id, exc)
             await db.commit()
             logger.info("Qdrant re-index phase complete.")
 

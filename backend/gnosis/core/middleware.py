@@ -9,6 +9,7 @@ RequestIDMiddleware
 TimingMiddleware
     Adds X-Process-Time-ms to every response for quick latency observation.
 """
+
 from __future__ import annotations
 
 import logging

@@ -7,6 +7,7 @@ Covers:
 
 All DB calls are mocked — no real Postgres needed.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -32,9 +33,18 @@ def _make_db(rows=None, raise_exc=None):
     return db
 
 
-def _row(note_id="n1", title="T", slug="t", folder="00-inbox",
-         note_type="permanent", status="draft", word_count=5,
-         score=0.75, highlight="<mark>hi</mark>", tags=_UNSET):
+def _row(
+    note_id="n1",
+    title="T",
+    slug="t",
+    folder="00-inbox",
+    note_type="permanent",
+    status="draft",
+    word_count=5,
+    score=0.75,
+    highlight="<mark>hi</mark>",
+    tags=_UNSET,
+):
     return {
         "note_id": note_id,
         "title": title,
@@ -88,8 +98,7 @@ async def test_fulltext_search_with_tags_filter():
 @pytest.mark.asyncio
 async def test_fulltext_search_null_optional_fields():
     """slug/folder/note_type/status/highlight/tags may be None/falsy in the row."""
-    row = _row(slug=None, folder=None, note_type=None,
-               status=None, highlight=None, tags=None)
+    row = _row(slug=None, folder=None, note_type=None, status=None, highlight=None, tags=None)
     db = _make_db(rows=[row])
     result = await fulltext_search(db, "q")
     r = result["results"][0]
@@ -105,7 +114,8 @@ async def test_fulltext_search_null_optional_fields():
 async def test_fulltext_search_combined_filters():
     db = _make_db(rows=[])
     result = await fulltext_search(
-        db, "q",
+        db,
+        "q",
         folder="01-projects",
         note_type="permanent",
         tags=["x"],

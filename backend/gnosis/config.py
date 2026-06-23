@@ -8,6 +8,7 @@ Exports
 settings          : Settings        -- singleton instance
 get_settings      : () -> Settings  -- lru_cache shim for FastAPI Depends()
 """
+
 from __future__ import annotations
 
 from functools import lru_cache
@@ -19,9 +20,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Central config object — instantiated once and imported everywhere."""
 
-    model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
-    )
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # Database
     database_url: str = "sqlite+aiosqlite:///./gnosis_dev.db"

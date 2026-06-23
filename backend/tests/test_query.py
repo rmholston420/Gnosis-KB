@@ -1,4 +1,5 @@
 """Tests for the GQL query engine — parser + executor."""
+
 from __future__ import annotations
 
 import pytest
@@ -11,6 +12,7 @@ from gnosis.services.query_parser import GQLParseError, ParsedQuery, execute_que
 # ---------------------------------------------------------------------------
 # Parser — happy-path tests
 # ---------------------------------------------------------------------------
+
 
 def test_parse_from_only():
     q = parse_query("FROM 10-zettelkasten")
@@ -88,6 +90,7 @@ def test_parse_empty_query_runs_defaults():
 # ---------------------------------------------------------------------------
 # Parser — edge-case / error paths
 # ---------------------------------------------------------------------------
+
 
 def test_parse_query_too_long_raises():
     with pytest.raises(GQLParseError, match="exceeds maximum length"):
@@ -229,9 +232,7 @@ async def _seed_notes(db):
     await db.flush()
 
     # NoteTag is a Core Table, not a mapped class — use insert()
-    await db.execute(
-        insert(NoteTag).values(note_id=n1.id, tag_id="zettelkasten")
-    )
+    await db.execute(insert(NoteTag).values(note_id=n1.id, tag_id="zettelkasten"))
     await db.commit()
     return n1, n2, tag
 

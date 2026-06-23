@@ -1,4 +1,5 @@
 """Tests for auth router — register, login, me endpoints."""
+
 from __future__ import annotations
 
 import pytest

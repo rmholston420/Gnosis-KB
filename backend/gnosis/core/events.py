@@ -19,13 +19,15 @@ async def _ensure_default_user() -> None:
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(User).where(User.username == "admin"))
         if result.scalar_one_or_none() is None:
-            db.add(User(
-                username="admin",
-                email="admin@gnosis.local",
-                hashed_password=get_password_hash("gnosis"),
-                is_active=True,
-                is_superuser=True,
-            ))
+            db.add(
+                User(
+                    username="admin",
+                    email="admin@gnosis.local",
+                    hashed_password=get_password_hash("gnosis"),
+                    is_active=True,
+                    is_superuser=True,
+                )
+            )
             await db.commit()
             logger.info("Default admin user created (username=admin password=gnosis)")
 
@@ -51,6 +53,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # 3. Vault watcher
     try:
         from gnosis.services.vault_sync import start_vault_watcher
+
         app.state.vault_watcher = await start_vault_watcher()
         logger.info("Vault watcher started")
     except Exception as exc:
@@ -60,6 +63,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # 4. LightRAG — entirely optional, degrades gracefully
     try:
         from gnosis.services.graph_rag import init_lightrag
+
         await init_lightrag()
         logger.info("LightRAG initialized")
     except Exception as exc:

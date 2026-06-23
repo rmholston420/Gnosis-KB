@@ -8,6 +8,7 @@ Real API:
 
 All fastembed model loading is mocked via patch on the module-level getters.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -15,6 +16,7 @@ from unittest.mock import MagicMock, patch
 # ---------------------------------------------------------------------------
 # embed_dense
 # ---------------------------------------------------------------------------
+
 
 def test_embed_dense_returns_list_of_floats():
     from gnosis.services.embeddings import embed_dense
@@ -59,6 +61,7 @@ def test_embed_dense_values_are_floats():
 # embed_colbert
 # ---------------------------------------------------------------------------
 
+
 def test_embed_colbert_returns_list_of_lists():
     from gnosis.services.embeddings import embed_colbert
 
@@ -92,6 +95,7 @@ def test_embed_colbert_calls_model_embed():
 # get_dense_model — lazy loading and caching
 # ---------------------------------------------------------------------------
 
+
 def test_get_dense_model_caches_instance():
     """Calling get_dense_model() twice returns the same object."""
     import gnosis.services.embeddings as emb
@@ -115,8 +119,10 @@ def test_get_dense_model_caches_instance():
 # Module exports
 # ---------------------------------------------------------------------------
 
+
 def test_embeddings_module_exports_expected_names():
     import gnosis.services.embeddings as emb
+
     assert callable(emb.embed_dense)
     assert callable(emb.embed_colbert)
     assert callable(emb.get_dense_model)

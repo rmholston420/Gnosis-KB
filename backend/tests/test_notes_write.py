@@ -18,6 +18,7 @@ resolve_vault_path:
 db.add / db.expunge are synchronous SQLAlchemy methods; configure the
 AsyncMock session so those attributes are plain MagicMock (not coroutines).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -34,16 +35,17 @@ from gnosis.schemas.note import NoteCreate, NoteUpdate
 # Patch targets
 # ---------------------------------------------------------------------------
 
-_WRITE_MODULE   = "gnosis.routers.notes.write_note_file"           # module-level import
-_WRITE_DAILY    = "gnosis.services.markdown_parser.write_note_file" # local import in daily handler
-_RESOLVE        = "gnosis.core.namespace.resolve_vault_path"
-_GET_404        = "gnosis.routers.notes._get_note_or_404"
-_UPSERT         = "gnosis.routers.notes._upsert_tags"
+_WRITE_MODULE = "gnosis.routers.notes.write_note_file"  # module-level import
+_WRITE_DAILY = "gnosis.services.markdown_parser.write_note_file"  # local import in daily handler
+_RESOLVE = "gnosis.core.namespace.resolve_vault_path"
+_GET_404 = "gnosis.routers.notes._get_note_or_404"
+_UPSERT = "gnosis.routers.notes._upsert_tags"
 
 
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
+
 
 def _user(uid=1, username="alice"):
     u = MagicMock()
@@ -53,10 +55,20 @@ def _user(uid=1, username="alice"):
     return u
 
 
-def _note_orm(note_id="20240101000000", title="Test Note", slug="test-note",
-              body="hello", body_html="<p>hello</p>", folder="00-inbox",
-              note_type="permanent", status="active", tags=None,
-              incoming_links=None, outgoing_links=None, owner_id=1):
+def _note_orm(
+    note_id="20240101000000",
+    title="Test Note",
+    slug="test-note",
+    body="hello",
+    body_html="<p>hello</p>",
+    folder="00-inbox",
+    note_type="permanent",
+    status="active",
+    tags=None,
+    incoming_links=None,
+    outgoing_links=None,
+    owner_id=1,
+):
     n = MagicMock()
     n.id = note_id
     n.title = title
@@ -95,13 +107,14 @@ def _async_db(one_or_none=None):
     # add / expunge / delete are synchronous on AsyncSession
     sess.add = MagicMock()
     sess.expunge = MagicMock()
-    sess.delete = AsyncMock()   # db.delete(note) IS awaited in hard-delete
+    sess.delete = AsyncMock()  # db.delete(note) IS awaited in hard-delete
     return sess
 
 
 # ---------------------------------------------------------------------------
 # create_note
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_create_note_happy_path():
@@ -111,8 +124,12 @@ async def test_create_note_happy_path():
     returned_note = _note_orm(title="My Note")
 
     data = NoteCreate(
-        title="My Note", body="Some body text.",
-        folder="00-inbox", note_type="permanent", status="draft", tags=[],
+        title="My Note",
+        body="Some body text.",
+        folder="00-inbox",
+        note_type="permanent",
+        status="draft",
+        tags=[],
     )
 
     with (
@@ -134,8 +151,12 @@ async def test_create_note_slug_conflict_raises():
     db = _async_db(one_or_none=_note_orm())
 
     data = NoteCreate(
-        title="Existing Note", body="body",
-        folder="00-inbox", note_type="permanent", status="draft", tags=[],
+        title="Existing Note",
+        body="body",
+        folder="00-inbox",
+        note_type="permanent",
+        status="draft",
+        tags=[],
     )
 
     with (
@@ -154,8 +175,11 @@ async def test_create_note_with_tags_calls_upsert():
     returned_note = _note_orm(title="Tagged Note")
 
     data = NoteCreate(
-        title="Tagged Note", body="body",
-        folder="10-zettelkasten", note_type="permanent", status="active",
+        title="Tagged Note",
+        body="body",
+        folder="10-zettelkasten",
+        note_type="permanent",
+        status="active",
         tags=["zettel", "idea"],
     )
 
@@ -175,12 +199,17 @@ async def test_create_note_with_tags_calls_upsert():
 async def test_create_note_vault_write_error_raises():
     """create_note wraps filesystem errors in VaultWriteError."""
     from gnosis.core.exceptions import VaultWriteError
+
     user = _user()
     db = _async_db(one_or_none=None)
 
     data = NoteCreate(
-        title="Boom Note", body="body",
-        folder="00-inbox", note_type="permanent", status="draft", tags=[],
+        title="Boom Note",
+        body="body",
+        folder="00-inbox",
+        note_type="permanent",
+        status="draft",
+        tags=[],
     )
 
     with (
@@ -195,12 +224,13 @@ async def test_create_note_vault_write_error_raises():
 # update_note
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_update_note_title_and_body():
     """update_note applies title/body changes and returns updated NoteRead."""
     user = _user()
     existing = _note_orm(note_id="n1", title="Old Title", body="old body")
-    updated  = _note_orm(note_id="n1", title="New Title", body="new body")
+    updated = _note_orm(note_id="n1", title="New Title", body="new body")
     db = _async_db()
 
     with (
@@ -211,7 +241,9 @@ async def test_update_note_title_and_body():
         result = await update_note(
             note_id="n1",
             data=NoteUpdate(title="New Title", body="new body"),
-            db=db, current_user=user, owner_ids={1},
+            db=db,
+            current_user=user,
+            owner_ids={1},
         )
 
     db.commit.assert_awaited_once()
@@ -235,7 +267,9 @@ async def test_update_note_tags_replaced():
         await update_note(
             note_id="n1",
             data=NoteUpdate(tags=["new-tag"]),
-            db=db, current_user=user, owner_ids={1},
+            db=db,
+            current_user=user,
+            owner_ids={1},
         )
 
     mock_upsert.assert_awaited_once()
@@ -259,7 +293,9 @@ async def test_update_note_status_only():
         result = await update_note(
             note_id="n1",
             data=NoteUpdate(status="active"),
-            db=db, current_user=user, owner_ids={1},
+            db=db,
+            current_user=user,
+            owner_ids={1},
         )
 
     mock_upsert.assert_not_awaited()
@@ -270,6 +306,7 @@ async def test_update_note_status_only():
 async def test_update_note_missing_raises():
     """update_note propagates NoteNotFoundError (→ 404) from _get_note_or_404."""
     from gnosis.core.exceptions import NoteNotFoundError
+
     user = _user()
     db = _async_db()
 
@@ -278,13 +315,16 @@ async def test_update_note_missing_raises():
             await update_note(
                 note_id="n1",
                 data=NoteUpdate(title="X"),
-                db=db, current_user=user, owner_ids={1},
+                db=db,
+                current_user=user,
+                owner_ids={1},
             )
 
 
 # ---------------------------------------------------------------------------
 # delete_note
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_delete_note_soft():
@@ -317,6 +357,7 @@ async def test_delete_note_hard():
 async def test_delete_note_missing_raises():
     """delete_note raises when the note is not found."""
     from gnosis.core.exceptions import NoteNotFoundError
+
     db = _async_db()
 
     with patch(_GET_404, AsyncMock(side_effect=NoteNotFoundError("missing"))):
@@ -328,6 +369,7 @@ async def test_delete_note_missing_raises():
 # get_or_create_daily_note
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_daily_note_existing_returned():
     """When a daily note already exists, it is returned without a DB write."""
@@ -335,9 +377,7 @@ async def test_daily_note_existing_returned():
     existing = _note_orm(note_id="daily1", note_type="journal")
     db = _async_db(one_or_none=existing)
 
-    result = await get_or_create_daily_note(
-        db=db, current_user=user, owner_ids={1}
-    )
+    result = await get_or_create_daily_note(db=db, current_user=user, owner_ids={1})
 
     db.add.assert_not_called()
     assert result.note_type == "journal"
@@ -355,9 +395,7 @@ async def test_daily_note_creates_when_missing():
         patch(_RESOLVE, return_value=Path("/tmp/vault")),
         patch(_GET_404, AsyncMock(return_value=new_note)),
     ):
-        result = await get_or_create_daily_note(
-            db=db, current_user=user, owner_ids={1}
-        )
+        result = await get_or_create_daily_note(db=db, current_user=user, owner_ids={1})
 
     db.add.assert_called_once()
     db.commit.assert_awaited_once()

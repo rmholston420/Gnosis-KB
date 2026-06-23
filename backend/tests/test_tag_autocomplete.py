@@ -155,11 +155,11 @@ async def test_list_tags_count_accuracy(async_client: AsyncClient) -> None:
 
 
 SAMPLE_TAGS = [
-    {"tag": "buddhism",    "count": 5},
+    {"tag": "buddhism", "count": 5},
     {"tag": "epistemology", "count": 3},
     {"tag": "zettelkasten", "count": 8},
-    {"tag": "systems",     "count": 2},
-    {"tag": "philosophy",  "count": 4},
+    {"tag": "systems", "count": 2},
+    {"tag": "philosophy", "count": 4},
 ]
 
 
@@ -181,8 +181,7 @@ def test_tag_autocomplete_prefix_filter_client_side() -> None:
         if not input_value:
             return []
         return [
-            t for t in all_tag_names
-            if input_value.lower() in t.lower() and t not in current_tags
+            t for t in all_tag_names if input_value.lower() in t.lower() and t not in current_tags
         ]
 
     assert "philosophy" in filter_suggestions("ph")

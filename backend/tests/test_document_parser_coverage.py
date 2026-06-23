@@ -1,4 +1,5 @@
 """Coverage tests for gnosis/services/document_parser.py."""
+
 from __future__ import annotations
 
 import sys
@@ -51,6 +52,7 @@ def _make_fake_bs4(title_text: str, body_text: str):
         if tag == "main":
             return mock_main
         return None
+
     mock_soup.find.side_effect = _soup_find
     mock_soup.get_text.return_value = body_text
 
@@ -64,6 +66,7 @@ def _make_fake_bs4(title_text: str, body_text: str):
 # ---------------------------------------------------------------------------
 # parse_pdf
 # ---------------------------------------------------------------------------
+
 
 def test_parse_pdf_returns_parsed_document():
     fake_fitz = MagicMock()
@@ -99,14 +102,18 @@ def test_parse_pdf_no_meta_derives_title_from_stem():
 # parse_url
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_parse_url_returns_parsed_document():
     html = "<html><head><title>Hello</title></head><body><main><p>World</p></main></body></html>"
 
-    with patch.dict(sys.modules, {
-        "httpx": _make_fake_httpx(html),
-        "bs4": _make_fake_bs4("Hello", "World"),
-    }):
+    with patch.dict(
+        sys.modules,
+        {
+            "httpx": _make_fake_httpx(html),
+            "bs4": _make_fake_bs4("Hello", "World"),
+        },
+    ):
         result = await dp.parse_url("http://example.com")
 
     assert isinstance(result, ParsedDocument)
@@ -119,10 +126,13 @@ async def test_parse_url_returns_parsed_document():
 async def test_parse_url_sets_title():
     html = "<html><head><title>Stripped Title</title></head><body><p>content</p></body></html>"
 
-    with patch.dict(sys.modules, {
-        "httpx": _make_fake_httpx(html),
-        "bs4": _make_fake_bs4("Stripped Title", "content"),
-    }):
+    with patch.dict(
+        sys.modules,
+        {
+            "httpx": _make_fake_httpx(html),
+            "bs4": _make_fake_bs4("Stripped Title", "content"),
+        },
+    ):
         result = await dp.parse_url("http://example.com/page")
 
     assert result.title == "Stripped Title"
@@ -131,6 +141,7 @@ async def test_parse_url_sets_title():
 # ---------------------------------------------------------------------------
 # parse_image
 # ---------------------------------------------------------------------------
+
 
 def test_parse_image_returns_parsed_document():
     fake_pil = MagicMock()
@@ -149,6 +160,7 @@ def test_parse_image_returns_parsed_document():
 # ---------------------------------------------------------------------------
 # detect_format edge cases
 # ---------------------------------------------------------------------------
+
 
 def test_detect_format_unknown_returns_none():
     assert detect_format("file.xyz") is None

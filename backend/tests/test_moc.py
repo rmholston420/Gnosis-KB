@@ -1,4 +1,5 @@
 """Unit tests for the MOC generator helper — _build_moc_markdown."""
+
 from __future__ import annotations
 
 from gnosis.routers.ai import _build_moc_markdown

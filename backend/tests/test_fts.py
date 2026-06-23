@@ -5,6 +5,7 @@ Public API:
     -> dict with keys: results (list), elapsed_ms (float)
   suggest_completions(db, prefix, limit=8) -> list[str]
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -26,9 +27,11 @@ def _make_db(mappings=None, fetchall=None):
 # fulltext_search
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_fulltext_search_returns_dict():
     from gnosis.services.fts import fulltext_search
+
     db = _make_db()
     result = await fulltext_search(db, "python")
     assert isinstance(result, dict)
@@ -39,6 +42,7 @@ async def test_fulltext_search_returns_dict():
 @pytest.mark.asyncio
 async def test_fulltext_search_results_is_list():
     from gnosis.services.fts import fulltext_search
+
     db = _make_db()
     result = await fulltext_search(db, "machine learning")
     assert isinstance(result["results"], list)
@@ -47,6 +51,7 @@ async def test_fulltext_search_results_is_list():
 @pytest.mark.asyncio
 async def test_fulltext_search_calls_execute():
     from gnosis.services.fts import fulltext_search
+
     db = _make_db()
     await fulltext_search(db, "test query")
     assert db.execute.called
@@ -55,6 +60,7 @@ async def test_fulltext_search_calls_execute():
 @pytest.mark.asyncio
 async def test_fulltext_search_with_folder_filter():
     from gnosis.services.fts import fulltext_search
+
     db = _make_db()
     result = await fulltext_search(db, "notes", folder="10-zettelkasten")
     assert isinstance(result, dict)
@@ -63,6 +69,7 @@ async def test_fulltext_search_with_folder_filter():
 @pytest.mark.asyncio
 async def test_fulltext_search_with_note_type_filter():
     from gnosis.services.fts import fulltext_search
+
     db = _make_db()
     result = await fulltext_search(db, "notes", note_type="permanent")
     assert isinstance(result, dict)
@@ -71,6 +78,7 @@ async def test_fulltext_search_with_note_type_filter():
 @pytest.mark.asyncio
 async def test_fulltext_search_with_tags_filter():
     from gnosis.services.fts import fulltext_search
+
     db = _make_db()
     result = await fulltext_search(db, "notes", tags=["python", "ml"])
     assert isinstance(result, dict)
@@ -79,9 +87,11 @@ async def test_fulltext_search_with_tags_filter():
 @pytest.mark.asyncio
 async def test_fulltext_search_with_all_filters():
     from gnosis.services.fts import fulltext_search
+
     db = _make_db()
     result = await fulltext_search(
-        db, "neural",
+        db,
+        "neural",
         limit=5,
         folder="10-zettelkasten",
         note_type="permanent",
@@ -93,6 +103,7 @@ async def test_fulltext_search_with_all_filters():
 @pytest.mark.asyncio
 async def test_fulltext_search_elapsed_ms_is_float():
     from gnosis.services.fts import fulltext_search
+
     db = _make_db()
     result = await fulltext_search(db, "test")
     assert isinstance(result["elapsed_ms"], float)
@@ -101,6 +112,7 @@ async def test_fulltext_search_elapsed_ms_is_float():
 @pytest.mark.asyncio
 async def test_fulltext_search_returns_empty_on_db_error():
     from gnosis.services.fts import fulltext_search
+
     db = AsyncMock()
     db.execute = AsyncMock(side_effect=Exception("DB down"))
     result = await fulltext_search(db, "test")
@@ -111,6 +123,7 @@ async def test_fulltext_search_returns_empty_on_db_error():
 async def test_fulltext_search_maps_row_fields():
     """Rows with the expected mapping keys should be serialised correctly."""
     from gnosis.services.fts import fulltext_search
+
     row = {
         "note_id": "n1",
         "title": "My Note",
@@ -135,9 +148,11 @@ async def test_fulltext_search_maps_row_fields():
 # suggest_completions
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_suggest_completions_returns_list():
     from gnosis.services.fts import suggest_completions
+
     db = _make_db(fetchall=[])
     result = await suggest_completions(db, "py")
     assert isinstance(result, list)
@@ -146,6 +161,7 @@ async def test_suggest_completions_returns_list():
 @pytest.mark.asyncio
 async def test_suggest_completions_returns_titles():
     from gnosis.services.fts import suggest_completions
+
     db = AsyncMock()
     result_mock = MagicMock()
     result_mock.fetchall.return_value = [("Python Basics",), ("Python Advanced",)]
@@ -158,6 +174,7 @@ async def test_suggest_completions_returns_titles():
 @pytest.mark.asyncio
 async def test_suggest_completions_empty_returns_empty_list():
     from gnosis.services.fts import suggest_completions
+
     db = AsyncMock()
     result_mock = MagicMock()
     result_mock.fetchall.return_value = []
@@ -169,6 +186,7 @@ async def test_suggest_completions_empty_returns_empty_list():
 @pytest.mark.asyncio
 async def test_suggest_completions_respects_limit():
     from gnosis.services.fts import suggest_completions
+
     db = _make_db(fetchall=[])
     # Should accept limit kwarg without raising
     result = await suggest_completions(db, "py", limit=3)

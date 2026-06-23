@@ -7,6 +7,7 @@ Create Date: 2026-06-19
 No-op when the users table already exists (created by 001_initial
 or by SQLAlchemy create_all).
 """
+
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -22,7 +23,8 @@ depends_on = None
 def upgrade() -> None:
     conn = op.get_bind()
     # users was already created in 001_initial; this is a safety net.
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         CREATE TABLE IF NOT EXISTS users (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             username        VARCHAR(100) NOT NULL UNIQUE,
@@ -34,13 +36,10 @@ def upgrade() -> None:
             created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at      DATETIME
         )
-    """))
-    conn.execute(sa.text(
-        "CREATE INDEX IF NOT EXISTS ix_users_email    ON users (email)"
-    ))
-    conn.execute(sa.text(
-        "CREATE INDEX IF NOT EXISTS ix_users_username ON users (username)"
-    ))
+    """)
+    )
+    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_users_email    ON users (email)"))
+    conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_users_username ON users (username)"))
 
 
 def downgrade() -> None:

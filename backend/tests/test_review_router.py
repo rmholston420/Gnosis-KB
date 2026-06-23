@@ -1,4 +1,5 @@
 """Tests for routers/review.py — SM-2 spaced-repetition endpoints."""
+
 from __future__ import annotations
 
 from datetime import date, timedelta
@@ -11,6 +12,7 @@ from gnosis.models.review import ReviewCard
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 async def _make_note(
     db,
@@ -59,6 +61,7 @@ def _enroll_body(note_id: str, due_today: bool = True) -> dict:
 # GET /api/v1/review/queue
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_review_queue_empty(client):
     r = await client.get("/api/v1/review/queue")
@@ -102,6 +105,7 @@ async def test_review_queue_limit(client, test_db):
 # GET /api/v1/review/stats
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_review_stats_empty(client):
     r = await client.get("/api/v1/review/stats")
@@ -125,6 +129,7 @@ async def test_review_stats_with_card(client, test_db):
 # ---------------------------------------------------------------------------
 # POST /api/v1/review/{note_id}/enroll
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_enroll_note_creates_card(client, test_db):
@@ -156,6 +161,7 @@ async def test_enroll_note_not_found(client):
 # ---------------------------------------------------------------------------
 # POST /api/v1/review/{note_id}  — submit review
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_submit_review_advances_schedule(client, test_db):
@@ -196,6 +202,7 @@ async def test_submit_review_card_not_found(client):
 # ---------------------------------------------------------------------------
 # DELETE /api/v1/review/{note_id}  — unenroll
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_unenroll_note_removes_card(client, test_db):

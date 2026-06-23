@@ -5,6 +5,7 @@ Targets the uncovered lines reported in coverage:
 
 All file I/O is done through tmp_path (pytest fixture) — no mocking needed.
 """
+
 from __future__ import annotations
 
 import textwrap
@@ -23,6 +24,7 @@ from gnosis.services.markdown_parser import (
 # ---------------------------------------------------------------------------
 # generate_note_id
 # ---------------------------------------------------------------------------
+
 
 def test_generate_note_id_uses_provided_dt():
     dt = datetime(2024, 3, 15, 10, 30, 0, tzinfo=UTC)
@@ -86,9 +88,9 @@ def test_parse_note_file_minimal_no_frontmatter(tmp_path: Path):
 
     result = parse_note_file(p)
 
-    assert result["title"] == "bare"          # falls back to stem
+    assert result["title"] == "bare"  # falls back to stem
     assert result["note_type"] == "permanent"  # default
-    assert result["status"] == "draft"         # default
+    assert result["status"] == "draft"  # default
     assert result["tags"] == []
     assert result["source_url"] is None
     assert result["folder"] == "00-inbox"
@@ -119,6 +121,7 @@ def test_parse_markdown_file_alias(tmp_path: Path):
 # extract_wikilinks — line 86
 # ---------------------------------------------------------------------------
 
+
 def test_extract_wikilinks_deduplicates():
     body = "[[A]] and [[A]] and [[B]]"
     assert extract_wikilinks(body) == ["A", "B"]
@@ -136,6 +139,7 @@ def test_extract_wikilinks_empty():
 # write_note_file — lines 91-95
 # ---------------------------------------------------------------------------
 
+
 def test_write_note_file_creates_file(tmp_path: Path):
     dest = tmp_path / "sub" / "new-note.md"
     fm = {"id": "x", "tags": []}
@@ -150,6 +154,7 @@ def test_write_note_file_creates_file(tmp_path: Path):
 # ---------------------------------------------------------------------------
 # build_default_frontmatter — lines 107-108
 # ---------------------------------------------------------------------------
+
 
 def test_build_default_frontmatter_full():
     fm = build_default_frontmatter(

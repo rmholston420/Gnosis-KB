@@ -18,6 +18,7 @@ graph_rag.py stream() arcs
 The existing test_stream_shared_ids_appends_synthesis already hits 291->exit
 but may not hit 288->286.  We add a dedicated test for the filter-out case.
 """
+
 from __future__ import annotations
 
 import importlib
@@ -31,6 +32,7 @@ import pytest
 # graph_rag.py  lines 50-52  (ImportError block)
 # ===========================================================================
 
+
 class TestGraphRAGImportError:
     def test_lightrag_unavailable_flag_set_false(self):
         saved = {k: v for k, v in sys.modules.items() if "lightrag" in k}
@@ -40,6 +42,7 @@ class TestGraphRAGImportError:
         try:
             sys.modules["lightrag"] = None  # type: ignore[assignment]
             import gnosis.services.graph_rag as gr_fresh
+
             importlib.reload(gr_fresh)
             assert gr_fresh._LIGHTRAG_AVAILABLE is False
         finally:
@@ -58,10 +61,12 @@ class TestGraphRAGImportError:
 # graph_rag.py  line 187  (query: exactly-one answer path)
 # ===========================================================================
 
+
 class TestGraphRAGQuerySingleAnswer:
     @pytest.mark.asyncio
     async def test_query_one_valid_answer_strips_vault_header(self):
         from gnosis.services.graph_rag import GraphRAGService
+
         svc = GraphRAGService()
 
         async def _fake_query_single(uid, question, mode):
@@ -78,6 +83,7 @@ class TestGraphRAGQuerySingleAnswer:
     @pytest.mark.asyncio
     async def test_query_no_valid_answers_returns_unavailable(self):
         from gnosis.services.graph_rag import GraphRAGService
+
         svc = GraphRAGService()
 
         async def _fake_query_single(uid, question, mode):
@@ -93,11 +99,13 @@ class TestGraphRAGQuerySingleAnswer:
 # graph_rag.py  _synthesise helpers
 # ===========================================================================
 
+
 class TestGraphRAGSynthesise:
     @pytest.mark.asyncio
     async def test_synthesise_llm_unavailable_returns_joined(self):
         import gnosis.services.llm_provider as llm_mod
         from gnosis.services.graph_rag import GraphRAGService
+
         svc = GraphRAGService()
         answers = ["[Vault 1]\nanswer one", "[Vault 2]\nanswer two"]
         real = llm_mod.llm_provider
@@ -115,6 +123,7 @@ class TestGraphRAGSynthesise:
     async def test_synthesise_llm_raises_returns_joined(self):
         import gnosis.services.llm_provider as llm_mod
         from gnosis.services.graph_rag import GraphRAGService
+
         svc = GraphRAGService()
         answers = ["[Vault 1]\nfoo", "[Vault 2]\nbar"]
         real = llm_mod.llm_provider
@@ -133,10 +142,12 @@ class TestGraphRAGSynthesise:
 # graph_rag.py  stream() arcs
 # ===========================================================================
 
+
 class TestGraphRAGStream:
     @pytest.mark.asyncio
     async def test_stream_instance_none_yields_unavailable(self):
         from gnosis.services.graph_rag import GraphRAGService
+
         svc = GraphRAGService()
         tokens = []
         with patch.object(svc, "_get_instance", new_callable=AsyncMock, return_value=None):
@@ -147,6 +158,7 @@ class TestGraphRAGStream:
     @pytest.mark.asyncio
     async def test_stream_no_astream_query_yields_single_token(self):
         from gnosis.services.graph_rag import GraphRAGService
+
         svc = GraphRAGService()
         mock_instance = MagicMock(spec=[])
         mock_instance.aquery = AsyncMock(return_value="result text")
@@ -159,6 +171,7 @@ class TestGraphRAGStream:
     @pytest.mark.asyncio
     async def test_stream_aquery_raises_yields_error(self):
         from gnosis.services.graph_rag import GraphRAGService
+
         svc = GraphRAGService()
         mock_instance = MagicMock(spec=[])
         mock_instance.aquery = AsyncMock(side_effect=RuntimeError("gpu oom"))
@@ -177,6 +190,7 @@ class TestGraphRAGStream:
         is False, generator ends without yielding synthesis.
         """
         from gnosis.services.graph_rag import GraphRAGService
+
         svc = GraphRAGService()
 
         # Primary instance (uid=1): no astream_query, returns single token
@@ -187,7 +201,7 @@ class TestGraphRAGStream:
         mock_shared = MagicMock(spec=[])
         mock_shared.aquery = AsyncMock(
             return_value="Graph-RAG is unavailable (LightRAG not initialised). "
-                         "Ensure Ollama is running and lightrag-hku is installed."
+            "Ensure Ollama is running and lightrag-hku is installed."
         )
 
         async def _fake_get_instance(uid):
@@ -212,6 +226,7 @@ class TestGraphRAGStream:
         """
         import gnosis.services.llm_provider as llm_mod
         from gnosis.services.graph_rag import GraphRAGService
+
         svc = GraphRAGService()
 
         mock_primary = MagicMock(spec=[])
@@ -235,12 +250,12 @@ class TestGraphRAGStream:
             llm_mod.llm_provider = real
 
         assert "primary answer" in tokens
-        assert any("shared vault answer" in t or "---" in t or "context" in t
-                   for t in tokens)
+        assert any("shared vault answer" in t or "---" in t or "context" in t for t in tokens)
 
     @pytest.mark.asyncio
     async def test_stream_exception_via_astream_query(self):
         from gnosis.services.graph_rag import GraphRAGService
+
         svc = GraphRAGService()
         mock_instance = MagicMock(spec=[])
 
@@ -260,9 +275,11 @@ class TestGraphRAGStream:
 # llm_provider.py
 # ===========================================================================
 
+
 class TestLLMProviderGetClientAndModel:
     def test_get_client_and_model_groq(self):
         from gnosis.services.llm_provider import LLMProvider
+
         p = LLMProvider()
         p._available = ["groq"]
         p._groq_client = MagicMock()
@@ -272,6 +289,7 @@ class TestLLMProviderGetClientAndModel:
 
     def test_get_client_and_model_openai(self):
         from gnosis.services.llm_provider import LLMProvider
+
         p = LLMProvider()
         p._available = ["openai"]
         p._openai_client = MagicMock()
@@ -281,6 +299,7 @@ class TestLLMProviderGetClientAndModel:
 
     def test_get_client_and_model_none_raises(self):
         from gnosis.services.llm_provider import LLMProvider
+
         p = LLMProvider()
         p._available = []
         with pytest.raises(RuntimeError, match="No LLM provider available"):
@@ -290,6 +309,7 @@ class TestLLMProviderGetClientAndModel:
 class TestLLMProviderGetClientFor:
     def test_get_client_for_ollama_client_none_raises(self):
         from gnosis.services.llm_provider import LLMProvider
+
         p = LLMProvider()
         p._available = ["ollama"]
         p._ollama_client = None
@@ -298,6 +318,7 @@ class TestLLMProviderGetClientFor:
 
     def test_get_client_for_unknown_provider_raises(self):
         from gnosis.services.llm_provider import LLMProvider
+
         p = LLMProvider()
         with pytest.raises(ValueError, match="Unknown or unconfigured provider"):
             p._get_client_for("anthropic")
@@ -306,12 +327,14 @@ class TestLLMProviderGetClientFor:
 class TestLLMProviderActiveModel:
     def test_active_model_groq(self):
         from gnosis.services.llm_provider import LLMProvider
+
         p = LLMProvider()
         p._available = ["groq"]
         assert p.active_model == "llama-3.3-70b-versatile"
 
     def test_active_model_openai(self):
         from gnosis.services.llm_provider import LLMProvider
+
         p = LLMProvider()
         p._available = ["openai"]
         assert p.active_model == "gpt-4o-mini"
@@ -320,6 +343,7 @@ class TestLLMProviderActiveModel:
 class TestLLMProviderSwapModel:
     def test_swap_model_no_ollama_raises(self):
         from gnosis.services.llm_provider import LLMProvider
+
         p = LLMProvider()
         p._available = ["groq"]
         with pytest.raises(RuntimeError, match="Ollama is not an available provider"):
@@ -330,6 +354,7 @@ class TestLLMProviderInitialize:
     @pytest.mark.asyncio
     async def test_initialize_ollama_non_200_skips(self):
         from gnosis.services.llm_provider import LLMProvider
+
         p = LLMProvider()
         mock_resp = MagicMock()
         mock_resp.status_code = 503
@@ -350,6 +375,7 @@ class TestLLMProviderInitialize:
     @pytest.mark.asyncio
     async def test_initialize_ollama_exception_skips(self):
         from gnosis.services.llm_provider import LLMProvider
+
         p = LLMProvider()
         mock_http_client = AsyncMock()
         mock_http_client.get = AsyncMock(side_effect=Exception("refused"))
@@ -370,6 +396,7 @@ class TestLLMProviderStream:
     @pytest.mark.asyncio
     async def test_stream_empty_delta_skips_yield(self):
         from gnosis.services.llm_provider import LLMProvider
+
         p = LLMProvider()
         p._available = ["openai"]
         p._openai_client = MagicMock()
@@ -391,13 +418,12 @@ class TestLLMProviderStream:
     @pytest.mark.asyncio
     async def test_stream_all_providers_fail_raises(self):
         from gnosis.services.llm_provider import LLMProvider
+
         p = LLMProvider()
         p._available = ["ollama"]
         p._ollama_model = "llama3.2"
         p._ollama_client = MagicMock()
-        p._ollama_client.chat.completions.create = AsyncMock(
-            side_effect=RuntimeError("down")
-        )
+        p._ollama_client.chat.completions.create = AsyncMock(side_effect=RuntimeError("down"))
         with pytest.raises(RuntimeError, match="All LLM stream providers failed"):
             async for _ in p.stream("hello"):
                 pass
@@ -405,6 +431,7 @@ class TestLLMProviderStream:
     @pytest.mark.asyncio
     async def test_stream_first_fails_second_succeeds(self):
         from gnosis.services.llm_provider import LLMProvider
+
         p = LLMProvider()
         p._available = ["ollama", "groq"]
         p._ollama_model = "llama3.2"
@@ -430,10 +457,12 @@ class TestLLMProviderStream:
 # vault_sync.py
 # ===========================================================================
 
+
 class TestVaultSyncTagExists:
     @pytest.mark.asyncio
     async def test_sync_file_existing_tag_skips_creation(self, tmp_path):
         from gnosis.services.vault_sync import _sync_file
+
         md = tmp_path / "note.md"
         md.write_text("---\ntitle: T\nid: t1\ntags:\n  - existingtag\n---\nBody.")
         db = AsyncMock()
@@ -449,16 +478,22 @@ class TestVaultSyncTagExists:
         notag_result = MagicMock()
         link_delete_result = MagicMock()
         notetag_insert_result = MagicMock()
-        db.execute = AsyncMock(side_effect=[
-            note_result,
-            notag_result,
-            tag_result,
-            notetag_insert_result,
-            link_delete_result,
-        ])
-        with patch("gnosis.services.vault_sync.get_settings",
-                   return_value=MagicMock(vault_path=str(tmp_path))), \
-             patch("gnosis.services.vault_sync.upsert_note"):
+        db.execute = AsyncMock(
+            side_effect=[
+                note_result,
+                notag_result,
+                tag_result,
+                notetag_insert_result,
+                link_delete_result,
+            ]
+        )
+        with (
+            patch(
+                "gnosis.services.vault_sync.get_settings",
+                return_value=MagicMock(vault_path=str(tmp_path)),
+            ),
+            patch("gnosis.services.vault_sync.upsert_note"),
+        ):
             line = await _sync_file(md, owner_id=1, db_session=db)
         assert line.startswith("synced:")
 
@@ -467,6 +502,7 @@ class TestVaultSyncWikilinkTargetNotFound:
     @pytest.mark.asyncio
     async def test_sync_file_wikilink_target_not_found(self, tmp_path):
         from gnosis.services.vault_sync import _sync_file
+
         md = tmp_path / "note.md"
         md.write_text("---\ntitle: Source\nid: src\n---\n[[Missing Note]]")
         db = AsyncMock()
@@ -478,20 +514,26 @@ class TestVaultSyncWikilinkTargetNotFound:
         link_delete_result = MagicMock()
         target_result = MagicMock()
         target_result.scalar_one_or_none = MagicMock(return_value=None)
-        db.execute = AsyncMock(side_effect=[
-            note_result,
-            link_delete_result,
-            link_delete_result,
-            target_result,
-        ])
-        with patch("gnosis.services.vault_sync.get_settings",
-                   return_value=MagicMock(vault_path=str(tmp_path))), \
-             patch("gnosis.services.vault_sync.upsert_note"):
+        db.execute = AsyncMock(
+            side_effect=[
+                note_result,
+                link_delete_result,
+                link_delete_result,
+                target_result,
+            ]
+        )
+        with (
+            patch(
+                "gnosis.services.vault_sync.get_settings",
+                return_value=MagicMock(vault_path=str(tmp_path)),
+            ),
+            patch("gnosis.services.vault_sync.upsert_note"),
+        ):
             line = await _sync_file(md, owner_id=1, db_session=db)
         assert line.startswith("synced:")
         from gnosis.models.link import Link
-        link_adds = [c for c in db.add.call_args_list
-                     if isinstance(c.args[0], Link)]
+
+        link_adds = [c for c in db.add.call_args_list if isinstance(c.args[0], Link)]
         assert len(link_adds) == 0
 
 
@@ -499,11 +541,13 @@ class TestVaultSyncRunFullSync:
     @pytest.mark.asyncio
     async def test_run_full_sync_missing_vault_yields_error(self, tmp_path):
         from gnosis.services.vault_sync import run_full_sync_for_user
+
         non_existent = tmp_path / "does_not_exist"
         lines = []
         with patch("gnosis.services.vault_sync._get_vault_path", return_value=non_existent):
-            with patch("gnosis.services.vault_sync._resolve_owner_id",
-                       new=AsyncMock(return_value=1)):
+            with patch(
+                "gnosis.services.vault_sync._resolve_owner_id", new=AsyncMock(return_value=1)
+            ):
                 async for line in run_full_sync_for_user(1):
                     lines.append(line)
         assert any("error" in l for l in lines)
@@ -511,15 +555,16 @@ class TestVaultSyncRunFullSync:
     @pytest.mark.asyncio
     async def test_run_full_sync_vault_exists_falls_through(self, tmp_path):
         from gnosis.services.vault_sync import run_full_sync_for_user
+
         mock_cm = MagicMock()
         mock_cm.__aenter__ = AsyncMock(return_value=AsyncMock())
         mock_cm.__aexit__ = AsyncMock(return_value=False)
         lines = []
         with patch("gnosis.services.vault_sync._get_vault_path", return_value=tmp_path):
-            with patch("gnosis.services.vault_sync._resolve_owner_id",
-                       new=AsyncMock(return_value=1)):
-                with patch("gnosis.services.vault_sync.AsyncSessionFactory",
-                           return_value=mock_cm):
+            with patch(
+                "gnosis.services.vault_sync._resolve_owner_id", new=AsyncMock(return_value=1)
+            ):
+                with patch("gnosis.services.vault_sync.AsyncSessionFactory", return_value=mock_cm):
                     async for line in run_full_sync_for_user(1):
                         lines.append(line)
         assert any("total" in l for l in lines)
@@ -527,18 +572,23 @@ class TestVaultSyncRunFullSync:
     @pytest.mark.asyncio
     async def test_run_full_sync_file_exception_yields_error_line(self, tmp_path):
         from gnosis.services.vault_sync import run_full_sync_for_user
+
         (tmp_path / "note.md").write_text("---\ntitle: t\n---\nbody")
         mock_cm = MagicMock()
         mock_cm.__aenter__ = AsyncMock(return_value=AsyncMock())
         mock_cm.__aexit__ = AsyncMock(return_value=False)
         lines = []
         with patch("gnosis.services.vault_sync._get_vault_path", return_value=tmp_path):
-            with patch("gnosis.services.vault_sync._resolve_owner_id",
-                       new=AsyncMock(return_value=1)):
-                with patch("gnosis.services.vault_sync._sync_file",
-                           new=AsyncMock(side_effect=RuntimeError("parse fail"))):
-                    with patch("gnosis.services.vault_sync.AsyncSessionFactory",
-                               return_value=mock_cm):
+            with patch(
+                "gnosis.services.vault_sync._resolve_owner_id", new=AsyncMock(return_value=1)
+            ):
+                with patch(
+                    "gnosis.services.vault_sync._sync_file",
+                    new=AsyncMock(side_effect=RuntimeError("parse fail")),
+                ):
+                    with patch(
+                        "gnosis.services.vault_sync.AsyncSessionFactory", return_value=mock_cm
+                    ):
                         async for line in run_full_sync_for_user(1):
                             lines.append(line)
         assert any("error" in l for l in lines)
@@ -547,6 +597,7 @@ class TestVaultSyncRunFullSync:
 class TestVaultGetLoop:
     def test_get_loop_caches_on_second_call(self):
         from gnosis.services.vault_sync import VaultEventHandler
+
         handler = VaultEventHandler(owner_id=1)
         handler._loop = None
         loop1 = handler._get_loop()
@@ -555,6 +606,7 @@ class TestVaultGetLoop:
 
     def test_get_loop_fallback_new_event_loop(self):
         from gnosis.services.vault_sync import VaultEventHandler
+
         handler = VaultEventHandler(owner_id=1)
         handler._loop = None
         with patch("asyncio.get_event_loop", side_effect=RuntimeError("no loop")):
@@ -567,13 +619,16 @@ class TestVaultEventHandlerUpsert:
     @pytest.mark.asyncio
     async def test_handle_upsert_exception_is_swallowed(self, tmp_path):
         from gnosis.services.vault_sync import VaultEventHandler
+
         handler = VaultEventHandler(owner_id=1)
         mock_cm = MagicMock()
         mock_cm.__aenter__ = AsyncMock(return_value=AsyncMock())
         mock_cm.__aexit__ = AsyncMock(return_value=False)
         with patch("gnosis.services.vault_sync.AsyncSessionFactory", return_value=mock_cm):
-            with patch("gnosis.services.vault_sync._sync_file",
-                       new=AsyncMock(side_effect=RuntimeError("db down"))):
+            with patch(
+                "gnosis.services.vault_sync._sync_file",
+                new=AsyncMock(side_effect=RuntimeError("db down")),
+            ):
                 await handler._handle_upsert(tmp_path / "note.md")
 
 
@@ -583,6 +638,7 @@ class TestVaultHandleDeleteValueError:
         import tempfile
 
         from gnosis.services.vault_sync import VaultEventHandler
+
         handler = VaultEventHandler(owner_id=1)
         with tempfile.TemporaryDirectory() as other_dir:
             outside_path = Path(other_dir) / "ghost.md"
@@ -594,10 +650,8 @@ class TestVaultHandleDeleteValueError:
             mock_cm = MagicMock()
             mock_cm.__aenter__ = AsyncMock(return_value=mock_db)
             mock_cm.__aexit__ = AsyncMock(return_value=False)
-            with patch("gnosis.services.vault_sync._get_vault_path",
-                       return_value=tmp_path):
-                with patch("gnosis.services.vault_sync.AsyncSessionFactory",
-                           return_value=mock_cm):
+            with patch("gnosis.services.vault_sync._get_vault_path", return_value=tmp_path):
+                with patch("gnosis.services.vault_sync.AsyncSessionFactory", return_value=mock_cm):
                     await handler._handle_delete(outside_path)
 
 
@@ -605,12 +659,15 @@ class TestStartVaultWatcherException:
     @pytest.mark.asyncio
     async def test_start_vault_watcher_sync_exception_logged(self, tmp_path):
         from gnosis.services.vault_sync import start_vault_watcher
+
         mock_observer = MagicMock()
         mock_observer.schedule = MagicMock()
         mock_observer.start = MagicMock()
         with patch("gnosis.services.vault_sync._get_vault_path", return_value=tmp_path):
-            with patch("gnosis.services.vault_sync.run_full_sync_for_user",
-                       side_effect=RuntimeError("sync boom")):
+            with patch(
+                "gnosis.services.vault_sync.run_full_sync_for_user",
+                side_effect=RuntimeError("sync boom"),
+            ):
                 with patch("gnosis.services.vault_sync.Observer", return_value=mock_observer):
                     observer = await start_vault_watcher(owner_id=1)
         assert observer is mock_observer
@@ -620,9 +677,11 @@ class TestStartVaultWatcherException:
 # vector_store.py
 # ===========================================================================
 
+
 class TestVectorStoreClientCache:
     def test_get_qdrant_client_returns_cached_instance(self):
         import gnosis.services.vector_store as vs
+
         original = vs._client
         mock_client = MagicMock()
         try:
@@ -634,6 +693,7 @@ class TestVectorStoreClientCache:
 
     def test_get_qdrant_client_creates_new_when_none(self):
         import gnosis.services.vector_store as vs
+
         original = vs._client
         try:
             vs._client = None
@@ -651,16 +711,16 @@ class TestVectorStoreClientCache:
 class TestVectorStoreHybridSearchIncludeLegacy:
     def test_hybrid_search_include_legacy_false_skips_sentinel(self):
         import gnosis.services.vector_store as vs
+
         mock_client = MagicMock()
         mock_client.query_points.return_value = MagicMock(points=[])
         mock_settings = MagicMock()
         mock_settings.qdrant_collection_name = "gnosis"
-        with patch("gnosis.services.vector_store.get_qdrant_client",
-                   return_value=mock_client), \
-             patch("gnosis.services.vector_store.get_settings",
-                   return_value=mock_settings), \
-             patch("gnosis.services.vector_store.embed_dense",
-                   return_value=[0.1] * 768):
+        with (
+            patch("gnosis.services.vector_store.get_qdrant_client", return_value=mock_client),
+            patch("gnosis.services.vector_store.get_settings", return_value=mock_settings),
+            patch("gnosis.services.vector_store.embed_dense", return_value=[0.1] * 768),
+        ):
             result = vs.hybrid_search(
                 "test query",
                 owner_ids={1},
@@ -671,16 +731,16 @@ class TestVectorStoreHybridSearchIncludeLegacy:
 
     def test_hybrid_search_include_legacy_true_appends_sentinel(self):
         import gnosis.services.vector_store as vs
+
         mock_client = MagicMock()
         mock_client.query_points.return_value = MagicMock(points=[])
         mock_settings = MagicMock()
         mock_settings.qdrant_collection_name = "gnosis"
-        with patch("gnosis.services.vector_store.get_qdrant_client",
-                   return_value=mock_client), \
-             patch("gnosis.services.vector_store.get_settings",
-                   return_value=mock_settings), \
-             patch("gnosis.services.vector_store.embed_dense",
-                   return_value=[0.1] * 768):
+        with (
+            patch("gnosis.services.vector_store.get_qdrant_client", return_value=mock_client),
+            patch("gnosis.services.vector_store.get_settings", return_value=mock_settings),
+            patch("gnosis.services.vector_store.embed_dense", return_value=[0.1] * 768),
+        ):
             result = vs.hybrid_search(
                 "test query",
                 owner_ids={1},

@@ -12,6 +12,7 @@ All file ingestion paths:
   3. Write .md literature note to vault (70-sources/)
   4. Trigger vault sync to index in DB + Qdrant
 """
+
 from __future__ import annotations
 
 import io
@@ -37,14 +38,28 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 router = APIRouter(prefix="/ingest", tags=["ingest"])
 
-_SUPPORTED_FORMATS = {".pdf", ".docx", ".doc", ".pptx", ".ppt", ".xlsx", ".xls",
-                      ".png", ".jpg", ".jpeg", ".webp", ".tiff", ".tif"}
+_SUPPORTED_FORMATS = {
+    ".pdf",
+    ".docx",
+    ".doc",
+    ".pptx",
+    ".ppt",
+    ".xlsx",
+    ".xls",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".tiff",
+    ".tif",
+}
 _MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
 
 # ---------------------------------------------------------------------------
 # Response schemas
 # ---------------------------------------------------------------------------
+
 
 class IngestFileResponse(BaseModel):
     """Response from POST /ingest/file."""
@@ -94,6 +109,7 @@ class UrlIngestRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _timestamp_id() -> str:
     """Generate a Gnosis-style timestamp note ID."""
@@ -227,6 +243,7 @@ async def _write_vault_note(
 # POST /ingest/file
 # ---------------------------------------------------------------------------
 
+
 @router.post(
     "/file",
     response_model=IngestFileResponse,
@@ -303,6 +320,7 @@ async def ingest_file(
 # POST /ingest/url
 # ---------------------------------------------------------------------------
 
+
 @router.post(
     "/url",
     response_model=IngestUrlResponse,
@@ -354,6 +372,7 @@ async def ingest_url(
 # ---------------------------------------------------------------------------
 # POST /ingest/batch
 # ---------------------------------------------------------------------------
+
 
 @router.post(
     "/batch",

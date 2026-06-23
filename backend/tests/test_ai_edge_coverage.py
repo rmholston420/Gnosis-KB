@@ -8,6 +8,7 @@ Source-verified:
 - owner_id fallback: `effective_uid = note.owner_id if note.owner_id is not None else 0`
   Notes created by FakeUser(id=1) will have owner_id=1, not None.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -40,8 +41,10 @@ async def test_ingest_note_raises_500_when_graph_ingest_fails(async_client):
     """graph_rag.ingest_note raises → 500."""
     note_id = await _create_note(async_client)
 
-    with patch("gnosis.routers.ai._lightrag_available", return_value=True), \
-         patch("gnosis.routers.ai.graph_rag") as mock_gr:
+    with (
+        patch("gnosis.routers.ai._lightrag_available", return_value=True),
+        patch("gnosis.routers.ai.graph_rag") as mock_gr,
+    ):
         mock_gr.ingest_note = AsyncMock(side_effect=Exception("graph down"))
         resp = await async_client.post(f"/api/v1/ai/ingest-note/{note_id}")
 
@@ -52,8 +55,10 @@ async def test_ingest_note_success_marks_graph_indexed(async_client):
     """LightRAG available and ingest succeeds → graph_indexed=True, 200."""
     note_id = await _create_note(async_client, "Success note")
 
-    with patch("gnosis.routers.ai._lightrag_available", return_value=True), \
-         patch("gnosis.routers.ai.graph_rag") as mock_gr:
+    with (
+        patch("gnosis.routers.ai._lightrag_available", return_value=True),
+        patch("gnosis.routers.ai.graph_rag") as mock_gr,
+    ):
         mock_gr.ingest_note = AsyncMock(return_value=None)
         resp = await async_client.post(f"/api/v1/ai/ingest-note/{note_id}")
 
@@ -70,15 +75,18 @@ async def test_ingest_note_null_owner_id_uses_zero(async_client):
 
     # Patch _get_note_or_404 to return a note with owner_id=None
     from gnosis.models.note import Note as NoteModel
+
     fake_note = NoteModel()
     fake_note.id = note_id
     fake_note.title = "Null owner note"
     fake_note.body = "body"
     fake_note.owner_id = None
 
-    with patch("gnosis.routers.ai._get_note_or_404", return_value=fake_note), \
-         patch("gnosis.routers.ai._lightrag_available", return_value=True), \
-         patch("gnosis.routers.ai.graph_rag") as mock_gr:
+    with (
+        patch("gnosis.routers.ai._get_note_or_404", return_value=fake_note),
+        patch("gnosis.routers.ai._lightrag_available", return_value=True),
+        patch("gnosis.routers.ai.graph_rag") as mock_gr,
+    ):
         mock_gr.ingest_note = AsyncMock(return_value=None)
         resp = await async_client.post(f"/api/v1/ai/ingest-note/{note_id}")
 

@@ -1,4 +1,5 @@
 """SQLAlchemy model for named Dataview-style query dashboards."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -42,13 +43,9 @@ class SavedQuery(Base):
         default=None,
     )
     # Lazy relationship — only loaded when explicitly accessed
-    owner: Mapped[object | None] = relationship(
-        "User", foreign_keys=[owner_id], lazy="select"
-    )
+    owner: Mapped[object | None] = relationship("User", foreign_keys=[owner_id], lazy="select")
 
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

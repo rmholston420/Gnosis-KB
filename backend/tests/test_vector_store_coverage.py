@@ -8,6 +8,7 @@ Covers:
 - upsert_note: embed failure path
 - delete_note / delete_note_vector alias
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -38,6 +39,7 @@ def reset_client():
 # _note_id_to_uuid
 # ---------------------------------------------------------------------------
 
+
 def test_note_id_to_uuid_is_deterministic():
     assert _note_id_to_uuid("abc") == _note_id_to_uuid("abc")
 
@@ -55,6 +57,7 @@ def test_note_id_to_uuid_is_string():
 # ---------------------------------------------------------------------------
 # get_qdrant_client
 # ---------------------------------------------------------------------------
+
 
 def test_get_qdrant_client_lazy_init():
     mock_instance = MagicMock()
@@ -79,6 +82,7 @@ def test_get_qdrant_client_cached():
 # ---------------------------------------------------------------------------
 # ensure_collection
 # ---------------------------------------------------------------------------
+
 
 def test_ensure_collection_skips_if_exists():
     mock_client = MagicMock()
@@ -111,6 +115,7 @@ def test_ensure_collection_creates_when_not_exists():
 # ---------------------------------------------------------------------------
 # hybrid_search (vector_store module, not the services one)
 # ---------------------------------------------------------------------------
+
 
 def test_vs_hybrid_search_embed_failure_returns_empty():
     mock_settings = MagicMock(qdrant_collection_name="gnosis_notes")
@@ -170,6 +175,7 @@ def test_vs_hybrid_search_no_owner_filter():
 # upsert_note
 # ---------------------------------------------------------------------------
 
+
 def test_upsert_note_embed_failure_returns_early():
     mock_client = MagicMock()
     mock_settings = MagicMock(qdrant_collection_name="gnosis_notes")
@@ -200,6 +206,7 @@ def test_upsert_note_success():
 # ---------------------------------------------------------------------------
 # delete_note / delete_note_vector alias
 # ---------------------------------------------------------------------------
+
 
 def test_delete_note_calls_qdrant_delete():
     mock_client = MagicMock()

@@ -1,4 +1,5 @@
 """SQLAlchemy User model — extended for multi-user vault support."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -28,9 +29,7 @@ class User(Base):
     full_name: Mapped[str | None] = mapped_column(String(200))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # ---- Multi-user additions ----------------------------------------------
     vault_slug: Mapped[str | None] = mapped_column(
@@ -48,7 +47,7 @@ class User(Base):
     vault_display_name: Mapped[str | None] = mapped_column(
         String(200),
         nullable=True,
-        comment="Human-readable vault name shown in the UI (e.g. 'Ryan\'s KB')",
+        comment="Human-readable vault name shown in the UI (e.g. 'Ryan's KB')",
     )
 
     # Relationships

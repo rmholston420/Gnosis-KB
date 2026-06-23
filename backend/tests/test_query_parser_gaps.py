@@ -5,6 +5,7 @@ Covers the four uncovered lines:
   - 303-304: word_count int() ValueError → fallback to raw string
   - 330: SELECT col == 'tags' → [t.name for t in note.tags]
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -19,6 +20,7 @@ from gnosis.services.query_parser import (
 # ---------------------------------------------------------------------------
 # Line 298: unknown operator is skipped (op_fn is None → continue)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_execute_query_unknown_op_is_skipped():
@@ -53,6 +55,7 @@ async def test_execute_query_unknown_op_is_skipped():
 # Lines 303-304: word_count int() ValueError → raw string fallback
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_execute_query_word_count_non_int_falls_back():
     """Non-integer word_count value must fall back to the raw string."""
@@ -71,6 +74,7 @@ async def test_execute_query_word_count_non_int_falls_back():
 # ---------------------------------------------------------------------------
 # Line 330: SELECT col == 'tags' emits [t.name for t in note.tags]
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_execute_query_select_tags_column():

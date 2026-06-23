@@ -3,6 +3,7 @@
 The tags router uses get_current_user (not require_user), so we must override
 the correct dependency.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock

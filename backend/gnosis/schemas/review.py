@@ -51,5 +51,5 @@ class ReviewStats(BaseModel):
     due_today: int
     due_this_week: int
     total_enrolled: int
-    new_today: int          # cards reviewed for the first time today
-    reviewed_today: int     # cards touched today (any quality)
+    new_today: int  # cards reviewed for the first time today
+    reviewed_today: int  # cards touched today (any quality)

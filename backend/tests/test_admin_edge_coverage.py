@@ -1,4 +1,5 @@
 """Coverage-focused tests for gnosis/routers/admin.py edge branches."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch

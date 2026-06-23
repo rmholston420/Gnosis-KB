@@ -120,9 +120,15 @@ async def init_db() -> None:
 
     vault = Path(settings.vault_path)
     for folder in [
-        "00-inbox", "10-zettelkasten", "20-projects",
-        "30-areas", "40-resources", "50-archive",
-        "60-journals", "70-sources", "80-meta",
+        "00-inbox",
+        "10-zettelkasten",
+        "20-projects",
+        "30-areas",
+        "40-resources",
+        "50-archive",
+        "60-journals",
+        "70-sources",
+        "80-meta",
     ]:
         (vault / folder).mkdir(parents=True, exist_ok=True)
     logger.info("Vault directory structure ensured at %s", vault)

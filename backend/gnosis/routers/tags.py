@@ -8,6 +8,7 @@ GET /tags/
   Response shape expected by TagsPage.tsx:
     [ { "tag": "buddhism", "count": 12 }, ... ]
 """
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends

@@ -6,6 +6,7 @@ All note queries that touch the database MUST go through one of:
 
 This keeps the isolation logic in one place rather than scattered across routers.
 """
+
 from __future__ import annotations
 
 import os
@@ -49,6 +50,7 @@ def ensure_vault_directory(user: User) -> Path:
 # ---------------------------------------------------------------------------
 # Query scoping
 # ---------------------------------------------------------------------------
+
 
 async def get_accessible_owner_ids(
     current_user: User,
@@ -99,6 +101,7 @@ def scoped_note_stmt(
     """
     if include_null_owner:
         from sqlalchemy import or_
+
         return base_stmt.where(
             or_(
                 Note.owner_id.in_(owner_ids),

@@ -4,6 +4,7 @@ Rate limits applied:
   POST /token    — 10/minute per IP  (brute-force protection)
   POST /register — 10/minute per IP  (registration spam protection)
 """
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -38,7 +39,9 @@ async def login(
     result = await db.execute(select(User).where(User.email == form.username))
     user = result.scalar_one_or_none()
     if user is None or not verify_password(form.password, user.hashed_password):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect credentials")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect credentials"
+        )
     token = create_access_token(TokenData(user_id=user.id, email=user.email))
     return Token(access_token=token)
 

@@ -1,4 +1,5 @@
 """Tests for core/namespace.py — vault path helpers and query scoping."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -28,6 +29,7 @@ class _FakeUser:
 # resolve_vault_path
 # ---------------------------------------------------------------------------
 
+
 def test_resolve_vault_path_uses_explicit_path():
     user = _FakeUser(vault_path="/custom/vault")
     result = resolve_vault_path(user)
@@ -52,6 +54,7 @@ def test_resolve_vault_path_falls_back_to_id():
 # ensure_vault_directory
 # ---------------------------------------------------------------------------
 
+
 def test_ensure_vault_directory_creates_path(tmp_path):
     user = _FakeUser(id=7, vault_slug="newslug")
     with patch("gnosis.core.namespace.VAULT_ROOT", tmp_path):
@@ -69,6 +72,7 @@ def test_ensure_vault_directory_with_explicit_path(tmp_path):
 # ---------------------------------------------------------------------------
 # get_accessible_owner_ids
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_get_accessible_owner_ids_includes_own():
@@ -116,6 +120,7 @@ async def test_get_accessible_owner_ids_raises_for_inaccessible_target():
 # ---------------------------------------------------------------------------
 # scoped_note_stmt
 # ---------------------------------------------------------------------------
+
 
 def test_scoped_note_stmt_include_null_owner():
     base = select(Note)

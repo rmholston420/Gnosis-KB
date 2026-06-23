@@ -3,6 +3,7 @@
 Covers lazy-load logic, error propagation, and the embed_dense / embed_colbert
 public API.  fastembed is never actually loaded — we mock the import.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -25,6 +26,7 @@ def reset_globals():
 # ---------------------------------------------------------------------------
 # get_dense_model
 # ---------------------------------------------------------------------------
+
 
 def test_get_dense_model_lazy_loads():
     mock_model = MagicMock()
@@ -54,6 +56,7 @@ def test_get_dense_model_raises_on_import_error():
 # get_colbert_model
 # ---------------------------------------------------------------------------
 
+
 def test_get_colbert_model_lazy_loads():
     mock_model = MagicMock()
     mock_class = MagicMock(return_value=mock_model)
@@ -75,6 +78,7 @@ def test_get_colbert_model_returns_cached():
 # ---------------------------------------------------------------------------
 # embed_dense
 # ---------------------------------------------------------------------------
+
 
 def test_embed_dense_returns_float_list():
     mock_model = MagicMock()
@@ -101,6 +105,7 @@ def test_embed_dense_propagates_model_error():
 # ---------------------------------------------------------------------------
 # embed_colbert
 # ---------------------------------------------------------------------------
+
 
 def test_embed_colbert_returns_list_of_float_lists():
     mock_model = MagicMock()

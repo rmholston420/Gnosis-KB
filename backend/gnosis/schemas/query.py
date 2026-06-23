@@ -1,4 +1,5 @@
 """Pydantic schemas for the Dataview query engine and AI query endpoint."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -9,6 +10,7 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 # Dataview / GQL engine schemas  (used by routers/query.py)
 # ---------------------------------------------------------------------------
+
 
 class QueryRun(BaseModel):
     """Execute a one-off query without saving it."""
@@ -61,6 +63,7 @@ class SavedQueryRead(BaseModel):
 # ---------------------------------------------------------------------------
 # AI / semantic search schemas  (used by routers/ai.py or similar)
 # ---------------------------------------------------------------------------
+
 
 class AIQueryRequest(BaseModel):
     query: str = Field(

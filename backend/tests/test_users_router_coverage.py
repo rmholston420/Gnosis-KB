@@ -23,6 +23,7 @@ Design notes
 * TestClient is used (not AsyncClient) so the test runs synchronously in
   the main thread where coverage.py’s C-tracer is registered.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -38,6 +39,7 @@ from gnosis.routers.users import router
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_user(user_id: int = 1, superuser: bool = False) -> User:
     """Return a real SQLAlchemy User instance (not a MagicMock).
@@ -93,6 +95,7 @@ def _make_app(user: User, session_mock: AsyncMock | None = None) -> tuple[FastAP
 # GET /users/me  (line 134)
 # ---------------------------------------------------------------------------
 
+
 def test_get_me_returns_200():
     """line 134: return UserProfile.model_validate(current_user)"""
     user = _make_user()
@@ -107,6 +110,7 @@ def test_get_me_returns_200():
 # ---------------------------------------------------------------------------
 # PATCH /users/me  (line 141+)
 # ---------------------------------------------------------------------------
+
 
 def test_update_me_full_name_line_141():
     """line 141: enters update_me body and sets full_name."""
@@ -139,6 +143,7 @@ def test_update_me_vault_path_non_superuser_403():
 # GET /users/  — list_users  (lines 222-243)
 # ---------------------------------------------------------------------------
 
+
 def test_list_users_non_superuser_returns_403():
     """lines 222-223: if not current_user.is_superuser: raise 403"""
     user = _make_user(superuser=False)
@@ -169,6 +174,7 @@ def test_list_users_superuser_returns_200():
 # POST /users/  (superuser create path)
 # ---------------------------------------------------------------------------
 
+
 def test_create_user_non_superuser_returns_403():
     user = _make_user(superuser=False)
     app, _ = _make_app(user)
@@ -185,7 +191,9 @@ def test_create_user_duplicate_returns_409():
     session.execute = AsyncMock(return_value=conflict)
     app, _ = _make_app(user, session)
     with TestClient(app) as client:
-        resp = client.post("/api/v1/users/", json={"email": "admin@test.com", "password": "12345678"})
+        resp = client.post(
+            "/api/v1/users/", json={"email": "admin@test.com", "password": "12345678"}
+        )
     assert resp.status_code == 409
 
 
@@ -217,6 +225,7 @@ def test_create_user_superuser_success():
 # PATCH /users/me/vaults/{grant_id}  (lines 284-288: update_grant 404)
 # ---------------------------------------------------------------------------
 
+
 def test_update_grant_invalid_permission_422():
     user = _make_user()
     app, _ = _make_app(user)
@@ -238,6 +247,7 @@ def test_update_grant_not_found_404():
 # DELETE /users/me/vaults/{grant_id}  (lines 325-326: revoke_grant 404)
 # ---------------------------------------------------------------------------
 
+
 def test_revoke_grant_not_found_404():
     """lines 325-326: grant is None → 404"""
     user = _make_user()
@@ -250,6 +260,7 @@ def test_revoke_grant_not_found_404():
 # ---------------------------------------------------------------------------
 # GET /users/me/vaults
 # ---------------------------------------------------------------------------
+
 
 def test_list_my_vaults_returns_200():
     user = _make_user()

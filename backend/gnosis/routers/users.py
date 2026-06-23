@@ -11,6 +11,7 @@ Endpoints:
   GET  /                       — List all users (superuser only)
   POST /                       — Create a new user (superuser only)
 """
+
 from __future__ import annotations
 
 import logging
@@ -36,6 +37,7 @@ _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,78}[a-z0-9]$")
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
+
 
 class UserProfile(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -95,6 +97,7 @@ class CreateUserRequest(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _serialize_user(u: User) -> dict:
     """Serialize a User ORM instance to a plain dict for list_users."""
     return {
@@ -131,6 +134,7 @@ def _serialize_grant(
 # GET /users/me
 # ---------------------------------------------------------------------------
 
+
 @router.get("/me", response_model=UserProfile, summary="Current user profile")
 async def get_me(
     current_user: User = Depends(require_user),
@@ -141,6 +145,7 @@ async def get_me(
 # ---------------------------------------------------------------------------
 # PATCH /users/me
 # ---------------------------------------------------------------------------
+
 
 @router.patch("/me", response_model=UserProfile, summary="Update profile and vault settings")
 async def update_me(
@@ -191,6 +196,7 @@ async def update_me(
 # GET /users/me/vaults  — grants current user has received
 # ---------------------------------------------------------------------------
 
+
 @router.get(
     "/me/vaults",
     response_model=list[SharedVaultGrant],
@@ -217,6 +223,7 @@ async def list_my_vaults(
 # ---------------------------------------------------------------------------
 # POST /users/me/vaults/invite
 # ---------------------------------------------------------------------------
+
 
 @router.post(
     "/me/vaults/invite",
@@ -271,6 +278,7 @@ async def invite_to_vault(
 # PATCH /users/me/vaults/{grant_id}  — change permission
 # ---------------------------------------------------------------------------
 
+
 @router.patch(
     "/me/vaults/{grant_id}",
     response_model=SharedVaultGrant,
@@ -308,6 +316,7 @@ async def update_grant(
 # DELETE /users/me/vaults/{grant_id}  — revoke
 # ---------------------------------------------------------------------------
 
+
 @router.delete(
     "/me/vaults/{grant_id}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -336,6 +345,7 @@ async def revoke_grant(
 # GET /users/  — superuser only
 # ---------------------------------------------------------------------------
 
+
 @router.get("/", summary="List all users (superuser only)")
 async def list_users(
     page: int = Query(1, ge=1),
@@ -345,9 +355,7 @@ async def list_users(
 ) -> dict:
     if not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="Superuser access required")
-    result = await session.execute(
-        select(User).offset((page - 1) * page_size).limit(page_size)
-    )
+    result = await session.execute(select(User).offset((page - 1) * page_size).limit(page_size))
     users = result.scalars().all()  # pragma: no cover
     return {  # pragma: no cover
         "users": [_serialize_user(u) for u in users],
@@ -359,6 +367,7 @@ async def list_users(
 # ---------------------------------------------------------------------------
 # POST /users/  — superuser only
 # ---------------------------------------------------------------------------
+
 
 @router.post("/", status_code=status.HTTP_201_CREATED, summary="Create a new user (superuser only)")
 async def create_user(
@@ -384,4 +393,8 @@ async def create_user(
     session.add(user)  # pragma: no cover
     await session.commit()  # pragma: no cover
     await session.refresh(user)  # pragma: no cover
-    return {"id": user.id, "email": user.email, "is_superuser": user.is_superuser}  # pragma: no cover
+    return {
+        "id": user.id,
+        "email": user.email,
+        "is_superuser": user.is_superuser,
+    }  # pragma: no cover

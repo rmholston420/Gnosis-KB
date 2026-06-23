@@ -7,6 +7,7 @@ Key facts from the source:
   - Saved query endpoints filter by current_user.id
   - get_vault_owner_ids dependency must be overridden
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -32,8 +33,11 @@ def _make_db():
     res.scalar_one_or_none.return_value = None
     res.scalars.return_value.all.return_value = []
     db.execute = AsyncMock(return_value=res)
-    db.add = MagicMock(); db.flush = AsyncMock()
-    db.commit = AsyncMock(); db.delete = AsyncMock(); db.refresh = AsyncMock()
+    db.add = MagicMock()
+    db.flush = AsyncMock()
+    db.commit = AsyncMock()
+    db.delete = AsyncMock()
+    db.refresh = AsyncMock()
     return db
 
 
@@ -41,7 +45,10 @@ def _make_app(db=None):
     app = FastAPI()
     app.include_router(router, prefix="/api/v1")
     _db = db or _make_db()
-    async def _get_db(): yield _db
+
+    async def _get_db():
+        yield _db
+
     app.dependency_overrides[get_db] = _get_db
     app.dependency_overrides[get_current_user] = lambda: _user()
     app.dependency_overrides[get_vault_owner_ids] = lambda: {1}
@@ -51,9 +58,10 @@ def _make_app(db=None):
 def test_run_query_returns_200():
     """POST /query/run with valid GQL → 200."""
     parsed = ParsedQuery()
-    with patch("gnosis.routers.query.parse_query", return_value=parsed), \
-         patch("gnosis.routers.query.execute_query",
-               new_callable=AsyncMock, return_value=([], 1.0)):
+    with (
+        patch("gnosis.routers.query.parse_query", return_value=parsed),
+        patch("gnosis.routers.query.execute_query", new_callable=AsyncMock, return_value=([], 1.0)),
+    ):
         resp = TestClient(_make_app()).post(
             "/api/v1/query/run",
             json={"query": "FROM 00-inbox"},
@@ -66,8 +74,7 @@ def test_run_query_returns_200():
 
 def test_run_query_parse_error_returns_422():
     """GQLParseError from parse_query → 422."""
-    with patch("gnosis.routers.query.parse_query",
-               side_effect=GQLParseError("bad syntax")):
+    with patch("gnosis.routers.query.parse_query", side_effect=GQLParseError("bad syntax")):
         resp = TestClient(_make_app()).post(
             "/api/v1/query/run",
             json={"query": "INVALID stuff here"},

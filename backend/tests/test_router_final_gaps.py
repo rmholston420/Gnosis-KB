@@ -27,6 +27,7 @@ vault.py
   92-93:  _run_sync_background: 'total:notanumber' -> ValueError -> pass
   124-125: _sync_sse_generator: RuntimeError -> error SSE token
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -43,17 +44,31 @@ _NOW = datetime(2026, 6, 22, 22, 0, 0, tzinfo=UTC)
 # notes.py helpers
 # ===========================================================================
 
+
 def _make_note_orm():
     n = MagicMock()
     n.id = "note-abc"
-    n.title = "Test Note"; n.slug = "test-note"; n.body = "body"
-    n.body_html = "<p>body</p>"; n.note_type = "note"; n.status = "active"
-    n.folder = "notes"; n.vault_path = "notes/note-abc-test-note.md"
-    n.word_count = 1; n.owner_id = 1; n.frontmatter = {"key": "old"}
-    n.source_url = None; n.last_reviewed = None
-    n.vector_indexed = False; n.graph_indexed = False; n.is_deleted = False
-    n.created_at = _NOW; n.updated_at = None
-    n.tags = []; n.outgoing_links = []; n.incoming_links = []
+    n.title = "Test Note"
+    n.slug = "test-note"
+    n.body = "body"
+    n.body_html = "<p>body</p>"
+    n.note_type = "note"
+    n.status = "active"
+    n.folder = "notes"
+    n.vault_path = "notes/note-abc-test-note.md"
+    n.word_count = 1
+    n.owner_id = 1
+    n.frontmatter = {"key": "old"}
+    n.source_url = None
+    n.last_reviewed = None
+    n.vector_indexed = False
+    n.graph_indexed = False
+    n.is_deleted = False
+    n.created_at = _NOW
+    n.updated_at = None
+    n.tags = []
+    n.outgoing_links = []
+    n.incoming_links = []
     return n
 
 
@@ -67,15 +82,24 @@ def _notes_app(db_mock):
     app.include_router(notes_router)
 
     user = User(
-        email="u@test.com", hashed_password="x",
-        full_name="Test", vault_slug="v", vault_path="/tmp",
-        is_superuser=False, is_active=True,
+        email="u@test.com",
+        hashed_password="x",
+        full_name="Test",
+        vault_slug="v",
+        vault_path="/tmp",
+        is_superuser=False,
+        is_active=True,
     )
     user.id = 1
 
-    async def _get_db(): yield db_mock
-    async def _get_user(): return user
-    async def _get_owner_ids(): return {1}
+    async def _get_db():
+        yield db_mock
+
+    async def _get_user():
+        return user
+
+    async def _get_owner_ids():
+        return {1}
 
     app.dependency_overrides[get_db] = _get_db
     app.dependency_overrides[get_current_user] = _get_user
@@ -87,6 +111,7 @@ def _notes_app(db_mock):
 # notes.py — lines 464-465
 # ===========================================================================
 
+
 class TestNotesCreateDailyVaultWriteError:
     def test_create_daily_write_error_returns_500(self, tmp_path):
         import gnosis.core.namespace as ns_mod
@@ -96,12 +121,16 @@ class TestNotesCreateDailyVaultWriteError:
         no_note.scalars.return_value.unique.return_value.one_or_none.return_value = None
         db = AsyncMock()
         db.execute = AsyncMock(return_value=no_note)
-        db.add = MagicMock(); db.flush = AsyncMock()
-        db.commit = AsyncMock(); db.expunge = MagicMock()
+        db.add = MagicMock()
+        db.flush = AsyncMock()
+        db.commit = AsyncMock()
+        db.expunge = MagicMock()
 
         app, _ = _notes_app(db)
-        with patch.object(ns_mod, "resolve_vault_path", return_value=tmp_path), \
-             patch.object(mp_mod, "write_note_file", side_effect=OSError("disk full")):
+        with (
+            patch.object(ns_mod, "resolve_vault_path", return_value=tmp_path),
+            patch.object(mp_mod, "write_note_file", side_effect=OSError("disk full")),
+        ):
             client = TestClient(app, raise_server_exceptions=False)
             resp = client.post("/notes/daily")
         assert resp.status_code >= 400
@@ -111,6 +140,7 @@ class TestNotesCreateDailyVaultWriteError:
 # notes.py — lines 528, 532, 534, 536, 538-540
 # ===========================================================================
 
+
 class TestNotesUpdateOptionalFields:
     def test_update_note_all_optional_fields(self, tmp_path):
         import gnosis.core.namespace as ns_mod
@@ -119,15 +149,17 @@ class TestNotesUpdateOptionalFields:
         note = _make_note_orm()
         result = MagicMock()
         result.scalar_one_or_none = MagicMock(return_value=note)
-        result.scalars = MagicMock(return_value=MagicMock(
-            unique=MagicMock(return_value=MagicMock(
-                one_or_none=MagicMock(return_value=note)
-            ))
-        ))
+        result.scalars = MagicMock(
+            return_value=MagicMock(
+                unique=MagicMock(return_value=MagicMock(one_or_none=MagicMock(return_value=note)))
+            )
+        )
         db = AsyncMock()
         db.execute = AsyncMock(return_value=result)
-        db.add = MagicMock(); db.flush = AsyncMock()
-        db.commit = AsyncMock(); db.expunge = MagicMock()
+        db.add = MagicMock()
+        db.flush = AsyncMock()
+        db.commit = AsyncMock()
+        db.expunge = MagicMock()
 
         app, _ = _notes_app(db)
         payload = {
@@ -137,8 +169,10 @@ class TestNotesUpdateOptionalFields:
             "last_reviewed": "2026-06-22",
             "frontmatter": {"key": "new"},
         }
-        with patch.object(ns_mod, "resolve_vault_path", return_value=tmp_path), \
-             patch.object(mp_mod, "write_note_file", return_value=None):
+        with (
+            patch.object(ns_mod, "resolve_vault_path", return_value=tmp_path),
+            patch.object(mp_mod, "write_note_file", return_value=None),
+        ):
             client = TestClient(app)
             resp = client.put("/notes/note-abc", json=payload)
         assert resp.status_code in (200, 422, 404)
@@ -156,10 +190,13 @@ class TestNotesUpdateOptionalFields:
 # encode it through SavedQueryRead, so MagicMock is safe here.
 # ===========================================================================
 
+
 def _sq_mock(query="tag:python", description="old"):
     sq = MagicMock()
-    sq.id = 1; sq.name = "Dashboard"
-    sq.query = query; sq.description = description
+    sq.id = 1
+    sq.name = "Dashboard"
+    sq.query = query
+    sq.description = description
     sq.owner_id = 1
     return sq
 
@@ -215,13 +252,20 @@ class TestQueryRouterUpdateSavedBranches:
 # users.py — helpers (direct unit tests)
 # ===========================================================================
 
+
 class TestUsersSerializeUser:
     def test_serialize_user_fields(self):
         from gnosis.models.user import User
         from gnosis.routers.users import _serialize_user
-        u = User(email="a@b.com", hashed_password="x",
-                 full_name="Alice", vault_slug="alice",
-                 is_superuser=True, is_active=True)
+
+        u = User(
+            email="a@b.com",
+            hashed_password="x",
+            full_name="Alice",
+            vault_slug="alice",
+            is_superuser=True,
+            is_active=True,
+        )
         u.id = 42
         result = _serialize_user(u)
         assert result["id"] == 42
@@ -232,9 +276,13 @@ class TestUsersSerializeUser:
 class TestUsersSerializeGrant:
     def test_serialize_grant_with_accepted_at(self):
         from gnosis.routers.users import _serialize_grant
+
         grant = MagicMock()
-        grant.id = 7; grant.owner_id = 1; grant.member_id = 2
-        grant.permission = "read"; grant.is_active = True
+        grant.id = 7
+        grant.owner_id = 1
+        grant.member_id = 2
+        grant.permission = "read"
+        grant.is_active = True
         grant.accepted_at = datetime(2026, 1, 1, tzinfo=UTC)
         result = _serialize_grant(grant, "o@x.com", "My Vault", "m@x.com")
         assert result.id == 7
@@ -242,9 +290,14 @@ class TestUsersSerializeGrant:
 
     def test_serialize_grant_accepted_at_none(self):
         from gnosis.routers.users import _serialize_grant
+
         grant = MagicMock()
-        grant.id = 8; grant.owner_id = 1; grant.member_id = 2
-        grant.permission = "read"; grant.is_active = True; grant.accepted_at = None
+        grant.id = 8
+        grant.owner_id = 1
+        grant.member_id = 2
+        grant.permission = "read"
+        grant.is_active = True
+        grant.accepted_at = None
         result = _serialize_grant(grant, "o@x.com", None, "m@x.com")
         assert result.accepted_at is None
 
@@ -253,15 +306,22 @@ class TestUsersSerializeGrant:
 # users.py — PATCH /me (get_session + require_user)
 # ===========================================================================
 
+
 class TestUsersUpdateMeBranches:
     def _make_app(self, user, session_mock):
         from gnosis.core.auth import require_user
         from gnosis.database import get_session
         from gnosis.routers.users import router
+
         app = FastAPI()
         app.include_router(router, prefix="/api/v1")
-        async def _override_session(): yield session_mock
-        async def _override_user(): return user
+
+        async def _override_session():
+            yield session_mock
+
+        async def _override_user():
+            return user
+
         app.dependency_overrides[get_session] = _override_session
         app.dependency_overrides[require_user] = _override_user
         return app
@@ -278,18 +338,31 @@ class TestUsersUpdateMeBranches:
 
     def _make_user(self, id=1, superuser=False):
         from gnosis.models.user import User
-        u = User(email="u@test.com", hashed_password="x",
-                 full_name="Test", vault_slug="old-slug",
-                 vault_path="/vault", vault_display_name="Old Name",
-                 is_superuser=superuser, is_active=True)
+
+        u = User(
+            email="u@test.com",
+            hashed_password="x",
+            full_name="Test",
+            vault_slug="old-slug",
+            vault_path="/vault",
+            vault_display_name="Old Name",
+            is_superuser=superuser,
+            is_active=True,
+        )
         u.id = id
         return u
 
     def test_vault_slug_conflict_returns_409(self):
         from gnosis.models.user import User
+
         user = self._make_user(id=1)
-        conflict = User(email="other@test.com", hashed_password="x",
-                        vault_slug="taken-slug", is_superuser=False, is_active=True)
+        conflict = User(
+            email="other@test.com",
+            hashed_password="x",
+            vault_slug="taken-slug",
+            is_superuser=False,
+            is_active=True,
+        )
         conflict.id = 2
         session = self._make_session(conflict_user=conflict)
         app = self._make_app(user, session)
@@ -303,8 +376,9 @@ class TestUsersUpdateMeBranches:
         app = self._make_app(user, session)
         with patch("gnosis.routers.users.ensure_vault_directory", return_value=None):
             with TestClient(app) as client:
-                resp = client.patch("/api/v1/users/me",
-                                    json={"vault_display_name": "Brand New Name"})
+                resp = client.patch(
+                    "/api/v1/users/me", json={"vault_display_name": "Brand New Name"}
+                )
         assert resp.status_code == 200
         assert user.vault_display_name == "Brand New Name"
 
@@ -312,11 +386,11 @@ class TestUsersUpdateMeBranches:
         user = self._make_user(id=1)
         session = self._make_session(conflict_user=None)
         app = self._make_app(user, session)
-        with patch("gnosis.routers.users.ensure_vault_directory",
-                   side_effect=OSError("no space left")):
+        with patch(
+            "gnosis.routers.users.ensure_vault_directory", side_effect=OSError("no space left")
+        ):
             with TestClient(app) as client:
-                resp = client.patch("/api/v1/users/me",
-                                    json={"full_name": "Updated Name"})
+                resp = client.patch("/api/v1/users/me", json={"full_name": "Updated Name"})
         assert resp.status_code == 200
         assert user.full_name == "Updated Name"
 
@@ -324,6 +398,7 @@ class TestUsersUpdateMeBranches:
 # ===========================================================================
 # vault.py — lines 92-93  (_run_sync_background)
 # ===========================================================================
+
 
 class TestVaultRunSyncBackground:
     @pytest.mark.asyncio
@@ -347,6 +422,7 @@ class TestVaultRunSyncBackground:
 # ===========================================================================
 # vault.py — lines 124-125  (_sync_sse_generator)
 # ===========================================================================
+
 
 class TestVaultSyncSSEGenerator:
     @pytest.mark.asyncio

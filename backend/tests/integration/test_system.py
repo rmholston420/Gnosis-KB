@@ -46,6 +46,7 @@ Design decisions
   that the router touches: is_available, complete(), and stream().
 * No Qdrant / Ollama / LightRAG / PostgreSQL services are required.
 """
+
 from __future__ import annotations
 
 import json
@@ -58,6 +59,7 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 async def _seed_note(
     client,
     note_id: str,
@@ -69,9 +71,7 @@ async def _seed_note(
         "/api/v1/notes/",
         json={"id": note_id, "title": title, "body": body, "folder": folder},
     )
-    assert resp.status_code in (200, 201), (
-        f"seed_note failed ({resp.status_code}): {resp.text}"
-    )
+    assert resp.status_code in (200, 201), f"seed_note failed ({resp.status_code}): {resp.text}"
 
 
 def _fake_fts_row(
@@ -111,7 +111,7 @@ def _parse_sse_frames(raw: bytes) -> list[dict | str]:
         line = line.strip()
         if not line.startswith("data:"):
             continue
-        payload = line[len("data:"):].strip()
+        payload = line[len("data:") :].strip()
         try:
             frames.append(json.loads(payload))
         except json.JSONDecodeError:
@@ -122,6 +122,7 @@ def _parse_sse_frames(raw: bytes) -> list[dict | str]:
 # ---------------------------------------------------------------------------
 # 1. Full-text search (FTS) — router logic, service boundary mocked
 # ---------------------------------------------------------------------------
+
 
 class TestFullTextSearch:
     """Verify the search router against a mocked fts service.
@@ -166,7 +167,16 @@ class TestFullTextSearch:
         assert resp.status_code == 200
         results = resp.json()["results"]
         assert len(results) >= 1
-        required_fields = {"note_id", "title", "folder", "note_type", "status", "score", "highlight", "tags"}
+        required_fields = {
+            "note_id",
+            "title",
+            "folder",
+            "note_type",
+            "status",
+            "score",
+            "highlight",
+            "tags",
+        }
         for result in results:
             missing = required_fields - set(result.keys())
             assert not missing, f"Result missing fields: {missing}\nResult: {result}"
@@ -209,8 +219,7 @@ class TestFullTextSearch:
         """When service returns rows, router never returns more than limit."""
         # Service returns 3 rows; we request limit=2 — router must cap at 2
         rows = [
-            _fake_fts_row(f"fts-limit-{i}", f"Karma Note {i}", score=float(3 - i))
-            for i in range(3)
+            _fake_fts_row(f"fts-limit-{i}", f"Karma Note {i}", score=float(3 - i)) for i in range(3)
         ]
         with patch(
             "gnosis.routers.search.fulltext_search",
@@ -251,6 +260,7 @@ class TestFullTextSearch:
 # ---------------------------------------------------------------------------
 # 2. SSE streaming assertions — real StreamingResponse, controllable generator
 # ---------------------------------------------------------------------------
+
 
 class TestSSEStreaming:
     """Parse the raw SSE byte stream from GET /ai/stream/chat.
@@ -335,6 +345,7 @@ class TestSSEStreaming:
     @pytest.mark.anyio
     async def test_sse_meta_rag_source_reflects_provider(self, async_client):
         """meta.rag_source is 'qdrant' when the Qdrant/llm_provider branch runs."""
+
         async def _single_token(*args, **kwargs):
             yield "ok"
 
@@ -361,6 +372,7 @@ class TestSSEStreaming:
 # 3. AI/RAG path with controllable test backend (FakeLLM)
 # ---------------------------------------------------------------------------
 
+
 class FakeLLM:
     """Drop-in stub for gnosis.services.llm_provider.llm_provider.
 
@@ -377,7 +389,11 @@ class FakeLLM:
     async def complete(self, prompt: str, **kwargs) -> str:  # noqa: ARG002
         if "tag" in prompt.lower():
             return self._TAG_RESPONSE
-        if "summary" in prompt.lower() or "summarize" in prompt.lower() or "2\u20134 sentence" in prompt:
+        if (
+            "summary" in prompt.lower()
+            or "summarize" in prompt.lower()
+            or "2\u20134 sentence" in prompt
+        ):
             return self._SUMMARY_RESPONSE
         return self._CHAT_RESPONSE
 
@@ -434,9 +450,10 @@ class TestControllableAIBackend:
         with (
             patch("gnosis.routers.ai.graph_rag") as mock_rag,
             patch("gnosis.routers.ai.llm_provider", fake),
-            patch("gnosis.routers.ai._qdrant_rag_complete", new=AsyncMock(
-                return_value=FakeLLM._CHAT_RESPONSE
-            )),
+            patch(
+                "gnosis.routers.ai._qdrant_rag_complete",
+                new=AsyncMock(return_value=FakeLLM._CHAT_RESPONSE),
+            ),
         ):
             mock_rag.is_available = AsyncMock(return_value=False)
             resp = await async_client.post(

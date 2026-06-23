@@ -37,6 +37,7 @@ Examples::
     WHERE tags CONTAINS eeg SORT created_at DESC
     FROM 00-inbox SORT modified_at DESC LIMIT 10 SELECT title,status,modified_at
 """
+
 from __future__ import annotations
 
 import re
@@ -86,6 +87,7 @@ _SELECT_COLS = {
 # AST dataclasses
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ParsedQuery:
     from_folder: str | None = None
@@ -99,6 +101,7 @@ class ParsedQuery:
 # ---------------------------------------------------------------------------
 # Parser
 # ---------------------------------------------------------------------------
+
 
 class GQLParseError(ValueError):
     """Raised when the query string cannot be parsed."""
@@ -139,9 +142,7 @@ def parse_query(raw: str) -> ParsedQuery:  # noqa: C901
 
         elif tok == "WHERE":
             i += 1
-            while i < len(tokens) and tokens[i].upper() not in (
-                "SORT", "LIMIT", "SELECT"
-            ):
+            while i < len(tokens) and tokens[i].upper() not in ("SORT", "LIMIT", "SELECT"):
                 if tokens[i].upper() == "AND":
                     i += 1
                     continue
@@ -258,16 +259,13 @@ async def execute_query(
     """
     t0 = time.perf_counter()
 
-    base = (
-        select(Note)
-        .options(selectinload(Note.tags))
-        .where(Note.is_deleted.is_(False))
-    )
+    base = select(Note).options(selectinload(Note.tags)).where(Note.is_deleted.is_(False))
 
     # Apply vault namespace filter when caller supplies owner context
     if owner_ids is not None:
         # Local import to avoid circular dependency at module load time
         from gnosis.core.namespace import scoped_note_stmt
+
         stmt = scoped_note_stmt(base, owner_ids)
     else:
         stmt = base
@@ -283,12 +281,9 @@ async def execute_query(
             # Tag.name is the PK — there is no Tag.id column.
             # NoteTag.tag_id references tags.name directly.
             from gnosis.models.tag import NoteTag
+
             filters.append(
-                Note.id.in_(
-                    select(NoteTag.c.note_id).where(
-                        NoteTag.c.tag_id == cond["tag"]
-                    )
-                )
+                Note.id.in_(select(NoteTag.c.note_id).where(NoteTag.c.tag_id == cond["tag"]))
             )
         else:
             col = _ALLOWED_FIELDS[cond["field"]]

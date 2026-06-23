@@ -7,6 +7,7 @@ Create Date: 2026-06-19
 Adds saved_queries.owner_id FK -> users.id ON DELETE SET NULL.
 Idempotent: skips the ALTER if the column already exists.
 """
+
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -30,28 +31,31 @@ def upgrade() -> None:
 
     if dialect == "sqlite":
         if not _column_exists(conn, "saved_queries", "owner_id"):
-            conn.execute(sa.text(
-                "ALTER TABLE saved_queries ADD COLUMN owner_id INTEGER"
-                " REFERENCES users(id) ON DELETE SET NULL"
-            ))
-        conn.execute(sa.text(
-            "CREATE INDEX IF NOT EXISTS ix_saved_queries_owner_id"
-            " ON saved_queries (owner_id)"
-        ))
+            conn.execute(
+                sa.text(
+                    "ALTER TABLE saved_queries ADD COLUMN owner_id INTEGER"
+                    " REFERENCES users(id) ON DELETE SET NULL"
+                )
+            )
+        conn.execute(
+            sa.text(
+                "CREATE INDEX IF NOT EXISTS ix_saved_queries_owner_id ON saved_queries (owner_id)"
+            )
+        )
     else:
         # Postgres: use batch for proper FK + named index
         with op.batch_alter_table("saved_queries") as batch:
             batch.add_column(
                 sa.Column(
-                    "owner_id", sa.Integer,
-                    sa.ForeignKey("users.id", ondelete="SET NULL",
-                                  name="fk_saved_queries_owner_id"),
+                    "owner_id",
+                    sa.Integer,
+                    sa.ForeignKey(
+                        "users.id", ondelete="SET NULL", name="fk_saved_queries_owner_id"
+                    ),
                     nullable=True,
                 )
             )
-        op.create_index(
-            "ix_saved_queries_owner_id", "saved_queries", ["owner_id"], unique=False
-        )
+        op.create_index("ix_saved_queries_owner_id", "saved_queries", ["owner_id"], unique=False)
 
     # Backfill existing rows to the first superuser
     row = conn.execute(
@@ -67,11 +71,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     conn = op.get_bind()
     try:
-        conn.execute(sa.text(
-            "DROP INDEX IF EXISTS ix_saved_queries_owner_id"
-        ))
-        conn.execute(sa.text(
-            "ALTER TABLE saved_queries DROP COLUMN IF EXISTS owner_id"
-        ))
+        conn.execute(sa.text("DROP INDEX IF EXISTS ix_saved_queries_owner_id"))
+        conn.execute(sa.text("ALTER TABLE saved_queries DROP COLUMN IF EXISTS owner_id"))
     except Exception:
         pass

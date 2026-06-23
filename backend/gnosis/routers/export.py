@@ -18,6 +18,7 @@ Note.tags now uses lazy='select' (explicit load only).  The explicit
 Do NOT add a second .options() call for the same relationship on the
 same query — that would trigger the double-load collapse again.
 """
+
 from __future__ import annotations
 
 import io
@@ -43,6 +44,7 @@ router = APIRouter(prefix="/export", tags=["export"])
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _iso(val: object) -> str:
     """Safely convert a date/datetime/str to ISO-8601 string."""
@@ -114,6 +116,7 @@ async def _fetch_user_notes(db: AsyncSession, owner_id: int) -> list[Note]:
 # Primary export endpoint (used by SettingsPage)
 # ---------------------------------------------------------------------------
 
+
 @router.get(
     "/",
     summary="Export vault in chosen format",
@@ -161,6 +164,7 @@ async def export_vault(
 # ---------------------------------------------------------------------------
 # Legacy / convenience endpoints
 # ---------------------------------------------------------------------------
+
 
 @router.get("/vault.zip", summary="Export entire vault as Obsidian-compatible zip (legacy)")
 async def export_vault_zip(

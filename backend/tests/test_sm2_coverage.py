@@ -13,6 +13,7 @@ Branches covered
   - quality out-of-range raises ValueError
 - initial_state(): due_today=True and due_today=False
 """
+
 from __future__ import annotations
 
 from datetime import date, timedelta
@@ -31,6 +32,7 @@ from gnosis.core.sm2 import (
 # initial_state
 # ---------------------------------------------------------------------------
 
+
 def test_initial_state_due_today():
     state, due = initial_state(due_today=True)
     assert state.easiness == EASINESS_START
@@ -48,6 +50,7 @@ def test_initial_state_not_due_today():
 # advance() — invalid quality
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("bad", [-1, 6, 100])
 def test_advance_invalid_quality_raises(bad):
     state = SM2State(easiness=EASINESS_START, interval=1, repetitions=0)
@@ -58,6 +61,7 @@ def test_advance_invalid_quality_raises(bad):
 # ---------------------------------------------------------------------------
 # advance() — reset branch (quality 0, 1, 2)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize("quality", [0, 1, 2])
 def test_advance_reset_branch(quality):
@@ -73,6 +77,7 @@ def test_advance_reset_branch(quality):
 # ---------------------------------------------------------------------------
 # advance() — correct branch (quality 3, 4, 5)
 # ---------------------------------------------------------------------------
+
 
 def test_advance_quality3_rep0_gives_interval1():
     state = SM2State(easiness=EASINESS_START, interval=1, repetitions=0)
@@ -126,6 +131,7 @@ def test_advance_easiness_already_at_floor_stays_at_floor():
 # ---------------------------------------------------------------------------
 # Round-trip: enrol → review several times
 # ---------------------------------------------------------------------------
+
 
 def test_full_sm2_cycle():
     """Simulate a realistic review schedule over 4 sessions."""

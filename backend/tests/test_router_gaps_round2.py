@@ -24,6 +24,7 @@ users.py
 vault.py
   124-125:  _sync_sse_generator: total: non-integer -> ValueError -> pass
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -36,22 +37,28 @@ from fastapi.testclient import TestClient
 # graph.py — 171->170  (BFS already-visited neighbor skip)
 # ===========================================================================
 
+
 @pytest.mark.asyncio
 async def test_get_path_bfs_skips_already_visited_neighbor():
     from gnosis.routers.graph import get_path
 
     def _note(id):
-        n = MagicMock(); n.id = id; n.title = id
+        n = MagicMock()
+        n.id = id
+        n.title = id
         return n
 
     def _link(src, tgt):
-        lnk = MagicMock(); lnk.source_id = src; lnk.target_id = tgt
+        lnk = MagicMock()
+        lnk.source_id = src
+        lnk.target_id = tgt
         return lnk
 
     notes = [_note("A"), _note("B"), _note("C")]
     links = [_link("A", "B"), _link("B", "C"), _link("A", "C")]
 
     call = [0]
+
     async def _exec(stmt, *a, **kw):
         rows = [notes, links][min(call[0], 1)]
         call[0] += 1
@@ -59,6 +66,7 @@ async def test_get_path_bfs_skips_already_visited_neighbor():
         r.scalars.return_value.unique.return_value.all.return_value = rows
         r.scalars.return_value.all.return_value = rows
         return r
+
     sess = AsyncMock()
     sess.execute = _exec
 
@@ -71,9 +79,11 @@ async def test_get_path_bfs_skips_already_visited_neighbor():
 # graph.py — 294-295 / 337-338  (ImportError fallbacks)
 # ===========================================================================
 
+
 @pytest.mark.asyncio
 async def test_get_lightrag_graph_import_error_returns_fallback():
     from gnosis.routers.graph import get_lightrag_graph
+
     db = AsyncMock()
     with patch.dict("sys.modules", {"gnosis.services.graph_rag": None}):
         result = await get_lightrag_graph(owner_ids={1}, db=db)
@@ -85,6 +95,7 @@ async def test_get_lightrag_graph_import_error_returns_fallback():
 @pytest.mark.asyncio
 async def test_get_graph_entities_import_error_returns_fallback():
     from gnosis.routers.graph import get_graph_entities
+
     db = AsyncMock()
     with patch.dict("sys.modules", {"gnosis.services.graph_rag": None}):
         result = await get_graph_entities(limit=50, owner_ids={1}, db=db)
@@ -104,6 +115,7 @@ async def test_get_graph_entities_import_error_returns_fallback():
 #   - db.execute -> note found
 # Lines 230-242 are the block after both guards pass.
 # ===========================================================================
+
 
 @pytest.mark.asyncio
 async def test_export_note_pdf_happy_path_lines_230_242():
@@ -132,10 +144,13 @@ async def test_export_note_pdf_happy_path_lines_230_242():
     fake_html_cls = MagicMock(return_value=fake_html)
 
     # Patch settings to enable PDF export and inject mock weasyprint.HTML
-    with patch.object(export_mod, "settings", MagicMock(enable_pdf_export=True)), \
-         patch.dict("sys.modules", {"weasyprint": MagicMock(HTML=fake_html_cls)}):
+    with (
+        patch.object(export_mod, "settings", MagicMock(enable_pdf_export=True)),
+        patch.dict("sys.modules", {"weasyprint": MagicMock(HTML=fake_html_cls)}),
+    ):
         # Re-import inside the patch so the lazy 'from weasyprint import HTML' picks it up
         import sys
+
         # Insert a fresh weasyprint mock so the try-import inside the function finds it
         sys.modules["weasyprint"] = MagicMock(HTML=fake_html_cls)
         resp = await export_note_pdf(
@@ -153,6 +168,7 @@ async def test_export_note_pdf_happy_path_lines_230_242():
 # ingest.py — 143-144  (_ai_enrich json.loads raises)
 # ===========================================================================
 
+
 @pytest.mark.asyncio
 async def test_ai_enrich_json_decode_error_falls_back():
     from gnosis.routers.ingest import _ai_enrich
@@ -163,7 +179,7 @@ async def test_ai_enrich_json_decode_error_falls_back():
 
     with patch("gnosis.routers.ingest.llm_provider") as mock_llm:
         mock_llm.is_available = True
-        mock_llm.complete = AsyncMock(return_value='{broken json{')
+        mock_llm.complete = AsyncMock(return_value="{broken json{")
         title, summary, tags = await _ai_enrich(parsed)
 
     assert title == "Fallback Title"
@@ -174,15 +190,16 @@ async def test_ai_enrich_json_decode_error_falls_back():
 # ingest.py — 385  (413 oversized) + 397  (is_dir skip) + 429-430  (write error)
 # ===========================================================================
 
+
 class TestIngestBatch:
     def _make_app(self):
         from gnosis.core.auth import get_current_user
         from gnosis.models.user import User
         from gnosis.routers.ingest import router as ingest_router
+
         app = FastAPI()
         app.include_router(ingest_router, prefix="/api/v1")
-        user = User(email="u@t.com", hashed_password="x",
-                    is_superuser=False, is_active=True)
+        user = User(email="u@t.com", hashed_password="x", is_superuser=False, is_active=True)
         user.id = 1
         app.dependency_overrides[get_current_user] = lambda: user
         return app
@@ -192,6 +209,7 @@ class TestIngestBatch:
         import io
 
         from gnosis.routers.ingest import _MAX_FILE_SIZE
+
         oversized = b"x" * (_MAX_FILE_SIZE + 2)
         client = TestClient(self._make_app(), raise_server_exceptions=False)
         resp = client.post(
@@ -217,10 +235,12 @@ class TestIngestBatch:
         zip_bytes = buf.getvalue()
 
         app = self._make_app()
-        with patch.object(ingest_mod, "settings",
-                          MagicMock(vault_path=str(tmp_path))), \
-             patch("gnosis.routers.ingest.Path.write_bytes",
-                   side_effect=OSError("permission denied")):
+        with (
+            patch.object(ingest_mod, "settings", MagicMock(vault_path=str(tmp_path))),
+            patch(
+                "gnosis.routers.ingest.Path.write_bytes", side_effect=OSError("permission denied")
+            ),
+        ):
             client = TestClient(app)
             resp = client.post(
                 "/api/v1/ingest/batch",
@@ -250,8 +270,7 @@ class TestIngestBatch:
         zip_bytes = buf.getvalue()
 
         app = self._make_app()
-        with patch.object(ingest_mod, "settings",
-                          MagicMock(vault_path=str(tmp_path))):
+        with patch.object(ingest_mod, "settings", MagicMock(vault_path=str(tmp_path))):
             client = TestClient(app)
             resp = client.post(
                 "/api/v1/ingest/batch",
@@ -269,25 +288,39 @@ class TestIngestBatch:
 # users.py — 163  (valid slug, no conflict -> assign)
 # ===========================================================================
 
+
 class TestUsersUpdateMeSlugAssign:
     def _make_app(self, user, session_mock):
         from gnosis.core.auth import require_user
         from gnosis.database import get_session
         from gnosis.routers.users import router
+
         app = FastAPI()
         app.include_router(router, prefix="/api/v1")
-        async def _override_session(): yield session_mock
-        async def _override_user(): return user
+
+        async def _override_session():
+            yield session_mock
+
+        async def _override_user():
+            return user
+
         app.dependency_overrides[get_session] = _override_session
         app.dependency_overrides[require_user] = _override_user
         return app
 
     def test_vault_slug_no_conflict_assigns_line_163(self):
         from gnosis.models.user import User
-        user = User(email="u@test.com", hashed_password="x",
-                    full_name="Test", vault_slug="old-slug",
-                    vault_path="/vault", vault_display_name="V",
-                    is_superuser=False, is_active=True)
+
+        user = User(
+            email="u@test.com",
+            hashed_password="x",
+            full_name="Test",
+            vault_slug="old-slug",
+            vault_path="/vault",
+            vault_display_name="V",
+            is_superuser=False,
+            is_active=True,
+        )
         user.id = 1
 
         session = AsyncMock()
@@ -301,8 +334,7 @@ class TestUsersUpdateMeSlugAssign:
         app = self._make_app(user, session)
         with patch("gnosis.routers.users.ensure_vault_directory", return_value=None):
             with TestClient(app) as client:
-                resp = client.patch("/api/v1/users/me",
-                                    json={"vault_slug": "new-valid-slug"})
+                resp = client.patch("/api/v1/users/me", json={"vault_slug": "new-valid-slug"})
         assert resp.status_code == 200
         assert user.vault_slug == "new-valid-slug"
 
@@ -311,6 +343,7 @@ class TestUsersUpdateMeSlugAssign:
 # users.py — 244-263  (invite_to_vault: new grant created)
 # ===========================================================================
 
+
 class TestUsersInviteToVaultNewGrant:
     @pytest.mark.asyncio
     async def test_invite_creates_new_grant_lines_244_263(self):
@@ -318,13 +351,15 @@ class TestUsersInviteToVaultNewGrant:
         from gnosis.models.user import User
         from gnosis.routers.users import InviteRequest, invite_to_vault
 
-        owner = User(email="owner@test.com", hashed_password="x",
-                     is_superuser=False, is_active=True)
+        owner = User(
+            email="owner@test.com", hashed_password="x", is_superuser=False, is_active=True
+        )
         owner.id = 1
         owner.vault_display_name = "My Vault"
 
-        member = User(email="member@test.com", hashed_password="x",
-                      is_superuser=False, is_active=True)
+        member = User(
+            email="member@test.com", hashed_password="x", is_superuser=False, is_active=True
+        )
         member.id = 2
 
         member_result = MagicMock()
@@ -336,9 +371,11 @@ class TestUsersInviteToVaultNewGrant:
         session.execute = AsyncMock(side_effect=[member_result, no_grant_result])
         session.add = MagicMock()
         session.commit = AsyncMock()
+
         async def _refresh(obj):
             obj.id = 99
             obj.accepted_at = None
+
         session.refresh = AsyncMock(side_effect=_refresh)
 
         req = InviteRequest(member_email="member@test.com", permission="read")
@@ -358,6 +395,7 @@ class TestUsersInviteToVaultNewGrant:
 # ===========================================================================
 # vault.py — 124-125  (_sync_sse_generator: bad total -> ValueError -> pass)
 # ===========================================================================
+
 
 class TestVaultSyncSSEGeneratorBadTotal:
     @pytest.mark.asyncio

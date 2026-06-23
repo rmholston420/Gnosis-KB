@@ -4,6 +4,7 @@ Revision ID: 0005
 Revises:     0004
 Create Date: 2026-06-19
 """
+
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -18,7 +19,8 @@ depends_on = None
 
 def upgrade() -> None:
     conn = op.get_bind()
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         CREATE TABLE IF NOT EXISTS saved_queries (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             name        VARCHAR(200) NOT NULL UNIQUE,
@@ -27,11 +29,11 @@ def upgrade() -> None:
             created_at  DATETIME     DEFAULT CURRENT_TIMESTAMP,
             updated_at  DATETIME     DEFAULT CURRENT_TIMESTAMP
         )
-    """))
-    conn.execute(sa.text(
-        "CREATE UNIQUE INDEX IF NOT EXISTS ix_saved_queries_name"
-        " ON saved_queries (name)"
-    ))
+    """)
+    )
+    conn.execute(
+        sa.text("CREATE UNIQUE INDEX IF NOT EXISTS ix_saved_queries_name ON saved_queries (name)")
+    )
 
 
 def downgrade() -> None:

@@ -9,6 +9,7 @@ Usage in a router:
 
 The Limiter instance is attached to app.state.limiter in main.py.
 """
+
 from __future__ import annotations
 
 from slowapi import Limiter

@@ -8,6 +8,7 @@ Covers:
   - 404 for nonexistent note
   - 422 for invalid format param
 """
+
 from __future__ import annotations
 
 import io

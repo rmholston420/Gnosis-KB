@@ -1,4 +1,5 @@
 """Tests for health router."""
+
 from __future__ import annotations
 
 import pytest

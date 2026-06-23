@@ -7,6 +7,7 @@ Covers:
   - Count accuracy (multiple notes with same tag)
   - Sort order: by count desc, then alpha
 """
+
 from __future__ import annotations
 
 import pytest
@@ -86,7 +87,7 @@ async def test_tags_count_accuracy(async_client: AsyncClient) -> None:
 async def test_tags_sort_by_count_desc(async_client: AsyncClient) -> None:
     """Tags are returned sorted by count descending."""
     # Create a tag with 3 notes and one with 1 note
-    rare_tag   = "gnosis-rare-tag"
+    rare_tag = "gnosis-rare-tag"
     common_tag = "gnosis-common-tag"
     for i in range(3):
         await _create_note(async_client, f"Common {i}", [common_tag])

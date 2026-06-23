@@ -1,4 +1,5 @@
 """Additional AI router tests: daily_review branches and stream_chat generator."""
+
 from __future__ import annotations
 
 import json
@@ -24,6 +25,7 @@ def _note(note_id="n1", title="Inbox Note", body="Some content.", folder="00-inb
 # ---------------------------------------------------------------------------
 # daily_review — no notes branch
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_daily_review_returns_no_notes_summary_when_inbox_empty():
@@ -91,6 +93,7 @@ async def test_daily_review_parses_llm_json_response():
 # stream_chat — SSE event generator
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_stream_chat_emits_done_when_no_provider():
     from gnosis.routers.ai import stream_chat
@@ -106,8 +109,11 @@ async def test_stream_chat_emits_done_when_no_provider():
         mock_llm.is_available = False
 
         response = await stream_chat(
-            message="hi", mode="hybrid",
-            session=AsyncMock(), current_user=user, owner_ids={1},
+            message="hi",
+            mode="hybrid",
+            session=AsyncMock(),
+            current_user=user,
+            owner_ids={1},
         )
         chunks = []
         async for chunk in response.body_iterator:
@@ -138,8 +144,11 @@ async def test_stream_chat_emits_tokens_via_qdrant():
         mock_llm.is_available = True
 
         response = await stream_chat(
-            message="hi", mode="hybrid",
-            session=AsyncMock(), current_user=user, owner_ids={1},
+            message="hi",
+            mode="hybrid",
+            session=AsyncMock(),
+            current_user=user,
+            owner_ids={1},
         )
         chunks = []
         async for chunk in response.body_iterator:

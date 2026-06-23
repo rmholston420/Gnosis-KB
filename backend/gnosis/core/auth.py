@@ -30,6 +30,7 @@ router body.  The dependency:
    scoped exclusively to the requested vault.
 5. Invalid header value → HTTP 400.  No grant → HTTP 403.
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta

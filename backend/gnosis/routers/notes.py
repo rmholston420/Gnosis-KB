@@ -100,6 +100,7 @@ async def _get_note_or_404(
 
 def _note_to_read(note: Note) -> NoteRead:
     from gnosis.schemas.note import LinkSchema
+
     tags = note.tags if isinstance(note.tags, list) else []
     return NoteRead(
         id=note.id,
@@ -162,9 +163,7 @@ async def list_notes(
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> NoteListResponse:
     query = scoped_note_stmt(
-        select(Note)
-        .options(selectinload(Note.tags))
-        .where(Note.is_deleted.is_(False)),
+        select(Note).options(selectinload(Note.tags)).where(Note.is_deleted.is_(False)),
         owner_ids,
     )
 
@@ -257,8 +256,7 @@ async def resolve_wikilink(
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> dict:
     stmt = scoped_note_stmt(
-        select(Note.id, Note.title, Note.slug)
-        .where(
+        select(Note.id, Note.title, Note.slug).where(
             Note.title.ilike(title),
             Note.is_deleted.is_(False),
         ),
@@ -316,15 +314,20 @@ async def create_note(
 
     existing_stmt = scoped_note_stmt(
         select(Note).where(Note.slug == slug, Note.is_deleted.is_(False)),
-        owner_ids, include_null_owner=False,
+        owner_ids,
+        include_null_owner=False,
     )
     existing = await db.execute(existing_stmt)
     if existing.scalars().unique().one_or_none():
         raise NoteConflictError(title)
 
     fm = build_default_frontmatter(
-        note_id=note_id, title=title, note_type=data.note_type,
-        status=data.status, tags=data.tags, source_url=data.source_url,
+        note_id=note_id,
+        title=title,
+        note_type=data.note_type,
+        status=data.status,
+        tags=data.tags,
+        source_url=data.source_url,
     )
     fm.update(data.frontmatter)
 
@@ -338,18 +341,30 @@ async def create_note(
         raise VaultWriteError(str(vault_root / data.folder / filename), str(e)) from e
 
     import mistune
+
     renderer = mistune.create_markdown(
         plugins=["strikethrough", "footnotes", "table", "task_lists"]
     )
     body_html = str(renderer(data.body))
 
     note = Note(
-        id=note_id, title=title, slug=slug, body=data.body, body_html=body_html,
-        note_type=data.note_type, status=data.status, vault_path=vault_path_rel,
-        folder=data.folder, source_url=data.source_url,
-        word_count=len(data.body.split()), frontmatter=fm,
-        last_reviewed=data.last_reviewed, is_deleted=False,
-        vector_indexed=False, graph_indexed=False, owner_id=current_user.id,
+        id=note_id,
+        title=title,
+        slug=slug,
+        body=data.body,
+        body_html=body_html,
+        note_type=data.note_type,
+        status=data.status,
+        vault_path=vault_path_rel,
+        folder=data.folder,
+        source_url=data.source_url,
+        word_count=len(data.body.split()),
+        frontmatter=fm,
+        last_reviewed=data.last_reviewed,
+        is_deleted=False,
+        vector_indexed=False,
+        graph_indexed=False,
+        owner_id=current_user.id,
     )
     db.add(note)
     await db.flush()  # INSERT note row so FK in note_tags is valid
@@ -393,9 +408,15 @@ async def list_orphan_notes(
     rows = (await db.execute(stmt)).scalars().unique().all()
     return [
         NoteListItem(
-            id=n.id, title=n.title, slug=n.slug, note_type=n.note_type,
-            status=n.status, folder=n.folder, word_count=n.word_count,
-            created_at=n.created_at, modified_at=n.modified_at,
+            id=n.id,
+            title=n.title,
+            slug=n.slug,
+            note_type=n.note_type,
+            status=n.status,
+            folder=n.folder,
+            word_count=n.word_count,
+            created_at=n.created_at,
+            modified_at=n.modified_at,
             tags=[t.name for t in (n.tags or [])],
         )
         for n in rows
@@ -443,13 +464,19 @@ async def get_or_create_daily_note(
 
     from gnosis.services.markdown_parser import build_default_frontmatter, write_note_file
 
-    note_id = f"{generate_note_id(datetime.combine(today, datetime.min.time()))}-{uuid.uuid4().hex[:4]}"
+    note_id = (
+        f"{generate_note_id(datetime.combine(today, datetime.min.time()))}-{uuid.uuid4().hex[:4]}"
+    )
     title = f"Daily Note — {today_str}"
     slug = slugify(title)
     body = f"# {title}\n\n"
     fm = build_default_frontmatter(
-        note_id=note_id, title=title, note_type="journal",
-        status="active", tags=[], source_url=None,
+        note_id=note_id,
+        title=title,
+        note_type="journal",
+        status="active",
+        tags=[],
+        source_url=None,
     )
     vault_root = resolve_vault_path(current_user)
     filename = f"{note_id}-{slug[:50]}.md"
@@ -465,10 +492,20 @@ async def get_or_create_daily_note(
     body_html = str(renderer(body))
 
     note = Note(
-        id=note_id, title=title, slug=slug, body=body, body_html=body_html,
-        note_type="journal", status="active", vault_path=vault_path_rel,
-        folder=folder, word_count=len(body.split()), frontmatter=fm,
-        is_deleted=False, vector_indexed=False, graph_indexed=False,
+        id=note_id,
+        title=title,
+        slug=slug,
+        body=body,
+        body_html=body_html,
+        note_type="journal",
+        status="active",
+        vault_path=vault_path_rel,
+        folder=folder,
+        word_count=len(body.split()),
+        frontmatter=fm,
+        is_deleted=False,
+        vector_indexed=False,
+        graph_indexed=False,
         owner_id=current_user.id,
     )
     db.add(note)
@@ -513,6 +550,7 @@ async def update_note(
     if data.body is not None:
         note.body = data.body
         import mistune
+
         renderer = mistune.create_markdown(
             plugins=["strikethrough", "footnotes", "table", "task_lists"]
         )

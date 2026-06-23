@@ -66,6 +66,7 @@ def unauthenticated_test_client(_sync_app) -> TestClient:
         yield tc
     # Restore the default authenticated overrides for any tests that run after
     from tests.conftest import _fake_require_user
+
     _sync_app.dependency_overrides[require_user] = _fake_require_user
     _sync_app.dependency_overrides[get_current_user] = _fake_require_user
 
@@ -103,9 +104,7 @@ def test_vault_sync_status_fields_present(test_client: TestClient, auth_headers)
     response = test_client.get("/api/v1/vault/sync/status", headers=auth_headers)
     body = response.json()
     required_fields = {"state", "files_processed", "files_total"}
-    assert required_fields.issubset(body.keys()), (
-        f"Missing fields: {required_fields - body.keys()}"
-    )
+    assert required_fields.issubset(body.keys()), f"Missing fields: {required_fields - body.keys()}"
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +131,9 @@ def test_vault_sync_stream_emits_sse_lines(test_client: TestClient, auth_headers
     assert collected[-1] == "[done]", f"Last SSE event should be '[done]', got: {collected[-1]}"
 
 
-def test_vault_sync_stream_synced_lines_present(test_client: TestClient, auth_headers, mock_vault_sync):
+def test_vault_sync_stream_synced_lines_present(
+    test_client: TestClient, auth_headers, mock_vault_sync
+):
     """At least one 'synced:' line should appear in the stream."""
     collected: list[str] = []
     with test_client.stream("POST", "/api/v1/vault/sync?stream=true", headers=auth_headers) as resp:

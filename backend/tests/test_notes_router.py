@@ -4,6 +4,7 @@ Covers: list_notes (filters, pagination), get_note_by_title, resolve_wikilink,
 list_templates, create_note, get_note, update_note, delete_note (soft + hard),
 list_orphan_notes, get_or_create_daily_note, _get_note_or_404 error paths.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -16,6 +17,7 @@ import pytest
 # ---------------------------------------------------------------------------
 # Fixtures / factories
 # ---------------------------------------------------------------------------
+
 
 def _tag(name: str):
     t = MagicMock()
@@ -95,6 +97,7 @@ def _owner_ids(uid=1):
 # list_notes
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_list_notes_returns_items_and_pagination():
     from gnosis.routers.notes import list_notes
@@ -104,9 +107,15 @@ async def test_list_notes_returns_items_and_pagination():
 
     with patch("gnosis.routers.notes.scoped_note_stmt", side_effect=lambda s, o, **kw: s):
         result = await list_notes(
-            folder=None, note_type=None, status=None, tags=None,
-            q=None, page=1, page_size=20,
-            db=db, owner_ids=_owner_ids(),
+            folder=None,
+            note_type=None,
+            status=None,
+            tags=None,
+            q=None,
+            page=1,
+            page_size=20,
+            db=db,
+            owner_ids=_owner_ids(),
         )
 
     assert result.total == 3
@@ -123,9 +132,15 @@ async def test_list_notes_pagination_math():
 
     with patch("gnosis.routers.notes.scoped_note_stmt", side_effect=lambda s, o, **kw: s):
         result = await list_notes(
-            folder=None, note_type=None, status=None, tags=None,
-            q=None, page=2, page_size=10,
-            db=db, owner_ids=_owner_ids(),
+            folder=None,
+            note_type=None,
+            status=None,
+            tags=None,
+            q=None,
+            page=2,
+            page_size=10,
+            db=db,
+            owner_ids=_owner_ids(),
         )
 
     assert result.pages == 3  # ceil(25/10)
@@ -147,8 +162,10 @@ async def test_list_notes_with_filters_doesnt_crash():
             status="active",
             tags=["python"],
             q="hello",
-            page=1, page_size=20,
-            db=db, owner_ids=_owner_ids(),
+            page=1,
+            page_size=20,
+            db=db,
+            owner_ids=_owner_ids(),
         )
     assert result.total == 1
 
@@ -156,6 +173,7 @@ async def test_list_notes_with_filters_doesnt_crash():
 # ---------------------------------------------------------------------------
 # get_note_by_title
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_get_note_by_title_returns_note():
@@ -196,6 +214,7 @@ async def test_get_note_by_title_raises_404_when_missing():
 # resolve_wikilink
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_resolve_wikilink_returns_id_title_slug():
     from gnosis.routers.notes import resolve_wikilink
@@ -235,6 +254,7 @@ async def test_resolve_wikilink_raises_404_when_missing():
 # list_templates
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_list_templates_returns_template_dicts():
     from gnosis.routers.notes import list_templates
@@ -256,6 +276,7 @@ async def test_list_templates_returns_template_dicts():
 # ---------------------------------------------------------------------------
 # get_note  (/{note_id})
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_get_note_returns_note_read():
@@ -288,6 +309,7 @@ async def test_get_note_raises_404_for_missing_note():
 # ---------------------------------------------------------------------------
 # delete_note  (soft and hard)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_delete_note_soft_sets_is_deleted():
@@ -326,6 +348,7 @@ async def test_delete_note_hard_calls_db_delete():
 # update_note
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_update_note_modifies_title_and_body():
     from gnosis.routers.notes import update_note
@@ -349,8 +372,11 @@ async def test_update_note_modifies_title_and_body():
 
     with patch("gnosis.routers.notes.scoped_note_stmt", side_effect=lambda s, o, **kw: s):
         result = await update_note(
-            note_id="id-001", data=data,
-            db=db, current_user=user, owner_ids=_owner_ids(),
+            note_id="id-001",
+            data=data,
+            db=db,
+            current_user=user,
+            owner_ids=_owner_ids(),
         )
 
     assert result.title == "Updated Title"
@@ -359,6 +385,7 @@ async def test_update_note_modifies_title_and_body():
 # ---------------------------------------------------------------------------
 # list_orphan_notes
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_list_orphan_notes_returns_items():
@@ -380,6 +407,7 @@ async def test_list_orphan_notes_returns_items():
 # ---------------------------------------------------------------------------
 # _get_note_or_404 — ownership error branches
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_get_note_or_404_raises_403_for_unowned_note():

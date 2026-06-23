@@ -1,4 +1,5 @@
 """Final gap coverage."""
+
 from __future__ import annotations
 
 import pytest
@@ -10,6 +11,7 @@ pytestmark = pytest.mark.asyncio
 # ---------------------------------------------------------------------------
 # Admin – real /admin/reindex
 # ---------------------------------------------------------------------------
+
 
 class TestAdminActionBranches:
     async def test_admin_reindex_action(self, async_client, test_db):
@@ -35,6 +37,7 @@ class TestAdminActionBranches:
 # Notes – empty body
 # ---------------------------------------------------------------------------
 
+
 class TestNotesErrorBranches:
     async def test_create_note_empty_body_is_valid(self, async_client):
         resp = await async_client.post(
@@ -49,6 +52,7 @@ class TestNotesErrorBranches:
 # Must use (client, vault_dir) — same proven pattern as
 # test_coverage_remaining.py::TestReviewSubmitLastReviewed.
 # ---------------------------------------------------------------------------
+
 
 class TestReviewSM2Scheduling:
     async def test_multiple_grade_submissions(self, client, vault_dir):
@@ -87,17 +91,25 @@ class TestReviewSM2Scheduling:
 # AI ingest – exception path
 # ---------------------------------------------------------------------------
 
+
 class TestIngestNoteException:
     async def test_ingest_note_lightrag_raises(self, client, vault_dir):
         note_resp = await client.post(
             "/api/v1/notes/",
-            json={"title": "Ingest exc note", "body": "ingest body", "folder": "10-zettelkasten", "tags": []},
+            json={
+                "title": "Ingest exc note",
+                "body": "ingest body",
+                "folder": "10-zettelkasten",
+                "tags": [],
+            },
         )
         assert note_resp.status_code == 201
         note_id = note_resp.json()["id"]
 
-        with patch("gnosis.routers.ai._lightrag_available", return_value=True), \
-             patch("gnosis.routers.ai.graph_rag") as mock_gr:
+        with (
+            patch("gnosis.routers.ai._lightrag_available", return_value=True),
+            patch("gnosis.routers.ai.graph_rag") as mock_gr,
+        ):
             mock_gr.ingest_note = AsyncMock(side_effect=Exception("lightrag exploded"))
             resp = await client.post(f"/api/v1/ai/ingest-note/{note_id}")
 

@@ -154,15 +154,15 @@ async def fulltext_search(
 
     output = [
         {
-            "note_id":   row["note_id"],
-            "title":     row["title"],
-            "slug":      row["slug"] or "",
-            "folder":    row["folder"] or "",
+            "note_id": row["note_id"],
+            "title": row["title"],
+            "slug": row["slug"] or "",
+            "folder": row["folder"] or "",
             "note_type": row["note_type"] or "",
-            "status":    row["status"] or "",
-            "score":     float(row["score"]),
+            "status": row["status"] or "",
+            "score": float(row["score"]),
             "highlight": row["highlight"] or "",
-            "tags":      list(row["tags"]) if row["tags"] else [],
+            "tags": list(row["tags"]) if row["tags"] else [],
         }
         for row in rows
     ]

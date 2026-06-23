@@ -2,6 +2,7 @@
 
 Import all models here so Alembic's autogenerate can detect them.
 """
+
 from gnosis.models.attachment import Attachment  # noqa: F401
 from gnosis.models.link import Link  # noqa: F401
 from gnosis.models.note import Note  # noqa: F401

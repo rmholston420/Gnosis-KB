@@ -16,6 +16,7 @@ Endpoints:
   GET  /providers                 — Return active provider info + model list
   POST /providers/model           — Hot-swap the active Ollama model (no restart needed)
 """
+
 from __future__ import annotations
 
 import json
@@ -74,6 +75,7 @@ _VAULT_SYSTEM_PROMPT = (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _build_rag_context(hits: list[dict]) -> str:
     if not hits:
         return ""
@@ -118,10 +120,7 @@ async def _get_note_or_404(
     session: AsyncSession,
     owner_ids: set[int],
 ) -> Note:
-    base = (
-        select(Note)
-        .where(Note.id == note_id, Note.is_deleted.is_(False))
-    )
+    base = select(Note).where(Note.id == note_id, Note.is_deleted.is_(False))
     stmt = scoped_note_stmt(base, owner_ids)
     result = await session.execute(stmt)
     note = result.scalar_one_or_none()
@@ -140,15 +139,14 @@ def _parse_json_list(text: str) -> list[str]:
         except json.JSONDecodeError:
             pass
     lines = [
-        re.sub(r"^[\-\*\d\.\)]+\s*", "", line).strip()
-        for line in text.splitlines()
-        if line.strip()
+        re.sub(r"^[\-\*\d\.\)]+\s*", "", line).strip() for line in text.splitlines() if line.strip()
     ]
     return [line for line in lines if line][:10]
 
 
 def _build_moc_markdown(topic: str, moc_title: str, sections: list[MocSection]) -> str:
     from datetime import datetime
+
     now = datetime.now()
     ts = now.strftime("%Y%m%d-%H%M%S")
     frontmatter = (
@@ -180,6 +178,7 @@ def _build_moc_markdown(topic: str, moc_title: str, sections: list[MocSection]) 
 # ---------------------------------------------------------------------------
 # GET /ai/providers
 # ---------------------------------------------------------------------------
+
 
 class ProviderInfo(BaseModel):
     provider: str
@@ -256,6 +255,7 @@ async def set_model(
 # POST /ai/chat
 # ---------------------------------------------------------------------------
 
+
 @router.post(
     "/chat",
     response_model=ChatResponse,
@@ -285,6 +285,7 @@ async def chat(
 # POST /ai/summarize/{note_id}
 # ---------------------------------------------------------------------------
 
+
 @router.post("/summarize/{note_id}", response_model=SummarizeResponse)
 async def summarize_note(
     note_id: str,
@@ -306,6 +307,7 @@ async def summarize_note(
 # ---------------------------------------------------------------------------
 # POST /ai/suggest-links/{note_id}
 # ---------------------------------------------------------------------------
+
 
 @router.post("/suggest-links/{note_id}", response_model=LinkSuggestionsResponse)
 async def suggest_links(
@@ -330,7 +332,7 @@ async def suggest_links(
         f"Source note: {note.title}\n\nBody (excerpt):\n{note.body[:3000]}\n\n"
         f"Existing notes in the vault:\n{titles_text}\n\n"
         "Which 3–5 vault notes would make the most meaningful wikilinks from the source note? "
-        "Return a JSON array of note titles only. Example: [\"Title A\", \"Title B\"]\n"
+        'Return a JSON array of note titles only. Example: ["Title A", "Title B"]\n'
         "Also provide a brief rationale for each as a second JSON array of strings."
     )
     raw = await llm_provider.complete(prompt, temperature=0.3)
@@ -358,6 +360,7 @@ async def suggest_links(
 # POST /ai/suggest-tags/{note_id}
 # ---------------------------------------------------------------------------
 
+
 @router.post("/suggest-tags/{note_id}", response_model=TagSuggestionsResponse)
 async def suggest_tags(
     note_id: str,
@@ -371,7 +374,7 @@ async def suggest_tags(
         f"Note title: {note.title}\n\nBody:\n{note.body[:3000]}\n\n"
         "Suggest 3–8 concise, lowercase tags for this note. "
         "Tags should be single words or short hyphenated phrases. "
-        "Return a JSON array of strings. Example: [\"zettelkasten\", \"spaced-repetition\"]"
+        'Return a JSON array of strings. Example: ["zettelkasten", "spaced-repetition"]'
     )
     raw = await llm_provider.complete(prompt, temperature=0.2)
     tags = _parse_json_list(raw)
@@ -381,6 +384,7 @@ async def suggest_tags(
 # ---------------------------------------------------------------------------
 # POST /ai/critique/{note_id}
 # ---------------------------------------------------------------------------
+
 
 @router.post("/critique/{note_id}", response_model=CritiqueResponse)
 async def critique_note(
@@ -399,8 +403,8 @@ async def critique_note(
         "3. Self-containedness: Can it be understood without external context?\n"
         "4. Insight density: Does it capture why this matters?\n\n"
         "Return JSON with exactly these keys: "
-        "{\"atomicity\": \"...\", \"connectivity\": \"...\", "
-        "\"self_containedness\": \"...\", \"insight_density\": \"...\", \"overall\": \"...\"}"
+        '{"atomicity": "...", "connectivity": "...", '
+        '"self_containedness": "...", "insight_density": "...", "overall": "..."}'
     )
     raw = await llm_provider.complete(prompt, temperature=0.3)
     critique_data: dict = {}
@@ -424,15 +428,15 @@ async def critique_note(
 # GET /ai/orphan-audit
 # ---------------------------------------------------------------------------
 
+
 @router.get("/orphan-audit", response_model=OrphanAuditResponse)
 async def orphan_audit(
     limit: int = Query(default=10, ge=1, le=50),
     session: AsyncSession = Depends(get_session),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> OrphanAuditResponse:
-    linked_ids = (
-        select(Note.id)
-        .join(Link, (Link.source_id == Note.id) | (Link.target_id == Note.id))
+    linked_ids = select(Note.id).join(
+        Link, (Link.source_id == Note.id) | (Link.target_id == Note.id)
     )
     base = (
         select(Note)
@@ -449,16 +453,14 @@ async def orphan_audit(
     if not rows or not llm_provider.is_available:
         return OrphanAuditResponse(orphan_count=len(rows), items=[])
 
-    titles_body = "\n".join(
-        f"- [{r.title}]: {r.body[:200]}..." for r in rows
-    )
+    titles_body = "\n".join(f"- [{r.title}]: {r.body[:200]}..." for r in rows)
     prompt = (
         f"These {len(rows)} notes have no incoming or outgoing wikilinks (orphans):\n\n"
         f"{titles_body}\n\n"
         "For each orphan note, suggest 2-3 other notes it could link to or "
         "topics it might relate to.\n"
         "Return as a JSON array: "
-        "[{\"note_id\": \"id\", \"title\": \"...\", \"suggestions\": [\"...\", \"...\"]}]\n"
+        '[{"note_id": "id", "title": "...", "suggestions": ["...", "..."]}]\n'
         "Be concise."
     )
     raw = await llm_provider.complete(prompt, temperature=0.4)
@@ -469,9 +471,8 @@ async def orphan_audit(
             parsed_items = json.loads(json_match.group())
             items = [
                 OrphanAuditItem(
-                    note_id=item.get("note_id") or next(
-                        (r.id for r in rows if r.title == item.get("title")), ""
-                    ),
+                    note_id=item.get("note_id")
+                    or next((r.id for r in rows if r.title == item.get("title")), ""),
                     title=item.get("title", ""),
                     suggestions=item.get("suggestions", []),
                 )
@@ -486,6 +487,7 @@ async def orphan_audit(
 # ---------------------------------------------------------------------------
 # POST /ai/daily-review
 # ---------------------------------------------------------------------------
+
 
 @router.post("/daily-review", response_model=DailyReviewResponse)
 async def daily_review(
@@ -512,15 +514,13 @@ async def daily_review(
             inbox_note_count=len(notes),
             action_items=[],
         )
-    notes_text = "\n\n".join(
-        f"### {n.title}\n{n.body[:500]}" for n in notes
-    )
+    notes_text = "\n\n".join(f"### {n.title}\n{n.body[:500]}" for n in notes)
     prompt = (
         f"Today's inbox notes ({today_str}):\n\n{notes_text}\n\n"
         "Provide:\n"
         "1. A brief synthesis of today's captures (2-3 sentences).\n"
         "2. 3-5 actionable next steps (process, link, promote to project, etc).\n"
-        "Format: {\"summary\": \"...\", \"action_items\": [\"...\", ...]}"
+        'Format: {"summary": "...", "action_items": ["...", ...]}'
     )
     raw = await llm_provider.complete(prompt, temperature=0.3)
     summary_text = raw
@@ -545,6 +545,7 @@ async def daily_review(
 # GET /ai/stream/chat  (SSE)
 # ---------------------------------------------------------------------------
 
+
 @router.get("/stream/chat")
 async def stream_chat(
     message: str = Query(..., min_length=1),
@@ -564,9 +565,7 @@ async def stream_chat(
                     yield f"data: {json.dumps({'token': token})}\n\n"
             elif llm_provider.is_available:
                 rag_source = "qdrant"
-                async for token in _qdrant_rag_stream(
-                    message, owner_ids=owner_ids, mode=mode
-                ):
+                async for token in _qdrant_rag_stream(message, owner_ids=owner_ids, mode=mode):
                     yield f"data: {json.dumps({'token': token})}\n\n"
             else:
                 yield f"data: {json.dumps({'error': 'No AI provider available'})}\n\n"
@@ -585,6 +584,7 @@ async def stream_chat(
 # ---------------------------------------------------------------------------
 # POST /ai/ingest-note/{note_id}
 # ---------------------------------------------------------------------------
+
 
 @router.post("/ingest-note/{note_id}", response_model=IngestNoteResponse)
 async def ingest_note(
@@ -611,9 +611,7 @@ async def ingest_note(
             body=note.body,
             user_id=effective_uid,
         )
-        await session.execute(
-            update(Note).where(Note.id == note_id).values(graph_indexed=True)
-        )
+        await session.execute(update(Note).where(Note.id == note_id).values(graph_indexed=True))
         await session.commit()
         return IngestNoteResponse(
             note_id=note_id,
@@ -630,6 +628,7 @@ def _lightrag_available() -> bool:
     """Runtime check for LightRAG availability without importing at module level."""
     try:
         import lightrag  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -638,6 +637,7 @@ def _lightrag_available() -> bool:
 # ---------------------------------------------------------------------------
 # POST /ai/generate-moc
 # ---------------------------------------------------------------------------
+
 
 @router.post("/generate-moc", response_model=MocResponse)
 async def generate_moc(
@@ -673,8 +673,7 @@ async def generate_moc(
         )
 
     notes_context = "\n\n".join(
-        f"### {n.title}\nType: {n.note_type} | Status: {n.status}\n{n.body[:400]}"
-        for n in notes
+        f"### {n.title}\nType: {n.note_type} | Status: {n.status}\n{n.body[:400]}" for n in notes
     )
     moc_title = req.title if hasattr(req, "title") and req.title else f"MOC — {topic.title()}"
     slug = re.sub(r"[^a-z0-9]+", "-", moc_title.lower()).strip("-")
@@ -688,7 +687,7 @@ async def generate_moc(
         "— A one-sentence summary of the section's theme\n"
         "— A list of note titles that belong in this section (use exact titles)\n\n"
         "Return as JSON:\n"
-        "[{\"heading\": \"...\", \"summary\": \"...\", \"wikilinks\": [\"Note Title\", ...]}]\n"
+        '[{"heading": "...", "summary": "...", "wikilinks": ["Note Title", ...]}]\n'
         "Only include notes from the list above. No invented titles."
     )
     raw = await llm_provider.complete(prompt, temperature=0.4, max_tokens=2000)

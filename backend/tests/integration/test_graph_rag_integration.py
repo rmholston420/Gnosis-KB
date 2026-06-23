@@ -11,6 +11,7 @@ Coverage targets (graph_rag.py)
   288->286 stream() _get_instance returns None → yields unavailability message
   291->exit stream() instance.astream_query raises → yields "Stream error: ..."
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -21,9 +22,11 @@ import pytest
 # Helper: build a GraphRAGService with a fake LightRAG instance
 # ---------------------------------------------------------------------------
 
+
 def _make_service_with_instance(user_id: int = 1):
     """Return a GraphRAGService whose _instances[user_id] is a MagicMock."""
     from gnosis.services.graph_rag import GraphRAGService
+
     svc = GraphRAGService()
     fake_instance = MagicMock()
     fake_instance.aquery = AsyncMock(return_value="query answer")
@@ -38,10 +41,12 @@ def _make_service_with_instance(user_id: int = 1):
 # _synthesise: llm_provider not available → concatenate  (line 187)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_synthesise_without_llm_falls_back_to_concat():
     """When llm_provider.is_available is False, _synthesise concatenates answers."""
     from gnosis.services.graph_rag import GraphRAGService
+
     svc = GraphRAGService()
 
     with patch("gnosis.services.graph_rag.graph_rag") as _:
@@ -63,9 +68,11 @@ async def test_synthesise_without_llm_falls_back_to_concat():
 # _synthesise: llm_provider.complete raises → concatenation fallback
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_synthesise_llm_exception_falls_back_to_concat():
     from gnosis.services.graph_rag import GraphRAGService
+
     svc = GraphRAGService()
 
     mock_llm = MagicMock()
@@ -86,11 +93,13 @@ async def test_synthesise_llm_exception_falls_back_to_concat():
 # stream() – _get_instance returns None → unavailability yield  (line 288->286)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_stream_yields_unavailable_when_instance_is_none():
     """When LightRAG is not installed (_get_instance returns None), stream
     must yield a single human-readable error string and return."""
     from gnosis.services.graph_rag import GraphRAGService
+
     svc = GraphRAGService()
 
     with patch.object(svc, "_get_instance", new=AsyncMock(return_value=None)):
@@ -106,14 +115,17 @@ async def test_stream_yields_unavailable_when_instance_is_none():
 # stream() – astream_query raises → yields "Stream error: ..."  (line 291->exit)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_stream_yields_error_on_astream_query_exception():
     """When the LightRAG instance's astream_query raises, the service should
     yield a single 'Stream error: ...' token and return."""
     from gnosis.services.graph_rag import GraphRAGService
+
     svc = GraphRAGService()
 
     fake_instance = MagicMock()
+
     # Make hasattr(instance, "astream_query") True
     async def _exploding_stream(*args, **kwargs):
         raise RuntimeError("astream blew up")
@@ -133,10 +145,12 @@ async def test_stream_yields_error_on_astream_query_exception():
 # stream() – instance has no astream_query → falls back to aquery
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_stream_falls_back_to_aquery_when_no_astream():
     """When instance lacks astream_query, stream() calls aquery and yields result."""
     from gnosis.services.graph_rag import GraphRAGService
+
     svc = GraphRAGService()
 
     fake_instance = MagicMock(spec=["aquery"])  # spec excludes astream_query
@@ -154,6 +168,7 @@ async def test_stream_falls_back_to_aquery_when_no_astream():
 # _get_instance – LightRAG init raises → returns None
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_get_instance_returns_none_on_lightrag_init_failure():
     """When LightRAG() constructor raises, _get_instance logs and returns None."""
@@ -163,6 +178,7 @@ async def test_get_instance_returns_none_on_lightrag_init_failure():
         pytest.skip("lightrag not installed — import-path already covered")
 
     from gnosis.services.graph_rag import GraphRAGService
+
     svc = GraphRAGService()
 
     with patch("gnosis.services.graph_rag.LightRAG", side_effect=RuntimeError("CUDA OOM")):
@@ -176,10 +192,12 @@ async def test_get_instance_returns_none_on_lightrag_init_failure():
 # multi-graph query: empty answers → unavailability string
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_query_multi_graph_all_fail_returns_unavailable_message():
     """query() with multiple owner_ids that all fail returns the fallback string."""
     from gnosis.services.graph_rag import GraphRAGService
+
     svc = GraphRAGService()
 
     async def _failing_query_single(uid, question, mode):

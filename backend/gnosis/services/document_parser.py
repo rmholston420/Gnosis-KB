@@ -12,6 +12,7 @@ Supported formats:
 All parsers return a ParsedDocument dataclass with extracted plain text,
 detected title, and source metadata.
 """
+
 from __future__ import annotations
 
 import logging
@@ -38,6 +39,7 @@ class ParsedDocument:
 # PDF parser
 # ---------------------------------------------------------------------------
 
+
 def parse_pdf(path: Path) -> ParsedDocument:
     """Extract text from a PDF file using PyMuPDF.
 
@@ -50,9 +52,7 @@ def parse_pdf(path: Path) -> ParsedDocument:
     try:
         import fitz  # type: ignore[import]  # PyMuPDF
     except ImportError:
-        raise RuntimeError(
-            "PyMuPDF is not installed. Add pymupdf to requirements."
-        ) from None
+        raise RuntimeError("PyMuPDF is not installed. Add pymupdf to requirements.") from None
 
     doc = fitz.open(str(path))
     pages: list[str] = []
@@ -81,6 +81,7 @@ def parse_pdf(path: Path) -> ParsedDocument:
 # ---------------------------------------------------------------------------
 # DOCX parser
 # ---------------------------------------------------------------------------
+
 
 def parse_docx(path: Path) -> ParsedDocument:
     """Extract text from a DOCX file using python-docx.
@@ -117,6 +118,7 @@ def parse_docx(path: Path) -> ParsedDocument:
 # ---------------------------------------------------------------------------
 # PPTX parser
 # ---------------------------------------------------------------------------
+
 
 def parse_pptx(path: Path) -> ParsedDocument:
     """Extract text from a PPTX file using python-pptx.
@@ -160,6 +162,7 @@ def parse_pptx(path: Path) -> ParsedDocument:
 # XLSX parser
 # ---------------------------------------------------------------------------
 
+
 def parse_xlsx(path: Path) -> ParsedDocument:
     """Extract data from an XLSX file using openpyxl.
 
@@ -174,9 +177,7 @@ def parse_xlsx(path: Path) -> ParsedDocument:
     try:
         import openpyxl  # type: ignore[import]
     except ImportError:
-        raise RuntimeError(
-            "openpyxl is not installed. Add openpyxl to requirements."
-        ) from None
+        raise RuntimeError("openpyxl is not installed. Add openpyxl to requirements.") from None
 
     wb = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
     sections: list[str] = []
@@ -195,9 +196,7 @@ def parse_xlsx(path: Path) -> ParsedDocument:
             "| " + " | ".join(["---"] * col_count) + " |",
         ]
         for row in rows[1:201]:  # limit to 200 data rows
-            md_rows.append(
-                "| " + " | ".join(str(c) if c is not None else "" for c in row) + " |"
-            )
+            md_rows.append("| " + " | ".join(str(c) if c is not None else "" for c in row) + " |")
         sections.append(f"## Sheet: {sheet_name}\n" + "\n".join(md_rows))
 
     wb.close()
@@ -217,6 +216,7 @@ def parse_xlsx(path: Path) -> ParsedDocument:
 # Image / OCR parser
 # ---------------------------------------------------------------------------
 
+
 def parse_image(path: Path) -> ParsedDocument:
     """Extract text from an image using Tesseract OCR.
 
@@ -232,9 +232,7 @@ def parse_image(path: Path) -> ParsedDocument:
         import pytesseract  # type: ignore[import]
         from PIL import Image  # type: ignore[import]
     except ImportError:
-        raise RuntimeError(
-            "pytesseract or Pillow is not installed."
-        ) from None
+        raise RuntimeError("pytesseract or Pillow is not installed.") from None
 
     img = Image.open(str(path))
     text = pytesseract.image_to_string(img)
@@ -252,6 +250,7 @@ def parse_image(path: Path) -> ParsedDocument:
 # ---------------------------------------------------------------------------
 # URL scraper
 # ---------------------------------------------------------------------------
+
 
 async def parse_url(url: str) -> ParsedDocument:
     """Scrape a URL and extract readable text.
@@ -293,7 +292,11 @@ async def parse_url(url: str) -> ParsedDocument:
             or soup.find(class_="content")
             or soup.find("body")
         )
-        text = main.get_text(separator="\n", strip=True) if main else soup.get_text(separator="\n", strip=True)
+        text = (
+            main.get_text(separator="\n", strip=True)
+            if main
+            else soup.get_text(separator="\n", strip=True)
+        )
 
     except ImportError:
         logger.warning("beautifulsoup4 not installed — using raw text")

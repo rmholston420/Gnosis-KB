@@ -86,9 +86,7 @@ async def test_reindex_no_legacy_notes(client: AsyncClient, test_db: AsyncSessio
 # ---------------------------------------------------------------------------
 
 
-async def test_reindex_reassigns_legacy_note(
-    client: AsyncClient, test_db: AsyncSession
-) -> None:
+async def test_reindex_reassigns_legacy_note(client: AsyncClient, test_db: AsyncSession) -> None:
     """A note with owner_id=0 is updated to owner_id=1 and ingest is attempted."""
     await _seed_user(test_db, user_id=1)
     note = await _seed_legacy_note(test_db)
@@ -151,10 +149,18 @@ async def test_reindex_forbidden_for_non_admin(
 
         with (
             patch("gnosis.services.vector_store.ensure_collection", return_value=None),
-            patch("gnosis.services.vault_sync.start_vault_watcher", new=AsyncMock(return_value=type('O', (), {'stop': lambda s: None, 'join': lambda s: None})())),
-            patch("gnosis.services.graph_rag.graph_rag.initialize", new=AsyncMock(return_value=None)),
+            patch(
+                "gnosis.services.vault_sync.start_vault_watcher",
+                new=AsyncMock(
+                    return_value=type("O", (), {"stop": lambda s: None, "join": lambda s: None})()
+                ),
+            ),
+            patch(
+                "gnosis.services.graph_rag.graph_rag.initialize", new=AsyncMock(return_value=None)
+            ),
         ):
             from gnosis import config
+
             settings = config.get_settings()
             settings.vault_path = str(vault)
 

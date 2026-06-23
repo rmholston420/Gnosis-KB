@@ -18,6 +18,7 @@ Files / lines addressed:
                                    670 (generate-moc empty topic 422),
                                    709-710 (generate-moc no notes 404)
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -69,6 +70,7 @@ def _mock_graph_rag(available: bool) -> MagicMock:
 # ===========================================================================
 # review.py
 # ===========================================================================
+
 
 class TestReviewEnroll:
     """review.py lines 147-155 (note not found) and 158 (already enrolled)."""
@@ -147,6 +149,7 @@ class TestReviewSubmitLastReviewed:
 # notes.py  — _upsert_tags
 # ===========================================================================
 
+
 class TestUpsertTagsBranches:
     """notes.py lines 52→exit (empty list), 54-57 (new Tag row created)."""
 
@@ -184,6 +187,7 @@ class TestUpsertTagsBranches:
 # ===========================================================================
 # ai.py  — all patches target gnosis.routers.ai.<name> (module namespace)
 # ===========================================================================
+
 
 class TestAiGetNoteOr404:
     """ai.py line 129: _get_note_or_404 raises 404 for unknown note."""

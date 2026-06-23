@@ -1,6 +1,7 @@
 """
 Tests for ingest router endpoints.
 """
+
 from __future__ import annotations
 
 import io

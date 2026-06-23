@@ -3,6 +3,7 @@
 The executor touches the DB via AsyncSession — we mock the session so no
 real database is needed.
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -54,6 +55,7 @@ def _make_db(notes):
 # Basic execution
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_execute_query_returns_rows_and_ms():
     from gnosis.services.query_parser import ParsedQuery, execute_query
@@ -73,7 +75,8 @@ async def test_execute_query_returns_rows_and_ms():
 async def test_execute_query_row_has_expected_fields():
     from gnosis.services.query_parser import ParsedQuery, execute_query
 
-    tag = MagicMock(); tag.name = "python"
+    tag = MagicMock()
+    tag.name = "python"
     note = _make_note(tags=[tag])
     db = _make_db([note])
     parsed = ParsedQuery(select_cols=["id", "title", "status"])
@@ -110,6 +113,7 @@ async def test_execute_query_empty_result():
 # FROM clause
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_execute_query_from_folder_applies_filter():
     from gnosis.services.query_parser import ParsedQuery, execute_query
@@ -126,11 +130,13 @@ async def test_execute_query_from_folder_applies_filter():
 # WHERE tag condition
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_execute_query_tag_condition():
     from gnosis.services.query_parser import ParsedQuery, execute_query
 
-    tag = MagicMock(); tag.name = "eeg"
+    tag = MagicMock()
+    tag.name = "eeg"
     note = _make_note(tags=[tag])
     db = _make_db([note])
     parsed = ParsedQuery(conditions=[{"type": "tag", "tag": "eeg"}])
@@ -142,6 +148,7 @@ async def test_execute_query_tag_condition():
 # ---------------------------------------------------------------------------
 # WHERE field conditions
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_execute_query_field_eq_condition():
@@ -176,9 +183,7 @@ async def test_execute_query_unknown_op_is_skipped():
 
     note = _make_note()
     db = _make_db([note])
-    parsed = ParsedQuery(
-        conditions=[{"type": "field", "field": "status", "op": "~", "value": "x"}]
-    )
+    parsed = ParsedQuery(conditions=[{"type": "field", "field": "status", "op": "~", "value": "x"}])
     rows, _ = await execute_query(parsed, db)
     assert isinstance(rows, list)
 
@@ -186,6 +191,7 @@ async def test_execute_query_unknown_op_is_skipped():
 # ---------------------------------------------------------------------------
 # SORT direction
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_execute_query_sort_asc():
@@ -212,6 +218,7 @@ async def test_execute_query_sort_desc():
 # scoped_note_stmt is imported LOCALLY inside execute_query, so we must
 # patch it at the source: gnosis.core.namespace.scoped_note_stmt
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_execute_query_calls_scoped_note_stmt_when_owner_ids_given():

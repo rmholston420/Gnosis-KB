@@ -8,6 +8,7 @@ enroll_note makes TWO db.execute() calls:
   1. select(Note).where(Note.id == note_id) -> scalar_one_or_none() -> None -> 404
   2. (never reached in the 404 path)
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -24,7 +25,10 @@ def _make_app(db=None):
     app = FastAPI()
     app.include_router(router, prefix="/api/v1")
     _db = db or _make_db_empty()
-    async def _get_db(): yield _db
+
+    async def _get_db():
+        yield _db
+
     app.dependency_overrides[get_db] = _get_db
     return app
 

@@ -5,6 +5,7 @@ Source-verified:
 - _lightrag_available is a function; import and call directly for unit test.
 - patch target: gnosis.routers.ai._lightrag_available
 """
+
 from __future__ import annotations
 
 import pytest
@@ -27,8 +28,10 @@ async def _create_note(async_client) -> str:
 async def test_ingest_note_succeeds_and_marks_graph_indexed(async_client):
     note_id = await _create_note(async_client)
 
-    with patch("gnosis.routers.ai._lightrag_available", return_value=True), \
-         patch("gnosis.routers.ai.graph_rag") as mock_gr:
+    with (
+        patch("gnosis.routers.ai._lightrag_available", return_value=True),
+        patch("gnosis.routers.ai.graph_rag") as mock_gr,
+    ):
         mock_gr.ingest_note = AsyncMock(return_value=None)
         resp = await async_client.post(f"/api/v1/ai/ingest-note/{note_id}")
 
