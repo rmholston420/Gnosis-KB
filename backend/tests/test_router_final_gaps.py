@@ -12,8 +12,10 @@ notes.py
 query.py  (PUT /saved/{id})
   160->166: payload.query valid -> sq.query updated
   166->168: payload.description is not None -> sq.description updated
-  Key: SavedQueryRead requires non-null created_at/updated_at datetimes.
-       Mock sq must carry real datetime values so Pydantic validation passes.
+  Key fix: use real SavedQuery() instance (not MagicMock) so Pydantic
+  model_validate(from_attributes=True) works via SQLAlchemy __dict__.
+  Use spec=AsyncSession and sync lambda dep overrides to match the
+  pattern in test_query_router_coverage.py.
 
 users.py  (get_session + require_user)
   100: _serialize_user direct
@@ -23,8 +25,8 @@ users.py  (get_session + require_user)
   184-185: OSError from ensure_vault_directory
 
 vault.py
-  92-93: lines are in _run_sync_background (not _sync_sse_generator).
-         'total:notanumber' -> ValueError -> pass.
+  92-93:  'total:notanumber' -> ValueError -> pass  (_run_sync_background)
+  124-125: RuntimeError mid-iteration -> error SSE  (_sync_sse_generator)
 """
 from __future__ import annotations
 
@@ -34,6 +36,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+_NOW = datetime(2026, 6, 22, 22, 0, 0, tzinfo=timezone.utc)
 
 
 # ===========================================================================
@@ -49,7 +55,7 @@ def _make_note_orm():
     n.word_count = 1; n.owner_id = 1; n.frontmatter = {"key": "old"}
     n.source_url = None; n.last_reviewed = None
     n.vector_indexed = False; n.graph_indexed = False; n.is_deleted = False
-    n.created_at = datetime(2026, 1, 1, tzinfo=timezone.utc); n.updated_at = None
+    n.created_at = _NOW; n.updated_at = None
     n.tags = []; n.outgoing_links = []; n.incoming_links = []
     return n
 
@@ -146,85 +152,80 @@ class TestNotesUpdateOptionalFields:
 
 # ===========================================================================
 # query.py — 160->166 and 166->168
+#
+# Pattern mirrors test_query_router_coverage.py exactly:
+#   - spec=AsyncSession on the db mock
+#   - sync lambda for dependency overrides (not async def)
+#   - real SavedQuery() ORM instance so Pydantic from_attributes works
+#   - sq.created_at / sq.updated_at set to real datetimes (server_default
+#     only fires on DB INSERT; raw instances have None until manually set)
 # ===========================================================================
 
+def _make_query_app(db):
+    from gnosis.core.auth import get_current_user, get_vault_owner_ids
+    from gnosis.database import get_db
+    from gnosis.models.user import User
+    from gnosis.routers.query import router as query_router
+
+    app = FastAPI()
+    app.include_router(query_router, prefix="/query")
+
+    user = User(email="u@test.com", hashed_password="x",
+                is_superuser=False, is_active=True)
+    user.id = 1
+
+    async def _get_db(): yield db
+    app.dependency_overrides[get_db] = _get_db
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_vault_owner_ids] = lambda: {1}
+    return app
+
+
+def _make_saved_query(query="tag:python", description="old description"):
+    """Real SavedQuery instance with manually-set server-default fields."""
+    from gnosis.models.saved_query import SavedQuery
+    sq = SavedQuery(
+        name="Dashboard",
+        query=query,
+        description=description,
+        owner_id=1,
+    )
+    sq.id = 1
+    sq.created_at = _NOW
+    sq.updated_at = _NOW
+    return sq
+
+
+def _make_query_db(sq):
+    db = AsyncMock(spec=AsyncSession)
+    res = MagicMock()
+    res.scalar_one_or_none.return_value = sq
+    db.execute = AsyncMock(return_value=res)
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()  # no-op; sq already has valid timestamps
+    return db
+
+
 class TestQueryRouterUpdateSavedBranches:
-    """
-    SavedQueryRead schema requires non-null created_at and updated_at (datetime).
-    The mock SavedQuery returned by db.execute AND mutated by db.refresh must
-    carry real datetime values, otherwise Pydantic raises a validation error
-    (500) before the response is serialised.
-
-    db.refresh is an AsyncMock that does nothing by default (does NOT update
-    the object).  We pre-populate both timestamps on the mock so validation
-    always passes regardless of refresh.
-    """
-
-    _NOW = datetime(2026, 6, 22, 22, 0, 0, tzinfo=timezone.utc)
-
-    def _make_app(self, db):
-        from gnosis.core.auth import get_current_user, get_vault_owner_ids
-        from gnosis.database import get_db
-        from gnosis.models.user import User
-        from gnosis.routers.query import router as query_router
-
-        app = FastAPI()
-        app.include_router(query_router, prefix="/query")
-
-        user = User(email="u@test.com", hashed_password="x",
-                    is_superuser=False, is_active=True)
-        user.id = 1
-
-        async def _get_db(): yield db
-        async def _get_user(): return user
-        async def _get_owner_ids(): return {1}
-
-        app.dependency_overrides[get_db] = _get_db
-        app.dependency_overrides[get_current_user] = _get_user
-        app.dependency_overrides[get_vault_owner_ids] = _get_owner_ids
-        return app
-
-    def _saved_query(self):
-        """Real-ish SavedQuery mock with valid datetime fields."""
-        sq = MagicMock()
-        sq.id = 1
-        sq.name = "Dashboard"
-        sq.query = "tag:python"
-        sq.description = "old description"
-        sq.owner_id = 1
-        sq.created_at = self._NOW
-        sq.updated_at = self._NOW
-        return sq
-
-    def _make_db(self, sq):
-        result = MagicMock()
-        result.scalar_one_or_none = MagicMock(return_value=sq)
-        db = AsyncMock()
-        db.execute = AsyncMock(return_value=result)
-        db.commit = AsyncMock()
-        # refresh is a no-op; sq already has valid datetimes
-        db.refresh = AsyncMock()
-        return db
-
     def test_update_query_field_160_to_166(self):
-        """160->166: payload.query is valid -> sq.query updated; description None -> 168."""
-        sq = self._saved_query()
-        db = self._make_db(sq)
-        app = self._make_app(db)
+        """160->166: payload.query valid -> sq.query updated; description=None -> skip to 168."""
+        sq = _make_saved_query()
+        db = _make_query_db(sq)
+        app = _make_query_app(db)
         with patch("gnosis.routers.query.parse_query", return_value=MagicMock()):
             client = TestClient(app)
             resp = client.put("/query/saved/1", json={"query": "tag:python"})
-        assert resp.status_code == 200
+        assert resp.status_code == 200, resp.text
         assert sq.query == "tag:python"
 
     def test_update_description_field_166_to_168(self):
         """166->168: payload.description is not None -> sq.description updated."""
-        sq = self._saved_query()
-        db = self._make_db(sq)
-        app = self._make_app(db)
+        sq = _make_saved_query()
+        db = _make_query_db(sq)
+        app = _make_query_app(db)
         client = TestClient(app)
         resp = client.put("/query/saved/1", json={"description": "new desc"})
-        assert resp.status_code == 200
+        assert resp.status_code == 200, resp.text
         assert sq.description == "new desc"
 
 
@@ -339,19 +340,19 @@ class TestUsersUpdateMeBranches:
 
 
 # ===========================================================================
-# vault.py — lines 92-93  (_run_sync_background, NOT _sync_sse_generator)
+# vault.py — lines 92-93  (_run_sync_background)
 # ===========================================================================
 
 class TestVaultRunSyncBackground:
     @pytest.mark.asyncio
     async def test_bad_total_line_silently_ignored_lines_92_93(self):
-        """Lines 92-93: 'total:notanumber' -> ValueError -> pass in _run_sync_background."""
+        """Lines 92-93: 'total:notanumber' -> ValueError -> pass."""
         from gnosis.routers.vault import _run_sync_background, _sync_status
         import gnosis.routers.vault as vm
 
         async def _fake_sync(user_id):
             yield "synced: note1.md"
-            yield "total:notanumber"   # triggers the try/except ValueError -> pass
+            yield "total:notanumber"
             yield "synced: note2.md"
 
         with patch.object(vm, "run_full_sync_for_user", side_effect=_fake_sync):
@@ -362,13 +363,13 @@ class TestVaultRunSyncBackground:
 
 
 # ===========================================================================
-# vault.py — _sync_sse_generator (kept for lines 124-125)
+# vault.py — lines 124-125  (_sync_sse_generator)
 # ===========================================================================
 
 class TestVaultSyncSSEGenerator:
     @pytest.mark.asyncio
     async def test_sync_exception_yields_error_sse_lines_124_125(self):
-        """Lines 124-125: mid-iteration RuntimeError -> error SSE token."""
+        """Lines 124-125: RuntimeError mid-iteration -> error SSE token."""
         from gnosis.routers.vault import _sync_sse_generator, _sync_status
         import gnosis.routers.vault as vm
 
