@@ -104,10 +104,10 @@ ignore_missing_imports = true
 [tool.coverage.run]
 source = ["gnosis"]
 branch = true
-# 'asyncio' must be listed so the C tracer stays attached when the event
-# loop switches coroutine frames; without it, async arc hits are silently
-# dropped and the same lines appear uncovered on every run.
-concurrency = ["thread", "greenlet", "asyncio"]
+# On CPython 3.12+ the default sys.settrace C tracer follows coroutine
+# frames natively. 'greenlet' mode actively interferes with that, so
+# we list only 'thread' here.
+concurrency = ["thread"]
 omit = [
     "gnosis/core/sm2_test.py",
     "gnosis/services/fts_test.py",
