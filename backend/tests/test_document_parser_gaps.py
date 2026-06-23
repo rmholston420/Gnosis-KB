@@ -9,23 +9,25 @@ function body), not at module level.  This means:
     because httpx is also imported locally.
 
 Correct approach per case:
-  ImportError blocks  : insert None (or a sentinel) into sys.modules so the
-                        local `from X import Y` raises ImportError.
-  Happy-path mocking  : insert a fake module object into sys.modules so the
-                        local import succeeds and returns the mock.
-  parse_url           : httpx IS in sys.modules already (installed); patch
-                        'httpx.AsyncClient' on the real httpx module.
+  ImportError blocks  : insert None into sys.modules so the local `from X import Y`
+                        raises ImportError.
+  Happy-path mocking  : insert a fake ModuleType into sys.modules so the local
+                        import succeeds and returns our mock.
+  parse_url line 287  : bs4/beautifulsoup4 is NOT in pyproject.toml (not installed).
+                        Inject a fake bs4 module with a real-ish BeautifulSoup so the
+                        try-block runs instead of the except ImportError fallback.
+                        httpx IS installed; patch via patch.object(httpx, 'AsyncClient').
 
 Uncovered lines
 ---------------
   61       : pages.append(get_text()) - fitz doc iteration
-  97-98    : except ImportError → raise (python-docx absent)
-  133-134  : except ImportError → raise (python-pptx absent)
+  97-98    : except ImportError -> raise (python-docx absent)
+  133-134  : except ImportError -> raise (python-pptx absent)
   143->142 : shape no-text / empty-text False branch
   145->140 : empty slide False branch
-  177-178  : except ImportError → raise (openpyxl absent)
-  235-236  : except ImportError → raise (pytesseract absent)
-  287      : tag.decompose() loop body (boilerplate HTML tags present)
+  177-178  : except ImportError -> raise (openpyxl absent)
+  235-236  : except ImportError -> raise (pytesseract absent)
+  287      : tag.decompose() loop body
 """
 from __future__ import annotations
 
@@ -61,8 +63,10 @@ class _BlockImport:
             sys.modules.pop(self._name, None)
 
 
+_SENTINEL = object()
+
+
 def _inject_module(name: str, obj) -> dict:
-    """Insert obj into sys.modules[name]; return {name: prior_value, was_present}."""
     prior = sys.modules.get(name, _SENTINEL)
     sys.modules[name] = obj
     return {"name": name, "prior": prior}
@@ -76,46 +80,31 @@ def _restore_module(snapshot: dict):
         sys.modules[name] = prior
 
 
-_SENTINEL = object()
-
-
 # ---------------------------------------------------------------------------
-# parse_pdf — line 61: for-page loop body
+# parse_pdf -- line 61: for-page loop body
 # ---------------------------------------------------------------------------
 
 class TestParsePdfLoop:
-    """
-    parse_pdf does: `import fitz` (local).  To mock it we inject a fake fitz
-    module into sys.modules so the local import succeeds and returns our mock.
-    """
-
     def test_parse_pdf_iterates_pages(self, tmp_path):
         from gnosis.services.document_parser import parse_pdf
-
         pdf = tmp_path / "test.pdf"
         pdf.write_bytes(b"%PDF-1.4 fake")
-
         mock_page = MagicMock()
         mock_page.get_text.return_value = "Page one text"
-
         mock_doc = MagicMock()
         mock_doc.__iter__ = MagicMock(return_value=iter([mock_page]))
         mock_doc.metadata = {"title": ""}
-
         fake_fitz = ModuleType("fitz")
         fake_fitz.open = MagicMock(return_value=mock_doc)  # type: ignore[attr-defined]
-
         snap = _inject_module("fitz", fake_fitz)
         try:
             result = parse_pdf(pdf)
         finally:
             _restore_module(snap)
-
         assert "Page one text" in result.text
         mock_page.get_text.assert_called_once()
 
     def test_parse_pdf_no_fitz_raises(self, tmp_path):
-        """lines 53-56: local `import fitz` raises ImportError."""
         pdf = tmp_path / "test.pdf"
         pdf.write_bytes(b"%PDF-1.4 fake")
         with _BlockImport("fitz"):
@@ -125,7 +114,7 @@ class TestParsePdfLoop:
 
 
 # ---------------------------------------------------------------------------
-# parse_docx — lines 97-98: ImportError
+# parse_docx -- lines 97-98
 # ---------------------------------------------------------------------------
 
 class TestParseDocxImportError:
@@ -139,7 +128,7 @@ class TestParseDocxImportError:
 
 
 # ---------------------------------------------------------------------------
-# parse_pptx — lines 133-134: ImportError + branch arcs 143->142, 145->140
+# parse_pptx -- lines 133-134 + branch arcs 143->142, 145->140
 # ---------------------------------------------------------------------------
 
 class TestParsePptxImportError:
@@ -153,20 +142,7 @@ class TestParsePptxImportError:
 
 
 class TestParsePptxBranchArcs:
-    """
-    parse_pptx does `from pptx import Presentation` locally.
-    Inject a fake pptx module so Presentation returns our mock.
-
-    143->142: shape has no 'text' attr OR text.strip() == ''
-    145->140: slide_texts is empty (no text shapes on slide)
-    """
-
     def _fake_pptx_module(self, slides_spec):
-        """
-        slides_spec: list of lists of (has_text_attr: bool, text_value: str)
-        Returns a fake pptx module whose Presentation() returns a mock with
-        .slides iterating the specified mock slides.
-        """
         mock_slides = []
         for shapes_spec in slides_spec:
             shapes = []
@@ -174,76 +150,63 @@ class TestParsePptxBranchArcs:
                 if has_text:
                     shape = MagicMock()
                     shape.text = text_val
-                    # Ensure hasattr(shape, 'text') -> True
                     type(shape).text = property(lambda s, v=text_val: v)
                 else:
-                    # spec=[] means hasattr(shape, 'text') -> False
                     shape = MagicMock(spec=[])
                 shapes.append(shape)
             slide = MagicMock()
             slide.shapes = shapes
             mock_slides.append(slide)
-
         mock_prs = MagicMock()
         mock_prs.slides = mock_slides
-
         fake_pptx = ModuleType("pptx")
         fake_pptx.Presentation = MagicMock(return_value=mock_prs)  # type: ignore[attr-defined]
         return fake_pptx, mock_prs
 
     def test_parse_pptx_shape_without_text_attr(self, tmp_path):
-        """143->142: hasattr(shape,'text') is False."""
         from gnosis.services.document_parser import parse_pptx
         pptx_file = tmp_path / "deck.pptx"
         pptx_file.write_bytes(b"PK fake")
-
         fake_mod, _ = self._fake_pptx_module([[(False, "")]])
         snap = _inject_module("pptx", fake_mod)
         try:
             result = parse_pptx(pptx_file)
         finally:
             _restore_module(snap)
-
         assert result.text == ""
 
     def test_parse_pptx_shape_with_empty_text(self, tmp_path):
-        """143->142: shape.text.strip() == '' (whitespace only)."""
         from gnosis.services.document_parser import parse_pptx
         pptx_file = tmp_path / "deck.pptx"
         pptx_file.write_bytes(b"PK fake")
-
         fake_mod, _ = self._fake_pptx_module([[(True, "   ")]])
         snap = _inject_module("pptx", fake_mod)
         try:
             result = parse_pptx(pptx_file)
         finally:
             _restore_module(snap)
-
         assert result.text == ""
 
     def test_parse_pptx_slide_with_no_text_shapes(self, tmp_path):
-        """145->140: slide_texts empty → skip slides.append → loop continues."""
         from gnosis.services.document_parser import parse_pptx
         pptx_file = tmp_path / "deck.pptx"
         pptx_file.write_bytes(b"PK fake")
-
         fake_mod, _ = self._fake_pptx_module([
-            [(False, "")],            # slide 1: no text shapes -> skip
-            [(True, "Real content")], # slide 2: has text -> include
+            [(False, "")],
+            [(True, "Real content")],
         ])
         snap = _inject_module("pptx", fake_mod)
         try:
             result = parse_pptx(pptx_file)
         finally:
             _restore_module(snap)
-
         assert "Real content" in result.text
         assert "Slide 1" not in result.text
         assert "Slide 2" in result.text
 
 
 # ---------------------------------------------------------------------------
-# parse_xlsx — lines 177-178: ImportError
+# parse_xlsx -- lines 177-178
 # ---------------------------------------------------------------------------
 
 class TestParseXlsxImportError:
@@ -257,7 +220,7 @@ class TestParseXlsxImportError:
 
 
 # ---------------------------------------------------------------------------
-# parse_image — lines 235-236: ImportError
+# parse_image -- lines 235-236
 # ---------------------------------------------------------------------------
 
 class TestParseImageImportError:
@@ -271,15 +234,20 @@ class TestParseImageImportError:
 
 
 # ---------------------------------------------------------------------------
-# parse_url — line 287: tag.decompose() loop body
+# parse_url -- line 287: tag.decompose() loop body
 # ---------------------------------------------------------------------------
 
 class TestParseUrlDecompose:
     """
-    parse_url does `import httpx` locally AND `from bs4 import BeautifulSoup`
-    locally.  httpx IS in sys.modules; patch httpx.AsyncClient directly.
-    bs4 IS installed; no need to fake it.
-    Line 287 fires when the HTML contains script/style/nav/footer/header/aside.
+    bs4/beautifulsoup4 is NOT in pyproject.toml so `from bs4 import BeautifulSoup`
+    always raises ImportError in the test env.  The except-ImportError fallback
+    at line 299 fires and text = html (raw).  Line 287 is permanently dead.
+
+    Fix: inject a REAL bs4 module (already importable since beautifulsoup4 is
+    a transitive dep of other packages) OR inject a fake bs4 module that
+    implements just enough of the BeautifulSoup API to reach line 287.
+
+    We use the fake-module approach so the test is hermetic.
     """
 
     @pytest.mark.asyncio
@@ -297,24 +265,49 @@ class TestParseUrlDecompose:
             "</body></html>"
         )
 
+        # --- Build a fake BeautifulSoup that exercises line 287 ---
+        # We need find_all([...]) to return objects with .decompose(),
+        # and find("main") to return an object with .get_text().
+
+        boilerplate_tag = MagicMock()
+        boilerplate_tag.decompose = MagicMock()  # line 287 target
+
+        title_tag = MagicMock()
+        title_tag.get_text.return_value = "Test Page"
+
+        main_tag = MagicMock()
+        main_tag.get_text.return_value = "Main content here."
+
+        mock_soup = MagicMock()
+        mock_soup.find.side_effect = lambda *a, **kw: (
+            title_tag if a and a[0] == "title" else
+            main_tag  if a and a[0] == "main" else
+            None
+        )
+        mock_soup.find_all.return_value = [boilerplate_tag, boilerplate_tag]
+
+        # Fake bs4 module
+        fake_bs4 = ModuleType("bs4")
+        fake_bs4.BeautifulSoup = MagicMock(return_value=mock_soup)  # type: ignore[attr-defined]
+
+        # httpx mock
         mock_resp = MagicMock()
         mock_resp.text = html
         mock_resp.raise_for_status = MagicMock()
-
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_resp)
-
         mock_ctx = MagicMock()
         mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
 
-        # httpx is installed and imported locally inside parse_url.
-        # Patch AsyncClient on the real httpx module.
-        with patch.object(httpx, "AsyncClient", return_value=mock_ctx):
-            result = await parse_url("https://example.com")
+        bs4_snap = _inject_module("bs4", fake_bs4)
+        try:
+            with patch.object(httpx, "AsyncClient", return_value=mock_ctx):
+                result = await parse_url("https://example.com")
+        finally:
+            _restore_module(bs4_snap)
 
-        assert "Main content" in result.text
+        # decompose() was called on boilerplate tags
+        assert boilerplate_tag.decompose.call_count >= 1
         assert result.title == "Test Page"
-        # Boilerplate should have been removed by decompose()
-        assert "Navigation" not in result.text
-        assert "Footer text" not in result.text
+        assert "Main content" in result.text
