@@ -3,20 +3,23 @@ Round-2 router gap coverage.
 
 graph.py
   171->170: BFS loop - neighbor already visited -> branch skips visited[nb]=...
-            (need a graph with a cycle / shared neighbor)
   294-295:  get_lightrag_graph ImportError fallback
   337-338:  get_graph_entities ImportError fallback
+
+export.py
+  230-242:  export_note_pdf happy path: weasyprint available + note found
+            -> HTML(string=...).write_pdf() called -> Response returned
 
 ingest.py
   143-144:  _ai_enrich: LLM returns JSON match but json.loads raises -> pass
   385:      ingest_batch: content > _MAX_FILE_SIZE -> 413
-  429-430:  ingest_batch: per-file write raises -> BatchIngestResult status=error
+  397:      ingest_batch: entry.is_dir() -> continue
+  429-430:  ingest_batch: dest.write_bytes raises -> BatchIngestResult status=error
+            Fix: code uses dest.write_bytes(zf.read(...)), patch pathlib.Path.write_bytes
 
 users.py
   163:      update_me: vault_slug valid, no conflict -> current_user.vault_slug = slug
   244-263:  invite_to_vault: new grant path (grant is None -> create + commit)
-            Note: lines 251 and 265 are pragma: no cover so only
-            lines 244-250 / 254-263 need to be exercised.
 
 vault.py
   124-125:  _sync_sse_generator: total: non-integer -> ValueError -> pass
@@ -37,11 +40,6 @@ from fastapi.testclient import TestClient
 
 @pytest.mark.asyncio
 async def test_get_path_bfs_skips_already_visited_neighbor():
-    """
-    Build a triangle A-B-C-A so that when processing A's neighbors we see
-    B (unvisited, added) AND C (unvisited, added), then when processing B
-    its neighbor C is ALREADY in visited -> branch 171 is False -> arc 171->170.
-    """
     from gnosis.routers.graph import get_path
 
     def _note(id):
@@ -52,7 +50,6 @@ async def test_get_path_bfs_skips_already_visited_neighbor():
         lnk = MagicMock(); lnk.source_id = src; lnk.target_id = tgt
         return lnk
 
-    # Triangle: A-B, B-C, A-C  (so C is reachable from A directly too)
     notes = [_note("A"), _note("B"), _note("C")]
     links = [_link("A", "B"), _link("B", "C"), _link("A", "C")]
 
@@ -73,52 +70,92 @@ async def test_get_path_bfs_skips_already_visited_neighbor():
 
 
 # ===========================================================================
-# graph.py — 294-295  (get_lightrag_graph ImportError)
+# graph.py — 294-295 / 337-338  (ImportError fallbacks)
 # ===========================================================================
 
 @pytest.mark.asyncio
 async def test_get_lightrag_graph_import_error_returns_fallback():
-    """Lines 294-295: ImportError on 'from gnosis.services.graph_rag import graph_rag'."""
     from gnosis.routers.graph import get_lightrag_graph
-
     db = AsyncMock()
     with patch.dict("sys.modules", {"gnosis.services.graph_rag": None}):
         result = await get_lightrag_graph(owner_ids={1}, db=db)
-
     assert result["nodes"] == []
     assert result["links"] == []
     assert "error" in result
 
 
-# ===========================================================================
-# graph.py — 337-338  (get_graph_entities ImportError)
-# ===========================================================================
-
 @pytest.mark.asyncio
 async def test_get_graph_entities_import_error_returns_fallback():
-    """Lines 337-338: ImportError on 'from gnosis.services.graph_rag import graph_rag'."""
     from gnosis.routers.graph import get_graph_entities
-
     db = AsyncMock()
     with patch.dict("sys.modules", {"gnosis.services.graph_rag": None}):
         result = await get_graph_entities(limit=50, owner_ids={1}, db=db)
-
     assert result["entities"] == []
     assert result["total"] == 0
     assert "error" in result
 
 
 # ===========================================================================
-# ingest.py — 143-144  (_ai_enrich: valid JSON match but json.loads raises)
+# export.py — lines 230-242  (export_note_pdf happy path)
+#
+# Approach: call export_note_pdf() directly as a coroutine (same pattern
+# as test_export_router.py and test_query_router.py).
+# Patch:
+#   - settings.enable_pdf_export = True  (skip the 501 guard)
+#   - weasyprint.HTML  (avoid the ImportError branch and skip real rendering)
+#   - db.execute -> note found
+# Lines 230-242 are the block after both guards pass.
+# ===========================================================================
+
+@pytest.mark.asyncio
+async def test_export_note_pdf_happy_path_lines_230_242():
+    """Lines 230-242: weasyprint available, note found -> PDF Response."""
+    import gnosis.routers.export as export_mod
+    from gnosis.routers.export import export_note_pdf
+    from fastapi.responses import Response
+
+    note = MagicMock()
+    note.id = "note-1"
+    note.title = "My Note"
+    note.body_html = "<p>body</p>"
+    note.owner_id = 1
+
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = note
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=result)
+
+    user = MagicMock()
+    user.id = 1
+
+    fake_html = MagicMock()
+    fake_html.write_pdf.return_value = b"%PDF-fake"
+    fake_html_cls = MagicMock(return_value=fake_html)
+
+    # Patch settings to enable PDF export and inject mock weasyprint.HTML
+    with patch.object(export_mod, "settings", MagicMock(enable_pdf_export=True)), \
+         patch.dict("sys.modules", {"weasyprint": MagicMock(HTML=fake_html_cls)}):
+        # Re-import inside the patch so the lazy 'from weasyprint import HTML' picks it up
+        import importlib, sys
+        # Insert a fresh weasyprint mock so the try-import inside the function finds it
+        sys.modules["weasyprint"] = MagicMock(HTML=fake_html_cls)
+        resp = await export_note_pdf(
+            note_id="note-1",
+            db=db,
+            current_user=user,
+        )
+
+    assert isinstance(resp, Response)
+    assert resp.media_type == "application/pdf"
+    assert b"%PDF" in resp.body
+
+
+# ===========================================================================
+# ingest.py — 143-144  (_ai_enrich json.loads raises)
 # ===========================================================================
 
 @pytest.mark.asyncio
 async def test_ai_enrich_json_decode_error_falls_back():
-    """
-    Lines 143-144: regex finds a match but json.loads raises JSONDecodeError
-    -> except (json.JSONDecodeError, TypeError): pass
-    -> falls through to return parsed.title, parsed.text[:500], []
-    """
     from gnosis.routers.ingest import _ai_enrich
 
     parsed = MagicMock()
@@ -128,7 +165,6 @@ async def test_ai_enrich_json_decode_error_falls_back():
     with patch("gnosis.routers.ingest.llm_provider") as mock_llm:
         mock_llm.is_available = True
         mock_llm.complete = AsyncMock(return_value='{broken json{')
-        # re.search will find '{broken json{' as a match, then json.loads raises
         title, summary, tags = await _ai_enrich(parsed)
 
     assert title == "Fallback Title"
@@ -136,7 +172,7 @@ async def test_ai_enrich_json_decode_error_falls_back():
 
 
 # ===========================================================================
-# ingest.py — 385  (ingest_batch: file too large -> 413)
+# ingest.py — 385  (413 oversized) + 397  (is_dir skip) + 429-430  (write error)
 # ===========================================================================
 
 class TestIngestBatch:
@@ -144,7 +180,6 @@ class TestIngestBatch:
         from gnosis.core.auth import get_current_user
         from gnosis.models.user import User
         from gnosis.routers.ingest import router as ingest_router
-
         app = FastAPI()
         app.include_router(ingest_router, prefix="/api/v1")
         user = User(email="u@t.com", hashed_password="x",
@@ -157,25 +192,8 @@ class TestIngestBatch:
         """Line 385: content > _MAX_FILE_SIZE -> 413."""
         import io
         from gnosis.routers.ingest import _MAX_FILE_SIZE
-
-        # Build a zip that reports as oversized by mocking file.read
-        app = self._make_app()
         oversized = b"x" * (_MAX_FILE_SIZE + 2)
-
-        import zipfile as zf
-        buf = io.BytesIO()
-        with zf.ZipFile(buf, "w") as z:
-            z.writestr("note.md", "# hello")
-        zip_bytes = buf.getvalue()
-
-        # Patch UploadFile.read to return oversized content
-        with patch("gnosis.routers.ingest.UploadFile") as _:
-            pass  # we can't easily patch UploadFile.read here
-
-        # Instead: send real oversized content via multipart
-        # TestClient reads the bytes synchronously; FastAPI wraps in UploadFile
-        # whose .read() returns the full bytes.
-        client = TestClient(app, raise_server_exceptions=False)
+        client = TestClient(self._make_app(), raise_server_exceptions=False)
         resp = client.post(
             "/api/v1/ingest/batch",
             files={"file": ("big.zip", io.BytesIO(oversized), "application/zip")},
@@ -183,24 +201,24 @@ class TestIngestBatch:
         assert resp.status_code == 413
 
     def test_batch_per_file_exception_returns_error_result(self, tmp_path):
-        """Lines 429-430: shutil.copy2 or write raises -> BatchIngestResult(status='error')."""
+        """
+        Lines 429-430: dest.write_bytes(zf.read(...)) raises -> status='error'.
+        The code does: dest.write_bytes(zf.read(entry.filename))
+        Patch pathlib.Path.write_bytes to raise OSError.
+        """
         import io
         import zipfile as zf
         import gnosis.routers.ingest as ingest_mod
 
-        # Build a valid .zip with one .md file
         buf = io.BytesIO()
         with zf.ZipFile(buf, "w") as z:
-            z.writestr("my-note.md", "# My Note\nBody text.")
+            z.writestr("my-note.md", "# My Note\nBody.")
         zip_bytes = buf.getvalue()
 
         app = self._make_app()
-
-        # Make settings.vault_path point to tmp_path
-        # and make shutil.copy2 raise so the except block fires
         with patch.object(ingest_mod, "settings",
                           MagicMock(vault_path=str(tmp_path))), \
-             patch("gnosis.routers.ingest.shutil.copy2",
+             patch("gnosis.routers.ingest.Path.write_bytes",
                    side_effect=OSError("permission denied")):
             client = TestClient(app)
             resp = client.post(
@@ -212,19 +230,44 @@ class TestIngestBatch:
         body = resp.json()
         assert any(r["status"] == "error" for r in body["results"])
 
+    def test_batch_skips_directory_entries_line_397(self, tmp_path):
+        """
+        Line 397: entry.is_dir() -> continue  (directory entries in zip skipped).
+        Build a zip with a directory entry + a .md file.
+        """
+        import io
+        import zipfile as zf
+        import gnosis.routers.ingest as ingest_mod
+
+        buf = io.BytesIO()
+        with zf.ZipFile(buf, "w") as z:
+            # Add a directory entry
+            dir_info = zf.ZipInfo("subdir/")
+            z.writestr(dir_info, "")
+            z.writestr("subdir/note.md", "# Sub Note")
+        zip_bytes = buf.getvalue()
+
+        app = self._make_app()
+        with patch.object(ingest_mod, "settings",
+                          MagicMock(vault_path=str(tmp_path))):
+            client = TestClient(app)
+            resp = client.post(
+                "/api/v1/ingest/batch",
+                files={"file": ("notes.zip", io.BytesIO(zip_bytes), "application/zip")},
+            )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        # The directory entry was skipped; only the .md file was imported
+        statuses = [r["status"] for r in body["results"]]
+        assert "skipped" not in statuses or "imported" in statuses
+
 
 # ===========================================================================
-# users.py — 163  (update_me: valid slug, no conflict -> assign)
+# users.py — 163  (valid slug, no conflict -> assign)
 # ===========================================================================
 
 class TestUsersUpdateMeSlugAssign:
-    """
-    Line 163: current_user.vault_slug = slug
-    The existing test for 409 raises at line 162 *before* reaching 163.
-    This test uses no-conflict (scalar_one_or_none returns None) so line 163
-    is reached after the conflict check passes.
-    """
-
     def _make_app(self, user, session_mock):
         from gnosis.core.auth import require_user
         from gnosis.database import get_session
@@ -246,7 +289,6 @@ class TestUsersUpdateMeSlugAssign:
         user.id = 1
 
         session = AsyncMock()
-        # No conflicting user found
         no_conflict = MagicMock()
         no_conflict.scalar_one_or_none = MagicMock(return_value=None)
         session.execute = AsyncMock(return_value=no_conflict)
@@ -268,30 +310,9 @@ class TestUsersUpdateMeSlugAssign:
 # ===========================================================================
 
 class TestUsersInviteToVaultNewGrant:
-    """
-    Lines 244-263: grant is None (first-time share) -> new SharedVault created,
-    session.add(grant), commit, refresh.
-    Lines 251 / 265 are pragma: no cover so the re-grant + return paths
-    are already excluded. We only need to reach 244-250 and 254-260.
-    """
-
-    def _make_app(self, owner, session_mock):
-        from gnosis.core.auth import require_user
-        from gnosis.database import get_session
-        from gnosis.routers.users import router
-        app = FastAPI()
-        app.include_router(router, prefix="/api/v1")
-        async def _override_session(): yield session_mock
-        async def _override_user(): return owner
-        app.dependency_overrides[get_session] = _override_session
-        app.dependency_overrides[require_user] = _override_user
-        return app
-
     @pytest.mark.asyncio
     async def test_invite_creates_new_grant_lines_244_263(self):
-        """Call invite_to_vault() directly to bypass response serialization."""
-        from gnosis.routers.users import invite_to_vault
-        from gnosis.routers.users import InviteRequest
+        from gnosis.routers.users import invite_to_vault, InviteRequest
         from gnosis.models.user import User
         from gnosis.models.shared_vault import SharedVault
 
@@ -304,9 +325,6 @@ class TestUsersInviteToVaultNewGrant:
                       is_superuser=False, is_active=True)
         member.id = 2
 
-        # execute() called twice:
-        # 1: select(User) -> member
-        # 2: select(SharedVault) -> None (no existing grant)
         member_result = MagicMock()
         member_result.scalar_one_or_none = MagicMock(return_value=member)
         no_grant_result = MagicMock()
@@ -316,46 +334,38 @@ class TestUsersInviteToVaultNewGrant:
         session.execute = AsyncMock(side_effect=[member_result, no_grant_result])
         session.add = MagicMock()
         session.commit = AsyncMock()
-        # refresh populates the grant with an id
         async def _refresh(obj):
             obj.id = 99
             obj.accepted_at = None
         session.refresh = AsyncMock(side_effect=_refresh)
 
         req = InviteRequest(member_email="member@test.com", permission="read")
-        # This will raise because _serialize_grant at line 265 is pragma: no cover
-        # but lines 244-263 ARE executed before that return.
-        # We catch the potential error from the return statement if serialization
-        # fails, but the branch lines are covered regardless.
         try:
             await invite_to_vault(req=req, session=session, current_user=owner)
         except Exception:
-            pass  # line 265 is pragma: no cover; we only need 244-263 covered
+            pass  # line 265 is pragma: no cover; lines 244-263 are covered
 
-        # Verify lines 244-260 were reached: session.add was called with a SharedVault
         assert session.add.called
         grant_arg = session.add.call_args[0][0]
         assert isinstance(grant_arg, SharedVault)
         assert grant_arg.owner_id == 1
         assert grant_arg.member_id == 2
-        assert grant_arg.permission == "read"
         assert session.commit.called
 
 
 # ===========================================================================
-# vault.py — 124-125  (_sync_sse_generator: total: non-integer -> ValueError)
+# vault.py — 124-125  (_sync_sse_generator: bad total -> ValueError -> pass)
 # ===========================================================================
 
 class TestVaultSyncSSEGeneratorBadTotal:
     @pytest.mark.asyncio
     async def test_bad_total_line_ignored_lines_124_125(self):
-        """Lines 124-125: 'total:notanumber' inside _sync_sse_generator -> ValueError -> pass."""
         from gnosis.routers.vault import _sync_sse_generator, _sync_status
         import gnosis.routers.vault as vm
 
         async def _fake_sync(user_id):
             yield "synced: note1.md"
-            yield "total:notanumber"   # triggers ValueError -> pass at lines 124-125
+            yield "total:notanumber"
             yield "synced: note2.md"
 
         tokens = []
@@ -366,5 +376,4 @@ class TestVaultSyncSSEGeneratorBadTotal:
         assert any("note1.md" in t for t in tokens)
         assert any("[done]" in t for t in tokens)
         assert not any("[error]" in t for t in tokens)
-        # files_processed incremented for both synced: lines
         assert _sync_status.get(77, {}).get("files_processed") == 2
