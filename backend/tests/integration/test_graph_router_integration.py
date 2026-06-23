@@ -6,11 +6,23 @@ Coverage targets (graph.py)
   171->170   get_path() – 404 when no path exists between two disconnected notes
   292-308    get_lightrag_graph() – graceful fallback when graph_rag.export_graph raises
   335-358    get_graph_entities() – graceful fallback + limit slicing
+
+Patch note
+----------
+Both /lightrag and /entities do a lazy import *inside* the endpoint function::
+
+    from gnosis.services.graph_rag import graph_rag   # <-- inside the function
+
+That means there is no module-level name `graph_rag` in gnosis.routers.graph to
+patch.  We must patch the singleton on its *source* module so the lazy import
+picks up the mock:
+
+    patch("gnosis.services.graph_rag.graph_rag", ...)
 """
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 # ---------------------------------------------------------------------------
@@ -20,7 +32,6 @@ from unittest.mock import AsyncMock, patch
 @pytest.mark.asyncio
 async def test_get_path_404_when_no_connection(client):
     """Two notes with no wikilink between them → 404 Not Found."""
-    # Create two isolated notes via the notes endpoint
     r1 = await client.post("/api/v1/notes/", json={
         "title": "Note Alpha", "body": "No links here.", "folder": "10-zettelkasten"
     })
@@ -37,34 +48,6 @@ async def test_get_path_404_when_no_connection(client):
     assert "No path found" in resp.json()["detail"]
 
 
-@pytest.mark.asyncio
-async def test_get_path_success_when_linked(client):
-    """Two notes linked by wikilink → path returns both node IDs."""
-    from gnosis.models.link import Link
-    # Create two notes
-    r1 = await client.post("/api/v1/notes/", json={
-        "title": "Source Note", "body": "[[Target Note]]", "folder": "10-zettelkasten"
-    })
-    r2 = await client.post("/api/v1/notes/", json={
-        "title": "Target Note", "body": "plain", "folder": "10-zettelkasten"
-    })
-    assert r1.status_code == 201
-    assert r2.status_code == 201
-    id1 = r1.json()["id"]
-    id2 = r2.json()["id"]
-
-    # Manually insert a link so the BFS finds a path
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-    from sqlalchemy.pool import StaticPool
-    # Use the test DB directly via the app endpoint POST link approach,
-    # or just verify the 404 branch is the interesting coverage target.
-    # Since we have no direct link, this will also 404 — which is fine;
-    # the path endpoint's success branch is covered by test_graph_router.py.
-    resp = await client.get(f"/api/v1/graph/path/{id1}/{id2}")
-    # Either 404 (no link created) or 200 — both paths are valid coverage
-    assert resp.status_code in (200, 404)
-
-
 # ---------------------------------------------------------------------------
 # get_lightrag_graph() – export_graph raises → empty graph  (lines 292-308)
 # ---------------------------------------------------------------------------
@@ -72,9 +55,15 @@ async def test_get_path_success_when_linked(client):
 @pytest.mark.asyncio
 async def test_lightrag_graph_returns_empty_on_exception(client):
     """When graph_rag.export_graph raises, the endpoint returns an empty graph
-    with the error message — no 500."""
-    with patch("gnosis.routers.graph.graph_rag") as mock_rag:
-        mock_rag.export_graph = AsyncMock(side_effect=RuntimeError("LightRAG not ready"))
+    with the error message — no 500.
+
+    Patch target: gnosis.services.graph_rag.graph_rag  (the singleton that
+    the lazy import inside the endpoint function resolves to).
+    """
+    mock_rag = MagicMock()
+    mock_rag.export_graph = AsyncMock(side_effect=RuntimeError("LightRAG not ready"))
+
+    with patch("gnosis.services.graph_rag.graph_rag", mock_rag):
         resp = await client.get("/api/v1/graph/lightrag")
 
     assert resp.status_code == 200
@@ -92,8 +81,10 @@ async def test_lightrag_graph_returns_nodes_on_success(client):
         "nodes": [{"id": "e1", "label": "Impermanence"}],
         "links": [{"source": "e1", "target": "e1"}],
     }
-    with patch("gnosis.routers.graph.graph_rag") as mock_rag:
-        mock_rag.export_graph = AsyncMock(return_value=fake_data)
+    mock_rag = MagicMock()
+    mock_rag.export_graph = AsyncMock(return_value=fake_data)
+
+    with patch("gnosis.services.graph_rag.graph_rag", mock_rag):
         resp = await client.get("/api/v1/graph/lightrag")
 
     assert resp.status_code == 200
@@ -110,8 +101,10 @@ async def test_lightrag_graph_returns_nodes_on_success(client):
 @pytest.mark.asyncio
 async def test_graph_entities_returns_empty_on_exception(client):
     """When export_graph raises, entities endpoint returns empty list without 500."""
-    with patch("gnosis.routers.graph.graph_rag") as mock_rag:
-        mock_rag.export_graph = AsyncMock(side_effect=RuntimeError("graph init failed"))
+    mock_rag = MagicMock()
+    mock_rag.export_graph = AsyncMock(side_effect=RuntimeError("graph init failed"))
+
+    with patch("gnosis.services.graph_rag.graph_rag", mock_rag):
         resp = await client.get("/api/v1/graph/entities")
 
     assert resp.status_code == 200
@@ -123,23 +116,24 @@ async def test_graph_entities_returns_empty_on_exception(client):
 
 @pytest.mark.asyncio
 async def test_graph_entities_limit_slicing(client):
-    """Entities are sliced to the requested limit."""
+    """Entities are sliced to the requested limit; total reflects all nodes."""
     many_nodes = [{"id": f"e{i}", "label": f"Entity {i}"} for i in range(50)]
     fake_data = {"nodes": many_nodes, "links": []}
+    mock_rag = MagicMock()
+    mock_rag.export_graph = AsyncMock(return_value=fake_data)
 
-    with patch("gnosis.routers.graph.graph_rag") as mock_rag:
-        mock_rag.export_graph = AsyncMock(return_value=fake_data)
+    with patch("gnosis.services.graph_rag.graph_rag", mock_rag):
         resp = await client.get("/api/v1/graph/entities?limit=10")
 
     assert resp.status_code == 200
     body = resp.json()
     assert len(body["entities"]) == 10
-    assert body["total"] == 50  # total reflects *all* nodes, not the sliced count
+    assert body["total"] == 50
 
 
 @pytest.mark.asyncio
 async def test_graph_entities_full_shape(client):
-    """Each entity has the expected keys."""
+    """Each entity carries all expected keys."""
     node = {
         "id": "n1",
         "label": "Buddha-nature",
@@ -147,10 +141,10 @@ async def test_graph_entities_full_shape(client):
         "cluster": "dharma",
         "source_note_ids": ["note-abc"],
     }
-    fake_data = {"nodes": [node], "links": []}
+    mock_rag = MagicMock()
+    mock_rag.export_graph = AsyncMock(return_value={"nodes": [node], "links": []})
 
-    with patch("gnosis.routers.graph.graph_rag") as mock_rag:
-        mock_rag.export_graph = AsyncMock(return_value=fake_data)
+    with patch("gnosis.services.graph_rag.graph_rag", mock_rag):
         resp = await client.get("/api/v1/graph/entities")
 
     assert resp.status_code == 200
