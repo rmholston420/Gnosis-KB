@@ -84,12 +84,12 @@ async def _reindex_note(
     try:
         from gnosis.services.graph_rag import graph_rag  # lazy
 
-        # Note model field is ``body``, not ``content``
+        # GraphRAGService.ingest_note(title, body, user_id=...)
         content = note.body or ""
         if content.strip():
             await graph_rag.ingest_note(
-                note_id=note.id,
-                content=content,
+                title=note.title,
+                body=content,
                 user_id=new_owner_id,
             )
             ingest_status = "ingested"

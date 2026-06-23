@@ -118,12 +118,7 @@ class GraphRAGService:
         await self._get_instance(user_id)
 
     async def is_available(self, user_id: int = _LEGACY_USER_ID) -> bool:  # type: ignore[override]
-        """Return True when LightRAG is installed and the instance for *user_id* is ready.
-
-        Promoted to async so callers can ``await graph_rag.is_available(id)``
-        consistently.  The check itself is synchronous but the coroutine
-        wrapper keeps the call-site pattern uniform.
-        """
+        """Return True when LightRAG is installed and the instance for *user_id* is ready."""
         return _LIGHTRAG_AVAILABLE and user_id in self._instances
 
     async def ingest_note(
@@ -141,6 +136,83 @@ class GraphRAGService:
         except Exception as exc:  # noqa: BLE001
             logger.warning("GraphRAGService.ingest_note failed for user %s: %s", user_id, exc)
 
+    async def export_graph(self, owner_ids: list[int]) -> dict[str, Any]:
+        """Export the LightRAG entity/relation graph for the given owner_ids.
+
+        Returns a dict with ``nodes`` and ``links`` lists suitable for D3
+        visualisation.  Falls back to an empty graph if LightRAG is not
+        initialised or no entity data is available.
+
+        Args:
+            owner_ids: List of user IDs whose graphs to merge.
+
+        Returns:
+            {"nodes": [...], "links": [...]}
+        """
+        nodes: list[dict[str, Any]] = []
+        links: list[dict[str, Any]] = []
+
+        for uid in owner_ids:
+            instance = await self._get_instance(uid)
+            if instance is None:
+                continue
+            try:
+                # LightRAG exposes entity/relation data via chunk_entity_relation_graph
+                # when available; fall back to the working directory JSON files.
+                if hasattr(instance, "chunk_entity_relation_graph"):
+                    graph = instance.chunk_entity_relation_graph
+                    for node_id, data in graph.nodes(data=True):
+                        nodes.append(
+                            {
+                                "id": str(node_id),
+                                "label": data.get("entity_name", str(node_id)),
+                                "description": data.get("description"),
+                                "cluster": data.get("source_id"),
+                                "source_note_ids": [],
+                            }
+                        )
+                    for src, tgt, edata in graph.edges(data=True):
+                        links.append(
+                            {
+                                "source": str(src),
+                                "target": str(tgt),
+                                "label": edata.get("keywords", ""),
+                            }
+                        )
+                else:
+                    # Newer LightRAG versions store entities in working_dir JSON
+                    import json
+
+                    wd = self._working_dir(uid)
+                    entities_file = wd / "entities.json"
+                    relations_file = wd / "relations.json"
+                    if entities_file.exists():
+                        raw = json.loads(entities_file.read_text())
+                        for eid, edata in (raw.items() if isinstance(raw, dict) else enumerate(raw)):
+                            nodes.append(
+                                {
+                                    "id": str(eid),
+                                    "label": edata.get("entity_name", str(eid)) if isinstance(edata, dict) else str(edata),
+                                    "description": edata.get("description") if isinstance(edata, dict) else None,
+                                    "cluster": None,
+                                    "source_note_ids": [],
+                                }
+                            )
+                    if relations_file.exists():
+                        raw_rels = json.loads(relations_file.read_text())
+                        for rel in (raw_rels if isinstance(raw_rels, list) else []):
+                            links.append(
+                                {
+                                    "source": str(rel.get("src_id", "")),
+                                    "target": str(rel.get("tgt_id", "")),
+                                    "label": rel.get("keywords", ""),
+                                }
+                            )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("export_graph failed for user %s: %s", uid, exc)
+
+        return {"nodes": nodes, "links": links}
+
     async def query(
         self,
         question: str,
@@ -148,33 +220,13 @@ class GraphRAGService:
         mode: str = "hybrid",
         owner_ids: set[int] | None = None,
     ) -> str:
-        """Query the knowledge graph(s) accessible to *user_id*.
-
-        When *owner_ids* contains IDs beyond *user_id* (i.e., the caller has
-        shared-vault grants), this method fans out the question to each
-        accessible user's LightRAG instance and synthesises the answers into
-        a single coherent response.
-
-        Args:
-            question: Natural language question.
-            user_id: The caller's own user ID.
-            mode: One of 'local', 'global', or 'hybrid'.
-            owner_ids: Full set of accessible vault owner IDs.  When None or
-                equal to ``{user_id}``, only the caller's own graph is queried.
-
-        Returns:
-            Answer string, synthesised across all accessible graphs.
-        """
-        # Determine which user graphs to query
+        """Query the knowledge graph(s) accessible to *user_id*."""
         target_ids: set[int] = owner_ids or {user_id}
-        # Always include the caller's own ID
         target_ids = target_ids | {user_id}
 
-        # Single-graph fast path (most common case)
         if len(target_ids) == 1:
             return await self._query_single(user_id, question, mode)
 
-        # Multi-graph fan-out
         answers: list[str] = []
         for uid in sorted(target_ids):
             answer = await self._query_single(uid, question, mode)
@@ -192,9 +244,8 @@ class GraphRAGService:
             )
 
         if len(answers) == 1:
-            return answers[0].split("\n", 1)[1]  # strip the [Vault N] header
+            return answers[0].split("\n", 1)[1]
 
-        # Synthesise multiple vault answers via LLM
         return await self._synthesise(question, answers)
 
     async def _query_single(self, user_id: int, question: str, mode: str) -> str:
@@ -212,15 +263,10 @@ class GraphRAGService:
             return f"Query failed: {exc}"
 
     async def _synthesise(self, question: str, answers: list[str]) -> str:
-        """Merge answers from multiple vaults into one coherent response.
-
-        Uses the llm_provider directly so we don't need a LightRAG instance
-        for synthesis — just a lightweight LLM call.
-        """
-        from gnosis.services.llm_provider import llm_provider  # local import avoids circular dep
+        """Merge answers from multiple vaults into one coherent response."""
+        from gnosis.services.llm_provider import llm_provider
 
         if not llm_provider.is_available:
-            # Fall back to concatenation if LLM is also unavailable
             return "\n\n---\n\n".join(answers)
 
         joined = "\n\n---\n\n".join(answers)
@@ -243,24 +289,7 @@ class GraphRAGService:
         mode: str = "hybrid",
         owner_ids: set[int] | None = None,
     ) -> AsyncGenerator[str, None]:
-        """Stream an answer token-by-token from *user_id*'s knowledge graph.
-
-        For shared-vault callers (``owner_ids`` contains extra IDs), the
-        caller's own graph is streamed first, then a synthesised block from
-        the remaining vaults is appended as a final non-streamed chunk.  True
-        token-level interleaving across multiple LightRAG instances is not
-        supported; this approach keeps latency low for the common single-vault
-        case.
-
-        Args:
-            question: Natural language question.
-            user_id: The caller's own user ID.
-            mode: One of 'local', 'global', or 'hybrid'.
-            owner_ids: Full set of accessible vault owner IDs.
-
-        Yields:
-            String tokens as they arrive from LightRAG.
-        """
+        """Stream an answer token-by-token from *user_id*'s knowledge graph."""
         instance = await self._get_instance(user_id)
         if instance is None:
             yield (
@@ -269,13 +298,11 @@ class GraphRAGService:
             )
             return
 
-        # Stream primary user's graph
         try:
             if hasattr(instance, "astream_query"):
                 async for token in instance.astream_query(question, param=QueryParam(mode=mode)):
                     yield token
             else:
-                # LightRAG version doesn't support streaming — yield as single token
                 result = await instance.aquery(question, param=QueryParam(mode=mode))
                 yield result
         except Exception as exc:  # noqa: BLE001
@@ -283,7 +310,6 @@ class GraphRAGService:
             yield f"Stream error: {exc}"
             return
 
-        # Append merged shared-vault context if applicable
         shared_ids = (owner_ids or set()) - {user_id}
         if not shared_ids:
             return

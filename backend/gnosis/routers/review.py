@@ -46,7 +46,7 @@ def _card_to_with_note(card: ReviewCard) -> ReviewCardWithNote:
         due_date=card.due_date,
         last_quality=card.last_quality,
         note_title=card.note.title,
-        note_body=card.note.body,
+        note_body=card.note.body or "",  # Note.body is str | None; schema expects str
         note_folder=card.note.folder or "",
         note_tags=[t.name for t in card.note.tags],
     )
