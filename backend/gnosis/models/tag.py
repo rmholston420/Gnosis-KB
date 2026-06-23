@@ -1,31 +1,30 @@
-"""Tag and NoteTag association models."""
+"""Tag SQLAlchemy model."""
+from __future__ import annotations
 
-from sqlalchemy import Column, ForeignKey, String, Table
+from typing import TYPE_CHECKING
+
+from sqlalchemy import Column, ForeignKey, Integer, String, Table
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from gnosis.database import Base
 
-# Many-to-many association table: note <-> tag
-NoteTag = Table(
+if TYPE_CHECKING:
+    from gnosis.models.note import Note
+
+# Association table for the Note <-> Tag many-to-many
+note_tags = Table(
     "note_tags",
     Base.metadata,
-    Column("note_id", String(20), ForeignKey("notes.id", ondelete="CASCADE"), primary_key=True),
-    Column("tag_id", String(100), ForeignKey("tags.name", ondelete="CASCADE"), primary_key=True),
+    Column("note_id", String(36), ForeignKey("notes.id", ondelete="CASCADE"), primary_key=True),
+    Column("tag_id", Integer, ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True),
 )
 
 
 class Tag(Base):
-    """A note tag (folksonomy-style).
-
-    ``Tag.notes`` uses ``lazy='select'`` for the same reason as ``Note.tags``:
-    the background selectin load collided with explicit selectinload() options
-    in query sites, collapsing the collection to a scalar on the second pass.
-    """
-
     __tablename__ = "tags"
 
-    name: Mapped[str] = mapped_column(String(100), primary_key=True)
-    description: Mapped[str] = mapped_column(String(500), default="")
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
 
     # lazy='select': explicit load only — avoids double-load collision.
     notes: Mapped[list["Note"]] = relationship(
@@ -34,6 +33,3 @@ class Tag(Base):
         back_populates="tags",
         lazy="select",
     )
-
-    def __repr__(self) -> str:
-        return f"<Tag name={self.name!r}>"

@@ -1,59 +1,49 @@
-"""SM-2 spaced-repetition review card model.
-
-Each ReviewCard is a 1-to-1 companion record for a Note.
-The SM-2 algorithm fields live here so the Note model stays clean.
-
-SM-2 reference
---------------
-Original algorithm by Piotr Wozniak (SuperMemo 2).
-
-State fields:
-  easiness   -- E-factor, starts at 2.5, floor 1.3.
-  interval   -- days until next review (1, 6, then calculated).
-  repetitions -- consecutive correct reviews (quality >= 3).
-  due_date   -- calendar date the card is next due.
-  last_quality -- last rating given (0-5).
-"""
+"""ReviewCard SQLAlchemy model for SM-2 spaced-repetition scheduling."""
+from __future__ import annotations
 
 from datetime import date
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Date, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from gnosis.database import Base
 
+if TYPE_CHECKING:
+    from gnosis.models.note import Note
+
 
 class ReviewCard(Base):
-    """SM-2 review state for a single note."""
+    """Tracks the SM-2 state for a single Note.
+
+    Each enrolled note gets exactly one ReviewCard row.  The SM-2 scheduler
+    (gnosis/core/sm2.py) reads and updates easiness, interval, repetitions,
+    and due_date on every review submission.
+    """
 
     __tablename__ = "review_cards"
 
     note_id: Mapped[str] = mapped_column(
-        String(20),
+        String(36),
         ForeignKey("notes.id", ondelete="CASCADE"),
         primary_key=True,
     )
     easiness: Mapped[float] = mapped_column(Float, default=2.5, nullable=False)
     interval: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     repetitions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    due_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    due_date: Mapped[date] = mapped_column(Date, nullable=False)
     last_quality: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    # lazy='select': do not auto-JOIN back to Note when loading a ReviewCard.
-    # Note.review_card is also lazy='select'.  No query path needs to traverse
-    # ReviewCard -> Note eagerly; doing so caused the selectinload(Note.tags)
-    # sub-SELECT to produce multiple rows (one per tag), triggering:
-    #   SAWarning: Multiple rows returned with uselist=False for
-    #   eagerly-loaded attribute 'Note.tags'
-    # which collapsed Note.tags to a scalar and broke the tags API response.
+    # ------------------------------------------------------------------ #
+    # Relationships                                                        #
+    # ------------------------------------------------------------------ #
+
+    # lazy="select": load Note on first access within the session.
+    # Using selectin here caused a conflict with the Note model's
+    # eagerly-loaded attribute 'Note.tags' which collapsed Note.tags to a
+    # scalar and broke the tags API response.
     note: Mapped["Note"] = relationship(  # type: ignore[name-defined]
         "Note",
         back_populates="review_card",
-        lazy="select",          # was 'joined' — caused SAWarning + tags=[] bug
+        lazy="select",
     )
-
-    def __repr__(self) -> str:
-        return (
-            f"<ReviewCard note_id={self.note_id!r} due={self.due_date} "
-            f"interval={self.interval} easiness={self.easiness:.2f}>"
-        )
