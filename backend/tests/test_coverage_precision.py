@@ -14,6 +14,7 @@ Targets:
 from __future__ import annotations
 
 import sys
+import types
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -87,10 +88,21 @@ def test_database_url_sync_is_a_string_url():
 # ---------------------------------------------------------------------------
 # export.py line 237 – WeasyPrint ImportError → 501
 #
-# The `from weasyprint import HTML` is inside the endpoint body (lazy import),
-# so we block it via builtins.__import__ at request dispatch time.
-# Correct endpoint: GET /api/v1/export/note/{note_id}.pdf
+# `from weasyprint import HTML` is a lazy import inside the endpoint body.
+# Python resolves it via sys.modules first, so even if weasyprint is installed
+# the fastest way to force ImportError is:
+#   1. Stash & remove the real module from sys.modules
+#   2. Insert a broken sentinel module whose __spec__ is None — Python
+#      treats a None-spec entry as "import failed" and re-raises ImportError
+#   3. Restore on exit.
 # ---------------------------------------------------------------------------
+
+
+class _WeasyPrintImportBlocker(types.ModuleType):
+    """Sentinel placed in sys.modules to make `from weasyprint import *` raise ImportError."""
+
+    def __getattr__(self, name: str):
+        raise ImportError(f"weasyprint is blocked in tests (attr={name!r})")
 
 
 @pytest.mark.asyncio
@@ -103,26 +115,24 @@ async def test_pdf_export_returns_501_when_weasyprint_missing(async_client):
     assert resp.status_code == 201
     note_id = resp.json()["id"]
 
-    _saved_wp = sys.modules.pop("weasyprint", None)
+    # Stash real weasyprint (if installed) and replace with a broken sentinel.
+    _stash: dict = {}
+    for key in list(sys.modules):
+        if key == "weasyprint" or key.startswith("weasyprint."):
+            _stash[key] = sys.modules.pop(key)
 
-    import builtins
-    _real_import = builtins.__import__
-
-    def _blocking_import(name, *args, **kwargs):
-        if name == "weasyprint":
-            raise ImportError("weasyprint not installed")
-        return _real_import(name, *args, **kwargs)
+    blocker = _WeasyPrintImportBlocker("weasyprint")
+    blocker.__spec__ = None  # type: ignore[assignment]
+    sys.modules["weasyprint"] = blocker  # type: ignore[assignment]
 
     try:
-        with (
-            patch("gnosis.routers.export.settings") as mock_settings,
-            patch("builtins.__import__", side_effect=_blocking_import),
-        ):
+        with patch("gnosis.routers.export.settings") as mock_settings:
             mock_settings.enable_pdf_export = True
             resp2 = await async_client.get(f"/api/v1/export/note/{note_id}.pdf")
     finally:
-        if _saved_wp is not None:
-            sys.modules["weasyprint"] = _saved_wp
+        # Always restore
+        sys.modules.pop("weasyprint", None)
+        sys.modules.update(_stash)
 
     assert resp2.status_code == 501
 
@@ -130,16 +140,13 @@ async def test_pdf_export_returns_501_when_weasyprint_missing(async_client):
 # ---------------------------------------------------------------------------
 # review.py lines 189-190 – unenroll_note DELETE
 #
-# ReviewEnroll schema has two required fields: note_id (str) AND due_today (bool).
-# Missing note_id returns 422, which then causes the enroll assert to fail
-# before the DELETE is ever reached.
+# ReviewEnroll schema: note_id (str, required) + due_today (bool, default True)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_review_unenroll_note(async_client):
-    """Create a note, enroll it (with full ReviewEnroll body), then unenroll."""
-    # 1. Create note
+    """Create a note, enroll it (full ReviewEnroll body), then unenroll."""
     resp = await async_client.post(
         "/api/v1/notes/",
         json={"title": "Review unenroll note", "body": "body"},
@@ -147,7 +154,6 @@ async def test_review_unenroll_note(async_client):
     assert resp.status_code == 201
     note_id = resp.json()["id"]
 
-    # 2. Enroll – ReviewEnroll requires note_id AND due_today
     enroll = await async_client.post(
         f"/api/v1/review/{note_id}/enroll",
         json={"note_id": note_id, "due_today": True},
@@ -156,7 +162,6 @@ async def test_review_unenroll_note(async_client):
         f"Enroll failed: {enroll.status_code} {enroll.text}"
     )
 
-    # 3. Unenroll – DELETE /api/v1/review/{note_id} → 204
     unenroll = await async_client.delete(f"/api/v1/review/{note_id}")
     assert unenroll.status_code in (200, 204), (
         f"Unenroll failed: {unenroll.status_code} {unenroll.text}"
