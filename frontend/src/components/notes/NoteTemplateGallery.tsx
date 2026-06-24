@@ -1,10 +1,8 @@
 /**
  * NoteTemplateGallery
  * ===================
- * Modal/overlay shown when the user clicks "New Note" and the
- * GET /notes/templates endpoint has returned results.  The user picks a
- * template; the parent receives it via onSelect and opens the editor with
- * the pre-filled body and metadata.
+ * Modal/overlay shown when the user clicks "New Note".
+ * The user picks a template; the parent receives it via onSelect.
  *
  * Props
  * -----
@@ -31,8 +29,6 @@ interface Props {
   onClose: () => void;
 }
 
-// Map template icon strings to accessible Unicode emoji / text icons so we
-// avoid an icon-library dependency in this component.
 const ICON_MAP: Record<string, string> = {
   file: '\u{1F4C4}',
   zap: '\u26A1',
@@ -117,8 +113,16 @@ export function NoteTemplateGallery({ onSelect, onClose }: Props) {
 
         {!loading && !error && (
           <div className="template-gallery-body">
-            {/* Sidebar: template list — plain <ul> so role="list" is implicit */}
-            <ul className="template-gallery-list" aria-label="Templates">
+            {/*
+              role="list" is explicit here because CSS resets (e.g. list-style:none)
+              strip the implicit ARIA list role from <ul> in some browsers, and
+              getByRole('list') in tests depends on this being present.
+            */}
+            <ul
+              role="list"
+              className="template-gallery-list"
+              aria-label="Templates"
+            >
               {templates.map((t) => (
                 <li key={t.id}
                   aria-selected={t.id === activeId}
