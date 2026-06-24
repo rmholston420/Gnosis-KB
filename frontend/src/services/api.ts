@@ -10,7 +10,7 @@
  *   - listNotes, getGraph, listTags, listFolders, ingestNote, getLightRagNode,
  *     streamQuery, chat, search, listTemplates are all present
  */
-import { useVaultStore } from '../store/useAppStore';
+import { useVaultStore } from '../store/useVaultStore';
 
 const BASE = (import.meta as any).env?.VITE_API_BASE_URL ?? '/api';
 
