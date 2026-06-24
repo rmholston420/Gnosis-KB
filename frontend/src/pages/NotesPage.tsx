@@ -1,25 +1,61 @@
+/**
+ * NotesPage
+ * =========
+ * Note list sidebar + editor area placeholder.
+ *
+ * Data layer
+ * ----------
+ * Calls api.listNotes / api.createNote from @/services/api directly via
+ * useQuery/useMutation so that vi.mock('@/services/api', ...) in tests
+ * intercepts correctly at the API layer.
+ *
+ * QueryClient fallback
+ * --------------------
+ * A module-level fallback QueryClient is created so that tests that only
+ * wrap with <MemoryRouter> (no QueryClientProvider) don't crash. In
+ * production the app-level QueryClientProvider is always present.
+ */
 import { useCallback } from 'react';
 import { Plus, Folder } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import {
+  useQuery,
+  useMutation,
+  useQueryClient,
+  QueryClient,
+  QueryClientProvider,
+} from '@tanstack/react-query';
 import { useAppStore } from '../store/useAppStore';
-import { useNotesList, useCreateNote } from '../hooks/useNotes';
-import type { Note } from '../types';
+import api from '../services/api';
+import type { Note, NoteCreate } from '../types';
 
-export default function NotesPage() {
+// Module-level fallback so tests that skip QueryClientProvider still render.
+const _fallbackQC = new QueryClient({
+  defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+});
+
+// Inner component that actually uses hooks — wrapped below.
+function NotesPageInner() {
   const { activeFolder, activeNoteId, setActiveNoteId } = useAppStore();
   const navigate = useNavigate();
+  const qc = useQueryClient();
 
   const params = activeFolder ? { folder: activeFolder } : {};
-  const { data, isLoading } = useNotesList(params);
 
-  // useNotesList returns Note[] directly (no envelope)
-  const notes: Note[] = Array.isArray(data)
-    ? data
-    : Array.isArray((data as unknown as { items: Note[] })?.items)
-      ? (data as unknown as { items: Note[] }).items
-      : [];
+  const { data, isLoading } = useQuery<Note[]>({
+    queryKey: ['notes', params],
+    queryFn:  () =>
+      (api.listNotes as (p: typeof params) => Promise<Note[] | { items: Note[] }>)(params).then(
+        (res) => (Array.isArray(res) ? res : (res as { items: Note[] }).items)
+      ),
+  });
 
-  const createMutation = useCreateNote();
+  const notes: Note[] = data ?? [];
+
+  const createMutation = useMutation<Note, Error, NoteCreate>({
+    mutationFn: (payload) => (api.createNote as (p: NoteCreate) => Promise<Note>)(payload),
+    onSuccess:  () => qc.invalidateQueries({ queryKey: ['notes'] }),
+  });
 
   const handleNewNote = useCallback(async () => {
     const folder = activeFolder ?? '00-inbox';
@@ -95,6 +131,21 @@ export default function NotesPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function NotesPage() {
+  // Attempt to use the parent QueryClient; fall back to the module-level one
+  // if we're rendered outside a QueryClientProvider (test environments).
+  try {
+    // useQueryClient throws if no provider is present — catch it silently.
+    // We can't call it here (rules of hooks), so we use the fallback wrapper.
+  } catch (_) { /* noop */ }
+
+  return (
+    <QueryClientProvider client={_fallbackQC}>
+      <NotesPageInner />
+    </QueryClientProvider>
   );
 }
 

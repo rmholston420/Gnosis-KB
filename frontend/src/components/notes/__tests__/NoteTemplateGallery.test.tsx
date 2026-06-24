@@ -1,16 +1,10 @@
 /**
  * NoteTemplateGallery.test.tsx
- * ============================
- * Tests for the template picker modal that inserts starter content.
- *
- * The component loads templates via api.listTemplates() which we mock
- * so tests are fully synchronous / deterministic.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { NoteTemplateGallery } from '../NoteTemplateGallery';
 
-// ---------- mock api ----------
 const mockListTemplates = vi.fn();
 vi.mock('../../../services/api', () => ({
   default: { listTemplates: (...args: unknown[]) => mockListTemplates(...args) },
@@ -31,11 +25,7 @@ function renderGallery(onSelect = vi.fn(), onClose = vi.fn()) {
   return render(<NoteTemplateGallery onSelect={onSelect} onClose={onClose} />);
 }
 
-/** Wait for templates to load and return the list element.
- *  Uses findByRole (async) so it waits for the loading state to clear.
- */
 async function waitForSidebar() {
-  // findByRole is async — it retries until the element appears or times out
   const sidebar = await screen.findByRole('list');
   await waitFor(() => within(sidebar).getByText('Project Plan'));
   return sidebar;
@@ -50,7 +40,6 @@ describe('NoteTemplateGallery', () => {
   it('renders at least one template card', async () => {
     renderGallery();
     await waitForSidebar();
-    // Sidebar list-item buttons plus footer buttons
     const cards = screen.getAllByRole('button');
     expect(cards.length).toBeGreaterThan(0);
   });
@@ -79,20 +68,19 @@ describe('NoteTemplateGallery', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('calls onSelect with the template object when Use Template is clicked', async () => {
+  it('calls onSelect with the template object when Use this template is clicked', async () => {
     const onSelect = vi.fn();
     renderGallery(onSelect);
-    const sidebar = await waitForSidebar();
-    // Click the sidebar item (not the preview h3 — which also shows the name)
-    fireEvent.click(within(sidebar).getByText('Project Plan'));
-    fireEvent.click(screen.getByRole('button', { name: /use template/i }));
+    // t1 (Project Plan) is active by default — click Use this template directly
+    await waitForSidebar();
+    // Use exact name to match the button's text content precisely
+    fireEvent.click(screen.getByRole('button', { name: 'Use this template' }));
     expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ id: 't1' }));
   });
 
   it('renders template names as text', async () => {
     renderGallery();
     const sidebar = await waitForSidebar();
-    // Scope assertions to the sidebar list so duplicate preview-h3 text is irrelevant
     expect(within(sidebar).getByText('Project Plan')).toBeInTheDocument();
     expect(within(sidebar).getByText('Daily Journal')).toBeInTheDocument();
     expect(within(sidebar).getByText('Blank Note')).toBeInTheDocument();

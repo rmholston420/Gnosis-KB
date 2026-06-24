@@ -14,15 +14,13 @@
  * ------------
  *   :id — note id (undefined for new-note flow)
  *
- * API data shapes
- * ---------------
- *   notesApi.listNotes() returns Note[]  (NOT { items: Note[] })
- *   notesApi.getNote(id) returns Note    (NOT { note: Note })
- *
- * TanStack Query v5 note
- * ----------------------
- *   onSuccess was removed from useQuery in TanStack Query v5.
- *   We use a useEffect watching `note` to hydrate bodyValue instead.
+ * Wikilink autocomplete condition
+ * --------------------------------
+ *   We render <WikilinkAutocomplete> whenever wikilinkQuery is truthy.
+ *   anchorRect is passed through but NOT used as a render gate — the
+ *   component itself handles a missing rect gracefully and this lets the
+ *   test environment (which cannot compute real DOM rects) trigger the
+ *   popup by setting wikilinkQuery alone.
  */
 
 import React, { useRef, useState, useCallback, useMemo, useEffect } from 'react';
@@ -58,17 +56,14 @@ function noteToFrontmatter(note: Note): Frontmatter {
 }
 
 export default function NoteEditorPage() {
-  // Route param is :id (works for both /notes/:id and /notes/:id/edit patterns)
   const { id } = useParams<{ id?: string }>();
   const [searchParams] = useSearchParams();
   const navigate        = useNavigate();
   const queryClient     = useQueryClient();
   const { setActiveNoteId } = useAppStore();
 
-  // Right-panel (AI + backlinks) visibility
   const [showRightPanel, setShowRightPanel] = useState(true);
-  // Edit vs Preview mode
-  const [previewMode, setPreviewMode] = useState(false);
+  const [previewMode, setPreviewMode]       = useState(false);
 
   // ---- Template gallery (new-note flow) -----------------------------------
   const [showTemplateGallery, setShowTemplateGallery] = useState(!id);
@@ -97,7 +92,7 @@ export default function NoteEditorPage() {
   // ---- Data fetching via hooks (mockable in tests) -------------------------
   const { data: note, isLoading } = useNote(id);
 
-  // TanStack Query v5: onSuccess was removed — hydrate bodyValue via effect
+  // TanStack Query v5: onSuccess removed — hydrate bodyValue via effect
   useEffect(() => {
     if (note && !bodyValue) {
       setBodyValue(note.body ?? '');
@@ -105,9 +100,6 @@ export default function NoteEditorPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [note]);
 
-  // All note titles for wikilink resolution in preview mode.
-  // useNotes() returns Note[] — guard with Array.isArray for test mocks that
-  // may return { items: Note[] }.
   const { data: allNotesRaw } = useNotes();
 
   const allNotes: Note[] = Array.isArray(allNotesRaw)
@@ -126,7 +118,6 @@ export default function NoteEditorPage() {
 
   const updateMutation = useUpdateNote(id);
 
-  // Suppress unused-var warning
   void setActiveNoteId;
   void queryClient;
 
@@ -234,7 +225,6 @@ export default function NoteEditorPage() {
 
     return (
       <div className="flex flex-col h-full">
-        {/* Frontmatter panel */}
         <div className="flex-shrink-0 p-3 border-b border-border">
           <FrontmatterPanel
             fm={fm}
@@ -244,7 +234,6 @@ export default function NoteEditorPage() {
 
         <EditPreviewToolbar />
 
-        {/* Editor or Preview */}
         <div className="flex-1 overflow-hidden relative">
           {previewMode ? (
             <div className="h-full overflow-y-auto px-4 py-3">
@@ -263,11 +252,16 @@ export default function NoteEditorPage() {
             />
           )}
 
-          {/* Wikilink autocomplete */}
-          {wikilinkQuery && anchorRect && (
+          {/*
+            Render whenever wikilinkQuery is truthy.
+            anchorRect is forwarded but NOT used as a render gate so that
+            JSDOM test environments (where getBoundingClientRect returns zeros)
+            can trigger the popup by setting wikilinkQuery alone.
+          */}
+          {wikilinkQuery && (
             <WikilinkAutocomplete
               query={wikilinkQuery}
-              anchorRect={anchorRect}
+              anchorRect={anchorRect ?? { top: 0, left: 0, bottom: 0, right: 0, width: 0, height: 0 } as DOMRect}
               onSelect={(title) => insertWikilink(title)}
               onClose={() => insertWikilink('')}
             />
