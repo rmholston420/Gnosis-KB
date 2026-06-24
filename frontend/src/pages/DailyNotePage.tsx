@@ -11,11 +11,11 @@ const queryClient = new QueryClient({
 
 function DailyNotePageInner() {
   const navigate = useNavigate();
-  const dateStr = today();
+  const dateStr  = today();
 
   const { data: note, isLoading, isError } = useQuery<Note>({
     queryKey: ['daily', dateStr],
-    queryFn: () => api.getDailyNote(dateStr) as Promise<Note>,
+    queryFn:  () => api.getDailyNote(dateStr) as Promise<Note>,
   });
 
   React.useEffect(() => {
@@ -26,8 +26,12 @@ function DailyNotePageInner() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-full" data-testid="loading">
-        <span className="text-gnosis-muted text-sm">Loading daily note…</span>
+      <div
+        className="flex items-center justify-center h-full animate-spin"
+        data-testid="loading"
+        style={{ animationDuration: '1s' }}
+      >
+        <span className="sr-only">Loading daily note…</span>
       </div>
     );
   }

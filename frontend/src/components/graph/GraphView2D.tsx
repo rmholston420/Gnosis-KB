@@ -11,14 +11,22 @@ import type { GraphNode } from '../../types';
 
 interface Props {
   onNodeClick?: (node: GraphNode) => void;
+  onError?: (err: Error) => void;
   width?:  number;
   height?: number;
 }
 
-export function GraphView2D({ onNodeClick, width = 800, height = 600 }: Props) {
+export function GraphView2D({ onNodeClick, onError, width = 800, height = 600 }: Props) {
   const fgRef = useRef<ForceGraphMethods | undefined>(undefined);
-  const { data: rawGraph, isLoading } = useFullGraph();
+  const { data: rawGraph, isLoading, isError, error } = useFullGraph();
   const [hovered, setHovered] = useState<string | null>(null);
+
+  // Propagate query errors to parent (GraphPage) so it can render error state
+  React.useEffect(() => {
+    if (isError && error && onError) {
+      onError(error as Error);
+    }
+  }, [isError, error, onError]);
 
   const graphData = rawGraph ? toForceGraphData(rawGraph) : { nodes: [], links: [] };
 
@@ -36,6 +44,15 @@ export function GraphView2D({ onNodeClick, width = 800, height = 600 }: Props) {
     return (
       <div className="flex items-center justify-center" style={{ width, height }}>
         <span className="text-gnosis-muted text-sm">Loading graph…</span>
+      </div>
+    );
+  }
+
+  // Error handled by parent via onError callback; render empty placeholder
+  if (isError) {
+    return (
+      <div className="flex items-center justify-center" style={{ width, height }}>
+        <span className="text-gnosis-muted text-sm">Graph unavailable.</span>
       </div>
     );
   }

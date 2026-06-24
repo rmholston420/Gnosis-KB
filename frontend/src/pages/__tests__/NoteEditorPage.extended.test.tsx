@@ -10,14 +10,17 @@ import { vi, describe, it, beforeEach, expect } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 
-// ── Spies for hook calls ─────────────────────────────────────────────────────
-const mockMutateAsync   = vi.fn();
-const mockMutate        = vi.fn();
-const mockUpdateNote    = vi.fn(() => ({
-  mutateAsync: mockMutateAsync,
-  mutate:      mockMutate,
-  isPending:   false,
-}));
+// ── Use vi.hoisted so these are available inside the vi.mock factory ──────────
+const { mockMutateAsync, mockMutate, mockUpdateNote } = vi.hoisted(() => {
+  const mockMutateAsync = vi.fn();
+  const mockMutate      = vi.fn();
+  const mockUpdateNote  = vi.fn(() => ({
+    mutateAsync: mockMutateAsync,
+    mutate:      mockMutate,
+    isPending:   false,
+  }));
+  return { mockMutateAsync, mockMutate, mockUpdateNote };
+});
 
 const NOTE_STUB = {
   note_id: 'abc123',
@@ -173,8 +176,6 @@ describe('NoteEditorPage — new note flow', () => {
     expect(screen.queryByTestId('template-gallery')).toBeNull();
   });
 
-  // save-btn in new-note mode calls updateMutation.mutate (no createNote
-  // wiring exists — create happens via NoteEditor.onSave → parent handler).
   it('save button triggers a mutation in new note mode', async () => {
     renderNewNote();
     await waitFor(() => screen.getByTestId('template-gallery'));
@@ -182,7 +183,6 @@ describe('NoteEditorPage — new note flow', () => {
     await waitFor(() => screen.getByTestId('save-btn'));
     fireEvent.click(screen.getByTestId('save-btn'));
     await act(async () => { await new Promise((r) => setTimeout(r, 80)); });
-    // save-btn calls updateMutation.mutate — verify it was invoked
     expect(mockMutate).toHaveBeenCalled();
   });
 });

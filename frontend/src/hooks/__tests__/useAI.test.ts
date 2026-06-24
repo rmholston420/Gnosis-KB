@@ -3,25 +3,37 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 import { useAIChat, useCritiqueNote, useNoteSummary } from '../useAI';
-import api from '../../services/api';
 
-vi.mock('../../services/api');
+const mockCritiqueNote  = vi.fn();
+const mockSummarizeNote = vi.fn();
+const mockStreamQuery   = vi.fn();
+
+vi.mock('../../services/api', () => ({
+  default: {
+    critiqueNote:  (...a: unknown[]) => mockCritiqueNote(...a),
+    summarizeNote: (...a: unknown[]) => mockSummarizeNote(...a),
+    streamQuery:   (...a: unknown[]) => mockStreamQuery(...a),
+  },
+}));
 
 const wrapper = ({ children }: { children: React.ReactNode }) =>
-  React.createElement(QueryClientProvider, {
-    client: new QueryClient({ defaultOptions: { queries: { retry: false } } }),
-  }, children);
+  React.createElement(
+    QueryClientProvider,
+    { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) },
+    children,
+  );
 
 describe('useAI hooks', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
   it('useAIChat is a mutation hook', () => {
+    mockStreamQuery.mockReturnValue({ addEventListener: vi.fn(), close: vi.fn() });
     const { result } = renderHook(() => useAIChat(), { wrapper });
     expect(typeof result.current.mutateAsync).toBe('function');
   });
 
   it('useCritiqueNote / alias fetches critique', async () => {
-    (api.critiqueNote as ReturnType<typeof vi.fn>).mockResolvedValue({
+    mockCritiqueNote.mockResolvedValue({
       critique: 'Needs more citations',
       suggestions: [],
     });
@@ -31,7 +43,7 @@ describe('useAI hooks', () => {
   });
 
   it('useNoteSummary fetches summary', async () => {
-    (api.summarizeNote as ReturnType<typeof vi.fn>).mockResolvedValue({
+    mockSummarizeNote.mockResolvedValue({
       summary: 'A short note about impermanence.',
       keywords: ['impermanence'],
     });
