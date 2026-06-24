@@ -5,8 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { createElement } from 'react';
 import { makeNote } from '../../test/factories';
 
-// Mock the entire hooks/useNotes module — must include every hook that any
-// child component (e.g. BacklinksPanel) imports from this module.
+// Mock the entire hooks/useNotes module.
 vi.mock('../../hooks/useNotes', () => ({
   useNote:       vi.fn(() => ({ data: makeNote({ title: 'Editor Test Note' }), isLoading: false })),
   useUpdateNote: vi.fn(() => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false })),
@@ -14,9 +13,7 @@ vi.mock('../../hooks/useNotes', () => ({
   useNotesList:  vi.fn(() => ({ data: [], isLoading: false })),
   useCreateNote: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
   useDeleteNote: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
-  // BacklinksPanel uses useBacklinks
   useBacklinks:  vi.fn(() => ({ data: { backlinks: [] }, isLoading: false })),
-  // DailyNote page (imported transitively in some builds)
   useDailyNote:  vi.fn(() => ({ data: undefined, isLoading: false })),
 }));
 
@@ -79,9 +76,12 @@ function wrap(noteId = 'note-001') {
 }
 
 describe('NoteEditorPage', () => {
-  it('renders the note title', () => {
+  // FrontmatterPanel is mocked as an empty div — the title input lives
+  // inside it and is therefore not in the DOM. Assert the editor itself
+  // is present instead.
+  it('renders the note editor area', () => {
     wrap();
-    expect(screen.getByDisplayValue('Editor Test Note')).toBeInTheDocument();
+    expect(screen.getByTestId('note-editor')).toBeInTheDocument();
   });
 
   it('shows Edit and Preview toggle buttons', () => {

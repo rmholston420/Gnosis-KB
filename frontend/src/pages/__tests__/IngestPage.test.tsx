@@ -1,17 +1,14 @@
 /**
  * IngestPage.test.tsx
  * ===================
+ * IngestPage uses useMutation directly, so tests must provide a
+ * QueryClientProvider.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import IngestPage from '../IngestPage';
-
-const mockNavigate = vi.fn();
-vi.mock('react-router-dom', async () => {
-  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
-  return { ...actual, useNavigate: () => mockNavigate };
-});
 
 const mockIngestUrl  = vi.fn();
 const mockIngestFile = vi.fn();
@@ -23,15 +20,19 @@ vi.mock('../../services/api', () => ({
 }));
 
 function renderPage() {
-  return render(<MemoryRouter><IngestPage /></MemoryRouter>);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter><IngestPage /></MemoryRouter>
+    </QueryClientProvider>
+  );
 }
 
 beforeEach(() => {
   mockIngestUrl.mockReset();
   mockIngestFile.mockReset();
-  mockNavigate.mockReset();
-  mockIngestUrl.mockResolvedValue({ id: 'new-note', title: 'Example Article' });
-  mockIngestFile.mockResolvedValue({ id: 'new-note', title: 'Uploaded File' });
+  mockIngestUrl.mockResolvedValue({ job_id: 'job-1' });
+  mockIngestFile.mockResolvedValue({ job_id: 'job-2' });
 });
 
 describe('IngestPage', () => {
@@ -40,33 +41,39 @@ describe('IngestPage', () => {
     expect(document.body).toBeInTheDocument();
   });
 
-  it('renders a URL input field', () => {
+  it('renders a URL input field when URL mode selected', () => {
     renderPage();
-    expect(screen.getByPlaceholderText(/https?:|url/i)).toBeInTheDocument();
+    // Switch to URL mode
+    fireEvent.click(screen.getByRole('button', { name: /url/i }));
+    expect(screen.getByPlaceholderText(/https/i)).toBeInTheDocument();
   });
 
-  it('renders an Ingest / Submit button for URL', () => {
+  it('renders an Ingest button', () => {
     renderPage();
-    expect(screen.getByRole('button', { name: /ingest|submit|import/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /ingest/i })).toBeInTheDocument();
   });
 
   it('calls ingestUrl when URL form is submitted', async () => {
     renderPage();
-    const urlInput = screen.getByPlaceholderText(/https?:|url/i);
+    fireEvent.click(screen.getByRole('button', { name: /url/i }));
+    const urlInput = screen.getByPlaceholderText(/https/i);
     fireEvent.change(urlInput, { target: { value: 'https://example.com/article' } });
-    fireEvent.click(screen.getByRole('button', { name: /ingest|submit|import/i }));
+    fireEvent.click(screen.getByRole('button', { name: /ingest/i }));
     await waitFor(() =>
-      expect(mockIngestUrl).toHaveBeenCalledWith('https://example.com/article', undefined)
+      expect(mockIngestUrl).toHaveBeenCalledWith(
+        expect.objectContaining({ url: 'https://example.com/article' })
+      )
     );
   });
 
-  it('navigates to the new note after successful URL ingest', async () => {
+  it('shows job queued message after successful URL ingest', async () => {
     renderPage();
-    const urlInput = screen.getByPlaceholderText(/https?:|url/i);
+    fireEvent.click(screen.getByRole('button', { name: /url/i }));
+    const urlInput = screen.getByPlaceholderText(/https/i);
     fireEvent.change(urlInput, { target: { value: 'https://example.com/article' } });
-    fireEvent.click(screen.getByRole('button', { name: /ingest|submit|import/i }));
+    fireEvent.click(screen.getByRole('button', { name: /ingest/i }));
     await waitFor(() =>
-      expect(mockNavigate).toHaveBeenCalledWith(expect.stringContaining('new-note'))
+      expect(screen.getByText(/job queued/i)).toBeInTheDocument()
     );
   });
 });
