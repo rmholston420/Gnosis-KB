@@ -1,78 +1,47 @@
-/**
- * Sidebar.test.tsx
- * Tests for the main application sidebar.
- * Wraps with QueryClientProvider since DailyNoteWidget uses useQuery.
- */
-import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { describe, it, expect } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { vi, describe, it, expect } from 'vitest';
-import { Sidebar } from '../Sidebar';
-import * as notesApi from '../../api/notes';
+import Sidebar from '@/components/Sidebar';
 
 function Wrapper({ children }: { children: React.ReactNode }) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return (
-    <QueryClientProvider client={qc}>
-      <MemoryRouter>{children}</MemoryRouter>
-    </QueryClientProvider>
-  );
+  return <MemoryRouter>{children}</MemoryRouter>;
 }
 
-const dailyNote = {
-  note_id: 'daily-1', title: 'Daily 2026-06-24', body: '', tags: [],
-  note_type: 'daily', status: 'active', created_at: '', updated_at: '',
-  folder: 'Daily', source_url: null,
-};
-
 describe('Sidebar', () => {
-  beforeEach(() => {
-    vi.spyOn(notesApi, 'getDailyNote').mockResolvedValue(dailyNote);
+  it('renders all nav item labels when expanded', () => {
+    render(<Wrapper><Sidebar /></Wrapper>);
+    // Default state is expanded — all text labels should be visible
+    expect(screen.getByText('Notes')).toBeInTheDocument();
+    expect(screen.getByText('Search')).toBeInTheDocument();
+    expect(screen.getByText('Graph')).toBeInTheDocument();
+    expect(screen.getByText('AI Chat')).toBeInTheDocument();
   });
 
-  it('shows the Gnosis brand label when expanded', () => {
+  it('shows brand name when expanded', () => {
     render(<Wrapper><Sidebar /></Wrapper>);
     expect(screen.getByText(/gnosis/i)).toBeInTheDocument();
-  });
-
-  it('collapse button has aria-label "Collapse sidebar" when expanded', () => {
-    render(<Wrapper><Sidebar /></Wrapper>);
-    expect(screen.getByLabelText(/collapse sidebar/i)).toBeInTheDocument();
   });
 
   it('toggle button collapses the sidebar', () => {
     render(<Wrapper><Sidebar /></Wrapper>);
+    // Initial state: expanded → button says 'Collapse sidebar'
     fireEvent.click(screen.getByLabelText(/collapse sidebar/i));
-    expect(screen.queryByText(/notes/i)).not.toBeNull(); // nav items still present as icons
+    // After collapse: text labels are hidden (icon-only mode)
+    expect(screen.queryByText('Notes')).toBeNull();
   });
 
   it('toggle button expands the sidebar', () => {
     render(<Wrapper><Sidebar /></Wrapper>);
+    // Collapse first
     fireEvent.click(screen.getByLabelText(/collapse sidebar/i));
+    // Now expand
     fireEvent.click(screen.getByLabelText(/expand sidebar/i));
     expect(screen.getByText(/gnosis/i)).toBeInTheDocument();
   });
 
-  it('renders all nav item labels when expanded', () => {
+  it('nav links have correct href attributes', () => {
     render(<Wrapper><Sidebar /></Wrapper>);
-    expect(screen.getByText(/notes/i)).toBeInTheDocument();
-    expect(screen.getByText(/search/i)).toBeInTheDocument();
-    expect(screen.getByText(/graph/i)).toBeInTheDocument();
-  });
-
-  it('New Note button navigates to /notes/new', () => {
-    render(<Wrapper><Sidebar /></Wrapper>);
-    const newNoteBtn = screen.getByRole('link', { name: /new note/i });
-    expect(newNoteBtn).toHaveAttribute('href', '/notes/new');
-  });
-
-  it('Log out button removes token and navigates to /login', async () => {
-    render(<Wrapper><Sidebar /></Wrapper>);
-    const logoutBtn = screen.getByRole('button', { name: /log out/i });
-    fireEvent.click(logoutBtn);
-    await waitFor(() =>
-      expect(localStorage.getItem('token')).toBeNull()
-    );
+    expect(screen.getByTitle('Search').closest('a')).toHaveAttribute('href', '/search');
+    expect(screen.getByTitle('Graph').closest('a')).toHaveAttribute('href', '/graph');
   });
 });

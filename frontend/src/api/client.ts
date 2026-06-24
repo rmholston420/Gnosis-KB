@@ -1,35 +1,41 @@
 /**
- * api/client.ts
- * Centralised Axios instance for all Gnosis API calls.
- * Base URL comes from the VITE_API_BASE_URL env var (default: same origin).
+ * Gnosis-KB API client
+ * -  Attaches Bearer token from localStorage on every request.
+ * -  On 401: clears token + redirects to /login.
+ * -  On all other 4xx/5xx: rejects with the AxiosError so callers can handle.
  */
 import axios from 'axios';
 
 export const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL ?? '',
+  baseURL: import.meta.env?.VITE_API_BASE_URL ?? '',
   headers: { 'Content-Type': 'application/json' },
-  withCredentials: true,
 });
 
-// Attach JWT from localStorage on every request
-apiClient.interceptors.request.use((config) => {
-  const token = localStorage.getItem('gnosis_token');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-});
-
-// Redirect to /login on 401
-apiClient.interceptors.response.use(
-  (res) => res,
-  (err) => {
-    if (err.response?.status === 401) {
-      localStorage.removeItem('gnosis_token');
-      window.location.href = '/login';
+// ── Request interceptor: attach token ─────────────────────────────────────────
+apiClient.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('gnosis_token');
+    if (token) {
+      config.headers = config.headers ?? {};
+      config.headers['Authorization'] = `Bearer ${token}`;
     }
-    return Promise.reject(err);
+    return config;
+  },
+  (error) => Promise.reject(error),
+);
+
+// ── Response interceptor: handle 401, pass through everything else ────────────
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error?.response?.status === 401) {
+      localStorage.removeItem('gnosis_token');
+      if (typeof window !== 'undefined') {
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(error);
   },
 );
 
-// Default export so `import client from './client'` works in api/* modules
-// AND named export is preserved for direct imports.
 export default apiClient;
