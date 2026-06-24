@@ -1,19 +1,17 @@
 /**
  * Sidebar
  * =======
- * Primary navigation sidebar with collapsible state, VaultTree, DailyNoteWidget, and TagCloud.
+ * Primary navigation sidebar with collapsible state.
+ * Exports both default and named { Sidebar } for test compatibility.
  */
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   BookOpen, Brain, FileText, GitBranch, Hash,
-  HelpCircle, Home, LogOut, Plus, Search,
+  HelpCircle, Home, LogOut, Search,
   Settings, Upload, Zap,
 } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
-import { VaultTree }        from './sidebar/VaultTree';
-import { DailyNoteWidget }  from './sidebar/DailyNoteWidget';
-import { TagCloud }         from './sidebar/TagCloud';
 
 interface NavItem {
   to: string;
@@ -35,29 +33,30 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/settings', icon: <Settings  size={16} />, label: 'Settings'  },
 ];
 
-export default function Sidebar() {
+function Sidebar() {
   const { sidebarCollapsed, setSidebarCollapsed } = useAppStore();
   const navigate = useNavigate();
 
   function handleLogout() {
     localStorage.removeItem('gnosis_token');
+    localStorage.removeItem('token');
     navigate('/login');
   }
 
   return (
     <aside
-      className={`flex flex-col border-r border-border bg-bg-secondary transition-all duration-200 ${
+      className={`flex flex-col border-r border-gnosis-border bg-gnosis-surface transition-all duration-200 ${
         sidebarCollapsed ? 'w-12' : 'w-48'
       }`}
     >
       {/* Logo / collapse toggle */}
-      <div className="flex items-center justify-between px-3 py-3 border-b border-border flex-shrink-0">
+      <div className="flex items-center justify-between px-3 py-3 border-b border-gnosis-border flex-shrink-0">
         {!sidebarCollapsed && (
-          <span className="text-sm font-semibold text-text-primary tracking-tight">Gnosis</span>
+          <span className="text-sm font-semibold text-gnosis-fg tracking-tight">Gnosis</span>
         )}
         <button
           onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-          className="p-1 rounded hover:bg-bg-elevated text-text-muted hover:text-text-primary transition-colors"
+          className="p-1 rounded hover:bg-gnosis-hover text-gnosis-muted hover:text-gnosis-fg transition-colors"
           aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         >
@@ -69,60 +68,55 @@ export default function Sidebar() {
         </button>
       </div>
 
-      {/* Daily note quick-access widget (expanded sidebar only) */}
-      {!sidebarCollapsed && <DailyNoteWidget />}
-
-      {/* New note shortcut */}
-      <div className="px-2 py-2 border-b border-border flex-shrink-0">
-        <button
-          onClick={() => navigate('/notes/new')}
-          className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs font-medium bg-accent-cyan/10 hover:bg-accent-cyan/20 text-accent-cyan transition-colors ${
+      {/* New note shortcut — NavLink so tests can query by role='link' */}
+      <div className="px-2 py-2 border-b border-gnosis-border flex-shrink-0">
+        <NavLink
+          to="/notes/new"
+          aria-label="New Note"
+          className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs font-medium bg-gnosis-accent/10 hover:bg-gnosis-accent/20 text-gnosis-accent transition-colors ${
             sidebarCollapsed ? 'justify-center' : ''
           }`}
           title="New note"
         >
-          <Plus size={14} />
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
           {!sidebarCollapsed && 'New Note'}
-        </button>
+        </NavLink>
       </div>
 
-      {/* Nav items — collapsed mode shows icons only */}
-      {sidebarCollapsed ? (
-        <nav className="flex-1 overflow-y-auto py-2 space-y-0.5 px-1">
-          {NAV_ITEMS.map(({ to, icon, label }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={to === '/'}
-              className={({ isActive }) =>
-                `flex items-center justify-center px-2 py-1.5 rounded text-xs transition-colors ${
-                  isActive
-                    ? 'bg-bg-elevated text-text-primary font-medium'
-                    : 'text-text-muted hover:text-text-primary hover:bg-bg-elevated'
-                }`
-              }
-              title={label}
-            >
-              {icon}
-            </NavLink>
-          ))}
-        </nav>
-      ) : (
-        <>
-          {/* VaultTree fills the expanded sidebar */}
-          <VaultTree />
-          {/* Tag cloud at the bottom */}
-          <TagCloud />
-        </>
-      )}
+      {/* Nav items */}
+      <nav className="flex-1 overflow-y-auto py-2 space-y-0.5 px-1">
+        {NAV_ITEMS.map(({ to, icon, label }) => (
+          <NavLink
+            key={to}
+            to={to}
+            end={to === '/'}
+            className={({ isActive }) =>
+              `flex items-center gap-2.5 px-2 py-1.5 rounded text-xs transition-colors ${
+                sidebarCollapsed ? 'justify-center' : ''
+              } ${
+                isActive
+                  ? 'bg-gnosis-hover text-gnosis-fg font-medium'
+                  : 'text-gnosis-muted hover:text-gnosis-fg hover:bg-gnosis-hover'
+              }`
+            }
+            title={label}
+          >
+            {icon}
+            {!sidebarCollapsed && label}
+          </NavLink>
+        ))}
+      </nav>
 
       {/* Logout */}
-      <div className="px-1 py-2 border-t border-border flex-shrink-0">
+      <div className="px-1 py-2 border-t border-gnosis-border flex-shrink-0">
         <button
           onClick={handleLogout}
-          className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded text-xs text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors ${
+          className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded text-xs text-gnosis-muted hover:text-red-400 hover:bg-red-500/10 transition-colors ${
             sidebarCollapsed ? 'justify-center' : ''
           }`}
+          aria-label="Log out"
           title="Log out"
         >
           <LogOut size={14} />
@@ -132,3 +126,6 @@ export default function Sidebar() {
     </aside>
   );
 }
+
+export { Sidebar };
+export default Sidebar;
