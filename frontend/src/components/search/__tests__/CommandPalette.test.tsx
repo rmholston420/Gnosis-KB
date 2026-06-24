@@ -18,11 +18,13 @@ vi.mock('react-router-dom', async () => {
   };
 });
 
-/** Spy on the module-level fetchNoteStubs export so tests can control it. */
-vi.mock('@/components/search/CommandPalette', async () => {
-  const actual = await vi.importActual<typeof import('@/components/search/CommandPalette')>(
-    '@/components/search/CommandPalette'
-  );
+/**
+ * Mock the fetchNoteStubs module directly — this is the correct seam.
+ * The component imports from '@/lib/noteStubs', so mocking that module
+ * intercepts the call inside the component's useEffect.
+ */
+vi.mock('@/lib/noteStubs', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/noteStubs')>('@/lib/noteStubs');
   return {
     ...actual,
     fetchNoteStubs: vi.fn().mockResolvedValue([
@@ -32,7 +34,7 @@ vi.mock('@/components/search/CommandPalette', async () => {
   };
 });
 
-const { fetchNoteStubs } = await import('@/components/search/CommandPalette');
+const { fetchNoteStubs } = await import('@/lib/noteStubs');
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });

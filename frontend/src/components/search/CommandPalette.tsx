@@ -11,12 +11,7 @@ import { Command } from 'cmdk';
 import { useNavigate } from 'react-router-dom';
 import Fuse from 'fuse.js';
 import { FileText, GitBranch, Plus, Search, Settings, Zap } from 'lucide-react';
-
-export interface NoteStub {
-  id: string;
-  title: string;
-  folder: string;
-}
+import { fetchNoteStubs, type NoteStub } from '@/lib/noteStubs';
 
 interface ActionItem {
   id: string;
@@ -34,23 +29,6 @@ interface NoteItem {
 }
 
 type PaletteItem = ActionItem | NoteItem;
-
-/** Exported so tests can vi.mock('@/components/search/CommandPalette', ...) and spy on it. */
-export async function fetchNoteStubs(): Promise<NoteStub[]> {
-  const base = import.meta.env.VITE_API_BASE_URL ?? '';
-  try {
-    const resp = await fetch(`${base}/api/v1/notes?limit=500`, {
-      headers: {
-        Authorization: `Bearer ${localStorage.getItem('gnosis_token') ?? ''}`,
-      },
-    });
-    if (!resp.ok) return [];
-    const data = (await resp.json()) as { items?: NoteStub[] } | NoteStub[];
-    return Array.isArray(data) ? data : (data.items ?? []);
-  } catch {
-    return [];
-  }
-}
 
 async function createQuickNote(navigate: ReturnType<typeof useNavigate>) {
   const base = import.meta.env.VITE_API_BASE_URL ?? '';
@@ -115,7 +93,6 @@ export default function CommandPalette({ open: openProp, onClose }: CommandPalet
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
         if (isControlled) {
-          // In controlled mode: if already open, request close; else caller opens it
           if (open) {
             setQuery('');
             onClose?.();
@@ -225,11 +202,11 @@ export default function CommandPalette({ open: openProp, onClose }: CommandPalet
           <Command.Input
             value={query}
             onValueChange={setQuery}
-            placeholder="Search or go to…"
+            placeholder="Search or go to\u2026"
             className="command-palette-input"
             autoFocus
           />
-          <Command.List className="command-palette-list">
+          <Command.List className="command-palette-list" aria-label="Suggestions">
             {results.length === 0 && (
               <Command.Empty className="command-palette-empty">
                 No results found
