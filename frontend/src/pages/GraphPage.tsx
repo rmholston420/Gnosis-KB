@@ -100,7 +100,7 @@ export default function GraphPage() {
   const { data: graphData, isLoading: graphLoading, refetch: refetchGraph } =
     useQuery<GraphData>({
       queryKey: ['graph'],
-      queryFn:  () => api.getGraph() as Promise<GraphData>,
+      queryFn:  () => api.getFullGraph() as Promise<GraphData>,
       staleTime: 30_000,
     });
 
@@ -116,12 +116,11 @@ export default function GraphPage() {
     });
 
   const { data: entitiesData, isLoading: entitiesLoading } =
-    useQuery<GraphEntitySummary[]>({
+    useQuery({
       queryKey: ['graph-entities'],
-      queryFn:  () => api.getGraphEntities(),
+      queryFn:  () => api.getGraphEntities().then((d: any) => (d?.entities ?? d) as GraphEntitySummary[]),
       staleTime: 60_000,
       enabled: activeTab === 'lightrag',
-      select: (d) => (d as any).entities ?? d,
     });
 
   // ---- Mutations ---------------------------------------------------------
@@ -145,8 +144,8 @@ export default function GraphPage() {
       if (!apiClient) return;
       try {
         const [entityRes, relRes] = await Promise.all([
-          apiClient.get<LightRagEntity>(`/api/v1/graph/entities/${encodeURIComponent(nodeId)}`),
-          apiClient.get<{ relations: LightRagRelation[] }>(
+          apiClient.get(`/api/v1/graph/entities/${encodeURIComponent(nodeId)}`),
+          apiClient.get(
             `/api/v1/graph/entities/${encodeURIComponent(nodeId)}/relations`
           ),
         ]);
@@ -319,7 +318,7 @@ export default function GraphPage() {
   }, [activeTab, lrGraphData, handleLrNodeClick]);
 
   // ---- Entity list -------------------------------------------------------
-  const allEntities: GraphEntitySummary[] = entitiesData ?? [];
+  const allEntities: GraphEntitySummary[] = (entitiesData as GraphEntitySummary[] | undefined) ?? [];
   const filteredEntities = allEntities.filter(
     (e) => !entitySearch || e.id.toLowerCase().includes(entitySearch.toLowerCase())
       || e.label?.toLowerCase().includes(entitySearch.toLowerCase())
