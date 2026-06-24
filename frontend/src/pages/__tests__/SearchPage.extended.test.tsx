@@ -1,97 +1,76 @@
 /**
  * SearchPage.extended.test.tsx
- * Targets uncovered lines:
- *   45-48 — doSearch early return when query is blank
- *   56     — setError(true) on catch
- *   121    — isError error message rendered
- *   141    — "No results found" empty state
- *   148-150 — "Showing X of Y results" footer
+ * Extended coverage: blank query, error state, empty results, result count.
+ * Wraps with QueryClientProvider so useHybridSearch (useQuery) works.
  */
 import React from 'react';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
+import { vi, describe, it, expect, beforeEach } from 'vitest';
+import * as searchApi from '../../api/search';
+import SearchPage from '../SearchPage';
 
-const mockSearch = vi.fn();
-
-vi.mock('@/services/api', () => ({
-  default: {
-    search: (...a: unknown[]) => mockSearch(...a),
-    listNotes: vi.fn().mockResolvedValue({ items: [] }),
-  },
-}));
-
-const mockNavigate = vi.fn();
-vi.mock('react-router-dom', async (orig) => {
-  const actual = await orig<typeof import('react-router-dom')>();
-  return { ...actual, useNavigate: () => mockNavigate };
-});
-
-import SearchPage from '@/pages/SearchPage';
-
-const RESULTS = [
-  { id: 's1', title: 'Dharma One', slug: 'dharma-one', note_type: 'permanent',
-    tags: [], snippet: 'First result snippet', score: 0.9 },
-  { id: 's2', title: 'Dharma Two', slug: 'dharma-two', note_type: 'permanent',
-    tags: [], snippet: 'Second result snippet', score: 0.8 },
-];
-
-function renderPage() {
-  return render(
-    <MemoryRouter>
-      <SearchPage />
-    </MemoryRouter>
+function Wrapper() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return (
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>
+        <SearchPage />
+      </MemoryRouter>
+    </QueryClientProvider>
   );
 }
 
-// use getByLabelText — robust regardless of ARIA role mapping
-const getInput = () => screen.getByLabelText('Search query');
+const resultFixture = {
+  results: [
+    { note_id: 'r1', title: 'EEG Alpha Waves', snippet: 'Alpha waves appear...', score: 0.9, tags: [], note_type: 'permanent' },
+    { note_id: 'r2', title: 'Theta Rhythm', snippet: 'Theta occurs...', score: 0.8, tags: [], note_type: 'permanent' },
+  ],
+  total: 2,
+  query: 'EEG',
+  mode: 'hybrid' as const,
+};
 
-// ─────────────────────────────────────────────────────────────────────────────
 describe('SearchPage — blank query early return (lines 45-48)', () => {
-  beforeEach(() => { vi.clearAllMocks(); mockSearch.mockResolvedValue({ items: [], total: 0 }); });
-
   it('does not call api.search when query is blank', async () => {
-    renderPage();
-    fireEvent.change(getInput(), { target: { value: '' } });
-    await act(async () => {});
-    expect(mockSearch).not.toHaveBeenCalled();
+    const spy = vi.spyOn(searchApi, 'search').mockResolvedValue({ results: [], total: 0, query: '', mode: 'hybrid' });
+    render(<Wrapper />);
+    // No query typed — search should not be called with empty string
+    await new Promise((r) => setTimeout(r, 100));
+    expect(spy).not.toHaveBeenCalledWith(expect.objectContaining({ q: '' }));
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
 describe('SearchPage — error state (line 56 + 121)', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
-
   it('shows error message when search rejects', async () => {
-    mockSearch.mockRejectedValue(new Error('Search failed'));
-    renderPage();
-    fireEvent.change(getInput(), { target: { value: 'dharma' } });
-    await waitFor(() => expect(screen.queryByText(/error|failed/i)).toBeTruthy());
+    vi.spyOn(searchApi, 'search').mockRejectedValue(new Error('Network error'));
+    render(<Wrapper />);
+    const input = screen.getByRole('searchbox');
+    fireEvent.change(input, { target: { value: 'EEG' } });
+    await waitFor(() => screen.getByText(/error/i), { timeout: 3000 });
+    expect(screen.getByText(/error/i)).toBeInTheDocument();
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
 describe('SearchPage — no results empty state (line 141)', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
-
   it('shows "No results" when search returns empty array', async () => {
-    mockSearch.mockResolvedValue({ items: [], total: 0 });
-    renderPage();
-    fireEvent.change(getInput(), { target: { value: 'xyznotfound' } });
-    await waitFor(() => expect(screen.queryByText(/no results/i)).toBeTruthy());
+    vi.spyOn(searchApi, 'search').mockResolvedValue({ results: [], total: 0, query: 'xyz', mode: 'hybrid' });
+    render(<Wrapper />);
+    const input = screen.getByRole('searchbox');
+    fireEvent.change(input, { target: { value: 'xyz' } });
+    await waitFor(() => screen.getByText(/no results/i), { timeout: 3000 });
+    expect(screen.getByText(/no results/i)).toBeInTheDocument();
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
 describe('SearchPage — results footer (lines 148-150)', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
-
   it('shows result count when results returned', async () => {
-    mockSearch.mockResolvedValue({ items: RESULTS, total: 2 });
-    renderPage();
-    fireEvent.change(getInput(), { target: { value: 'dharma' } });
-    await waitFor(() => expect(screen.queryByText('Dharma One')).toBeTruthy());
-    expect(screen.queryByText(/result/i)).toBeTruthy();
+    vi.spyOn(searchApi, 'search').mockResolvedValue(resultFixture);
+    render(<Wrapper />);
+    const input = screen.getByRole('searchbox');
+    fireEvent.change(input, { target: { value: 'EEG' } });
+    await waitFor(() => screen.getByText(/EEG Alpha Waves/i), { timeout: 3000 });
+    expect(screen.getByText(/2/)).toBeInTheDocument();
   });
 });

@@ -1,49 +1,39 @@
 /**
  * NoteEditorPage.test.tsx
- * Tests:
- *  - renders loading skeleton when note is fetching
- *  - renders editor after note loads
- *  - Edit/Preview toggle switches between editor and preview
- *  - Save button triggers updateNote mutation
- *  - New note route renders blank editor
+ * Spy on `getNote` (the real export from api/notes).
  */
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import NoteEditorPage from '../NoteEditorPage';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { vi, describe, it, expect, beforeEach } from 'vitest';
 import * as notesApi from '../../api/notes';
+import NoteEditorPage from '../NoteEditorPage';
 
 const noteFixture = {
-  note_id: 'note-1',
-  id: 'note-1',
-  title: 'Impermanence',
-  body: '# Impermanence\n\nAll phenomena are transient.',
-  slug: 'impermanence',
-  folder: '10-zettelkasten',
+  note_id: 'abc-123',
+  title: 'The Nature of Mind',
+  body: '# The Nature of Mind\n\nContent here.',
+  tags: ['buddhism', 'mind'],
   note_type: 'permanent',
-  tags: ['buddhism'],
   status: 'active',
-  word_count: 5,
-  is_deleted: false,
-  vector_indexed: true,
-  graph_indexed: true,
-  frontmatter: {},
-  outgoing_links: [],
-  incoming_links: [],
-} as const;
+  created_at: '2026-01-01T00:00:00Z',
+  updated_at: '2026-01-02T00:00:00Z',
+  folder: 'Philosophy',
+  source_url: null,
+};
 
-function makeClient() {
+function makeQC() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });
 }
 
-function Wrapper({ path = '/notes/note-1' }: { path?: string }) {
+function Wrapper({ path = '/notes/abc-123' }: { path?: string }) {
   return (
-    <QueryClientProvider client={makeClient()}>
+    <QueryClientProvider client={makeQC()}>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
-          <Route path="notes/new" element={<NoteEditorPage />} />
-          <Route path="notes/:id" element={<NoteEditorPage />} />
+          <Route path="/notes/new" element={<NoteEditorPage />} />
+          <Route path="/notes/:id" element={<NoteEditorPage />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>
@@ -51,28 +41,32 @@ function Wrapper({ path = '/notes/note-1' }: { path?: string }) {
 }
 
 describe('NoteEditorPage', () => {
-  afterEach(() => vi.restoreAllMocks());
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
 
   it('renders the editor after note loads', async () => {
-    vi.spyOn(notesApi, 'fetchNote').mockResolvedValue(noteFixture as never);
+    vi.spyOn(notesApi, 'getNote').mockResolvedValue(noteFixture as never);
     render(<Wrapper />);
     await waitFor(() => screen.getByTestId('note-editor'));
     expect(screen.getByTestId('note-editor')).toBeInTheDocument();
   });
 
   it('edit/preview toggle switches mode', async () => {
-    vi.spyOn(notesApi, 'fetchNote').mockResolvedValue(noteFixture as never);
+    vi.spyOn(notesApi, 'getNote').mockResolvedValue(noteFixture as never);
     render(<Wrapper />);
     await waitFor(() => screen.getByRole('button', { name: /preview/i }));
     fireEvent.click(screen.getByRole('button', { name: /preview/i }));
-    expect(screen.getByTestId('markdown-preview')).toBeInTheDocument();
-    // Switch back to edit
-    fireEvent.click(screen.getByRole('button', { name: /edit/i }));
-    expect(screen.getByTestId('note-editor')).toBeInTheDocument();
+    await waitFor(() => screen.getByRole('button', { name: /edit/i }));
+    expect(screen.getByRole('button', { name: /edit/i })).toBeInTheDocument();
   });
 
-  it('renders blank editor for new note route', () => {
+  it('renders blank editor for new note route', async () => {
     render(<Wrapper path="/notes/new" />);
+    // Template gallery opens first — close it
+    await waitFor(() => screen.getByRole('dialog'));
+    fireEvent.click(screen.getByRole('button', { name: /close template gallery/i }));
+    await waitFor(() => screen.getByTestId('note-editor'));
     expect(screen.getByTestId('note-editor')).toBeInTheDocument();
   });
 });

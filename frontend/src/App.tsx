@@ -5,14 +5,13 @@
  *
  * Responsibilities:
  *  - BrowserRouter + route tree
- *  - QueryClientProvider + devtools
+ *  - QueryClientProvider + devtools (dev only)
  *  - Global ⌘K / Ctrl+K → CommandPalette
  *  - VaultSyncWatcher mounted here (invisible, subscribes to WebSocket)
  *  - ProtectedRoute wraps all authenticated views
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 
 // Layout + shared
 import { Layout }            from './components/Layout';
@@ -34,6 +33,15 @@ import DailyNotePage   from './pages/DailyNotePage';
 import TagsPage        from './pages/TagsPage';
 import IngestPage      from './pages/IngestPage';
 import SettingsPage    from './pages/SettingsPage';
+
+// Devtools — lazy-loaded in dev only so the package is never required in test/prod
+const ReactQueryDevtools = import.meta.env.DEV
+  ? lazy(() =>
+      import('@tanstack/react-query-devtools').then((m) => ({
+        default: m.ReactQueryDevtools,
+      }))
+    )
+  : null;
 
 export default function App() {
   const [cmdOpen, setCmdOpen] = useState(false);
@@ -88,7 +96,12 @@ export default function App() {
         <Route path="*" element={<Navigate to="/notes" replace />} />
       </Routes>
 
-      <ReactQueryDevtools initialIsOpen={false} buttonPosition="bottom-right" />
+      {/* React Query Devtools — only rendered in development builds */}
+      {ReactQueryDevtools && (
+        <Suspense fallback={null}>
+          <ReactQueryDevtools initialIsOpen={false} buttonPosition="bottom-right" />
+        </Suspense>
+      )}
     </>
   );
 }
