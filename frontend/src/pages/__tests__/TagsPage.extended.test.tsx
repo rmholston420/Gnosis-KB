@@ -2,30 +2,27 @@
  * TagsPage.extended.test.tsx
  * Covers tag list rendering, click navigation, empty state, and tag counts.
  * Uncovered lines: 21-22, 72, 120, 133
+ *
+ * TagsPage.normalise() expects the resolved value to BE the tag data directly:
+ *   - TagEntry[]          → returned as-is
+ *   - Record<string,number> → converted to TagEntry[]
+ * Do NOT wrap in { tags: [...] } — that causes 'Objects are not valid as React child'.
  */
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // ---- Mocks -----------------------------------------------------------------
-const mockListTags  = vi.fn();
-const mockListNotes = vi.fn();
+const mockListTags = vi.fn();
 
 vi.mock('@/services/api', () => ({
   default: {
-    listTags:   (...a: unknown[]) => mockListTags(...a),
-    listNotes:  (...a: unknown[]) => mockListNotes(...a),
+    // TagsPage accesses api.listTags ?? api.getTags via dynamic lookup.
+    // Return the tag array directly (NOT wrapped in an object).
+    listTags: (...a: unknown[]) => mockListTags(...a),
+    getTags:  (...a: unknown[]) => mockListTags(...a),
   },
-}));
-
-vi.mock('@/store/useAppStore', () => ({
-  useAppStore: () => ({
-    setActiveFolder: vi.fn(),
-    searchQuery: '',
-    setSearchQuery: vi.fn(),
-  }),
 }));
 
 const mockNavigate = vi.fn();
@@ -36,106 +33,114 @@ vi.mock('react-router-dom', async (orig) => {
 
 import TagsPage from '@/pages/TagsPage';
 
+// TagEntry[] — returned DIRECTLY from mock (no wrapper object)
 const TAGS = [
-  { name: 'buddhism', count: 12 },
-  { name: 'philosophy', count: 7 },
-  { name: 'meditation', count: 3 },
+  { name: 'buddhism',   count: 12 },
+  { name: 'philosophy', count: 7  },
+  { name: 'meditation', count: 3  },
 ];
-
-const NOTES_WITH_TAGS = [
-  { id: 'n1', title: 'Note One', tags: ['buddhism', 'philosophy'], body: '',
-    slug: 'note-one', note_type: 'permanent', status: 'draft', folder: '10-zettelkasten',
-    word_count: 2, is_deleted: false, vector_indexed: false, graph_indexed: false,
-    created_at: '', updated_at: '' },
-  { id: 'n2', title: 'Note Two', tags: ['meditation'], body: '',
-    slug: 'note-two', note_type: 'fleeting', status: 'draft', folder: '00-inbox',
-    word_count: 1, is_deleted: false, vector_indexed: false, graph_indexed: false,
-    created_at: '', updated_at: '' },
-];
-
-function makeQC() {
-  return new QueryClient({ defaultOptions: { queries: { retry: false } } });
-}
 
 function renderPage() {
   return render(
-    <QueryClientProvider client={makeQC()}>
-      <MemoryRouter>
-        <TagsPage />
-      </MemoryRouter>
-    </QueryClientProvider>
+    <MemoryRouter>
+      <TagsPage />
+    </MemoryRouter>
   );
 }
 
 describe('TagsPage', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockNavigate.mockClear();
+  });
 
   it('renders without crashing', async () => {
-    mockListTags.mockResolvedValue({ tags: TAGS });
-    mockListNotes.mockResolvedValue({ items: NOTES_WITH_TAGS });
+    mockListTags.mockResolvedValue(TAGS);
     renderPage();
-    await new Promise((r) => setTimeout(r, 100));
-    expect(document.body.textContent?.length).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(screen.getByText('Tags')).toBeTruthy()
+    );
   });
 
   it('renders tags after load', async () => {
-    mockListTags.mockResolvedValue({ tags: TAGS });
-    mockListNotes.mockResolvedValue({ items: NOTES_WITH_TAGS });
+    mockListTags.mockResolvedValue(TAGS);
     renderPage();
-    await waitFor(() => {
-      const text = document.body.textContent ?? '';
-      expect(
-        text.includes('buddhism') ||
-        text.includes('philosophy') ||
-        text.includes('Tag') ||
-        text.includes('tag')
-      ).toBe(true);
-    }, { timeout: 3000 });
+    await waitFor(() => screen.getByText('buddhism'));
+    expect(screen.getByText('philosophy')).toBeTruthy();
+    expect(screen.getByText('meditation')).toBeTruthy();
+  });
+
+  it('renders tag counts', async () => {
+    mockListTags.mockResolvedValue(TAGS);
+    renderPage();
+    await waitFor(() => screen.getByText('buddhism'));
+    expect(screen.getByText('12')).toBeTruthy();
+    expect(screen.getByText('7')).toBeTruthy();
   });
 
   it('shows empty state when no tags returned', async () => {
-    mockListTags.mockResolvedValue({ tags: [] });
-    mockListNotes.mockResolvedValue({ items: [] });
+    mockListTags.mockResolvedValue([]);
     renderPage();
+    await waitFor(() =>
+      expect(screen.getByText(/No tags yet/i)).toBeTruthy()
+    );
+  });
+
+  it('clicking a tag navigates with tag query param', async () => {
+    mockListTags.mockResolvedValue(TAGS);
+    renderPage();
+    await waitFor(() => screen.getByText('buddhism'));
+    fireEvent.click(screen.getByText('buddhism').closest('button')!);
+    expect(mockNavigate).toHaveBeenCalledWith('/notes?tag=buddhism');
+  });
+
+  it('filter input narrows visible tags', async () => {
+    mockListTags.mockResolvedValue(TAGS);
+    renderPage();
+    await waitFor(() => screen.getByText('buddhism'));
+    const filterInput = screen.getByPlaceholderText(/Filter tags/i);
+    fireEvent.change(filterInput, { target: { value: 'phil' } });
     await waitFor(() => {
-      // Should render without crash and show some UI
-      expect(document.querySelectorAll('[class]').length).toBeGreaterThan(0);
+      expect(screen.queryByText('buddhism')).toBeNull();
+      expect(screen.getByText('philosophy')).toBeTruthy();
     });
   });
 
-  it('clicking a tag does not crash', async () => {
-    mockListTags.mockResolvedValue({ tags: TAGS });
-    mockListNotes.mockResolvedValue({ items: NOTES_WITH_TAGS });
+  it('sort toggle button is present and clickable', async () => {
+    mockListTags.mockResolvedValue(TAGS);
     renderPage();
-    await waitFor(() => {
-      const tagEl = screen.queryByText('buddhism') ??
-        screen.queryAllByRole('button').find((b) => b.textContent?.includes('buddhism'));
-      if (tagEl) {
-        fireEvent.click(tagEl);
-        expect(document.body.textContent?.length).toBeGreaterThan(0);
-      }
-    }, { timeout: 3000 });
+    await waitFor(() => screen.getByText('buddhism'));
+    const sortBtn = screen.getByRole('button', { name: /Sort/i }) ??
+      screen.queryAllByRole('button').find((b) =>
+        b.title?.includes('Sort') ||
+        b.textContent?.match(/A.Z|By count/)
+      );
+    expect(sortBtn).toBeTruthy();
+    if (sortBtn) fireEvent.click(sortBtn);
   });
 
-  it('tag counts are rendered when provided by API', async () => {
-    mockListTags.mockResolvedValue({ tags: TAGS });
-    mockListNotes.mockResolvedValue({ items: NOTES_WITH_TAGS });
+  it('accepts Record<string,number> response format', async () => {
+    // normalise() also handles dict format
+    mockListTags.mockResolvedValue({ buddhism: 12, philosophy: 7 });
     renderPage();
-    await waitFor(() => {
-      const text = document.body.textContent ?? '';
-      // Either API-provided counts or note-derived counts should appear
-      expect(
-        text.includes('12') || text.includes('7') || text.includes('3') ||
-        text.includes('buddhism')
-      ).toBe(true);
-    }, { timeout: 3000 });
+    await waitFor(() => screen.getByText('buddhism'));
+    expect(screen.getByText('philosophy')).toBeTruthy();
   });
 
-  it('API error does not crash the page', async () => {
+  it('shows error state when API fails', async () => {
     mockListTags.mockRejectedValue(new Error('Tags unavailable'));
-    mockListNotes.mockRejectedValue(new Error('Notes unavailable'));
     renderPage();
-    await new Promise((r) => setTimeout(r, 200));
-    expect(document.body.textContent?.length).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(screen.getByText(/Failed to load tags/i)).toBeTruthy()
+    );
+  });
+
+  it('tag count total is shown in header', async () => {
+    mockListTags.mockResolvedValue(TAGS);
+    renderPage();
+    await waitFor(() => {
+      // Header shows (3) next to the Tags heading
+      expect(screen.getByText(`(${TAGS.length})`)).toBeTruthy();
+    });
   });
 });

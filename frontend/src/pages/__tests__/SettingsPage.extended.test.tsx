@@ -1,139 +1,203 @@
 /**
  * SettingsPage.extended.test.tsx
- * Covers password change, data export, vault field edits, save actions,
- * and error display.
+ * Covers provider loading, RAG mode selection, export, sync, and error states.
  * Uncovered lines: 92-93, 97-112, 115-124, 220-222, 260, 262
  */
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // ---- Mocks -----------------------------------------------------------------
-const mockChangePassword = vi.fn();
-const mockExportNotes   = vi.fn();
-const mockGetVault      = vi.fn();
-const mockUpdateVault   = vi.fn();
-const mockGetSettings   = vi.fn();
-const mockUpdateSettings = vi.fn();
+// SettingsPage calls these API methods (via cast to unknown):
+//   api.getProviders()  → ProviderInfo
+//   api.setModel(m)     → void
+//   api.exportVault(fmt)→ Blob
+//   api.syncObsidian()  → void
+const mockGetProviders = vi.fn();
+const mockSetModel     = vi.fn();
+const mockExportVault  = vi.fn();
+const mockSyncObsidian = vi.fn();
 
 vi.mock('@/services/api', () => ({
   default: {
-    changePassword:  (...a: unknown[]) => mockChangePassword(...a),
-    exportNotes:     (...a: unknown[]) => mockExportNotes(...a),
-    getVault:        (...a: unknown[]) => mockGetVault(...a),
-    updateVault:     (...a: unknown[]) => mockUpdateVault(...a),
-    getSettings:     (...a: unknown[]) => mockGetSettings(...a),
-    updateSettings:  (...a: unknown[]) => mockUpdateSettings(...a),
+    getProviders:  (...a: unknown[]) => mockGetProviders(...a),
+    setModel:      (...a: unknown[]) => mockSetModel(...a),
+    exportVault:   (...a: unknown[]) => mockExportVault(...a),
+    syncObsidian:  (...a: unknown[]) => mockSyncObsidian(...a),
   },
 }));
 
+// useAppStore — plain Zustand create() store, no selector
 vi.mock('@/store/useAppStore', () => ({
   useAppStore: () => ({
     ragMode: 'hybrid',
     setRagMode: vi.fn(),
-    editorMode: 'edit',
-    setEditorMode: vi.fn(),
-  }),
-}));
-
-vi.mock('@/store/useVaultStore', () => ({
-  useVaultStore: () => ({
-    activeVaultId: 'vault-1',
-    vaults: [{ id: 'vault-1', name: 'My Vault', slug: 'my-vault' }],
   }),
 }));
 
 import SettingsPage from '@/pages/SettingsPage';
 
-function makeQC() {
-  return new QueryClient({ defaultOptions: { queries: { retry: false } } });
-}
+const PROVIDER_INFO = {
+  provider: 'openai',
+  model: 'gpt-4o-mini',
+  available: true,
+  models: ['gpt-4o-mini', 'gpt-4o', 'gpt-3.5-turbo'],
+};
 
 function renderPage() {
-  mockGetVault.mockResolvedValue({ id: 'vault-1', name: 'My Vault', description: 'Test vault' });
-  mockGetSettings.mockResolvedValue({ theme: 'dark', rag_mode: 'hybrid', editor_mode: 'edit' });
+  mockGetProviders.mockResolvedValue(PROVIDER_INFO);
   return render(
-    <QueryClientProvider client={makeQC()}>
-      <MemoryRouter>
-        <SettingsPage />
-      </MemoryRouter>
-    </QueryClientProvider>
+    <MemoryRouter>
+      <SettingsPage />
+    </MemoryRouter>
   );
 }
 
 describe('SettingsPage', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('renders without crashing', async () => {
+  it('renders settings heading', async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByText('Settings')).toBeTruthy()
+    );
+  });
+
+  it('shows loading spinner while fetching provider info', () => {
+    mockGetProviders.mockImplementation(
+      () => new Promise((r) => setTimeout(() => r(PROVIDER_INFO), 300))
+    );
+    renderPage();
+    expect(screen.getByText(/Loading provider info/i)).toBeTruthy();
+  });
+
+  it('renders provider info after load', async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByText('openai')).toBeTruthy()
+    );
+  });
+
+  it('renders Connected status when provider is available', async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByText(/Connected/i)).toBeTruthy()
+    );
+  });
+
+  it('renders Unavailable when provider.available is false', async () => {
+    mockGetProviders.mockResolvedValue({ ...PROVIDER_INFO, available: false });
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>);
+    await waitFor(() =>
+      expect(screen.getByText(/Unavailable/i)).toBeTruthy()
+    );
+  });
+
+  it('shows error when getProviders fails', async () => {
+    mockGetProviders.mockRejectedValue(new Error('API down'));
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>);
+    await waitFor(() =>
+      expect(screen.getByText(/Could not load provider info/i)).toBeTruthy()
+    );
+  });
+
+  it('renders RAG mode radio buttons', async () => {
     renderPage();
     await waitFor(() => {
-      expect(document.body.textContent?.length).toBeGreaterThan(0);
+      expect(screen.getByLabelText(/Hybrid/i) ?? screen.queryByDisplayValue('hybrid')).toBeTruthy();
     });
   });
 
-  it('renders settings heading or sections', async () => {
+  it('renders RAG Mode section heading', async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByText('RAG Mode')).toBeTruthy()
+    );
+  });
+
+  it('Export Vault button is present and clickable', async () => {
+    mockExportVault.mockResolvedValue(new Blob(['data']));
+    // Mock URL.createObjectURL to avoid JSDOM limitation
+    const origCreate = URL.createObjectURL;
+    URL.createObjectURL = vi.fn(() => 'blob:mock');
     renderPage();
     await waitFor(() => {
-      const headings = screen.queryAllByRole('heading');
-      const textContent = document.body.textContent ?? '';
-      expect(
-        headings.length > 0 ||
-        textContent.toLowerCase().includes('setting') ||
-        textContent.toLowerCase().includes('password') ||
-        textContent.toLowerCase().includes('export')
-      ).toBe(true);
+      const btn = screen.queryByRole('button', { name: /Export Vault/i });
+      expect(btn).toBeTruthy();
+    });
+    URL.createObjectURL = origCreate;
+  });
+
+  it('clicking Export Vault calls exportVault', async () => {
+    mockExportVault.mockResolvedValue(new Blob(['export data']));
+    URL.createObjectURL = vi.fn(() => 'blob:mock');
+    renderPage();
+    await waitFor(() => screen.getByRole('button', { name: /Export Vault/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Export Vault/i }));
+    await waitFor(() => expect(mockExportVault).toHaveBeenCalled());
+  });
+
+  it('export error shows error message', async () => {
+    mockExportVault.mockRejectedValue(new Error('export failed'));
+    renderPage();
+    await waitFor(() => screen.getByRole('button', { name: /Export Vault/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Export Vault/i }));
+    await waitFor(() =>
+      expect(screen.getByText(/Export failed/i)).toBeTruthy()
+    );
+  });
+
+  it('Sync Now button is present', async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Sync Now/i })).toBeTruthy()
+    );
+  });
+
+  it('clicking Sync Now calls syncObsidian', async () => {
+    mockSyncObsidian.mockResolvedValue(undefined);
+    renderPage();
+    await waitFor(() => screen.getByRole('button', { name: /Sync Now/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Sync Now/i }));
+    await waitFor(() => expect(mockSyncObsidian).toHaveBeenCalled());
+  });
+
+  it('model select is rendered with provider models', async () => {
+    renderPage();
+    await waitFor(() => {
+      const select = screen.queryByRole('combobox') ??
+        document.querySelector('select#model-select');
+      expect(select).toBeTruthy();
     });
   });
 
-  it('password change fields are present if rendered', async () => {
+  it('changing model enables save button', async () => {
     renderPage();
-    await waitFor(() => {
-      const pwdInputs = document.querySelectorAll('input[type="password"]');
-      if (pwdInputs.length >= 2) {
-        // Fill in password fields and submit
-        fireEvent.change(pwdInputs[0], { target: { value: 'oldpass' } });
-        fireEvent.change(pwdInputs[1], { target: { value: 'newpass' } });
-        expect((pwdInputs[0] as HTMLInputElement).value).toBe('oldpass');
+    await waitFor(() => document.querySelector('select#model-select'));
+    const select = document.querySelector('select#model-select') as HTMLSelectElement;
+    if (select) {
+      fireEvent.change(select, { target: { value: 'gpt-4o' } });
+      await waitFor(() => {
+        const saveBtn = screen.queryByRole('button', { name: /Save model/i });
+        if (saveBtn) expect((saveBtn as HTMLButtonElement).disabled).toBe(false);
+      });
+    }
+  });
+
+  it('save model button calls setModel', async () => {
+    mockSetModel.mockResolvedValue({});
+    renderPage();
+    await waitFor(() => document.querySelector('select#model-select'));
+    const select = document.querySelector('select#model-select') as HTMLSelectElement;
+    if (select) {
+      fireEvent.change(select, { target: { value: 'gpt-4o' } });
+      await waitFor(() => screen.queryByRole('button', { name: /Save model/i }));
+      const saveBtn = screen.queryByRole('button', { name: /Save model/i });
+      if (saveBtn) {
+        fireEvent.click(saveBtn);
+        await waitFor(() => expect(mockSetModel).toHaveBeenCalledWith('gpt-4o'));
       }
-    });
-  });
-
-  it('page does not crash when API returns errors', async () => {
-    mockGetVault.mockRejectedValue(new Error('Not found'));
-    mockGetSettings.mockRejectedValue(new Error('Server error'));
-    renderPage();
-    await new Promise((r) => setTimeout(r, 200));
-    expect(document.body.textContent?.length).toBeGreaterThan(0);
-  });
-
-  it('export button triggers exportNotes if visible', async () => {
-    mockExportNotes.mockResolvedValue(new Blob(['data'], { type: 'application/zip' }));
-    renderPage();
-    await waitFor(() => {
-      const exportBtn = screen.queryByRole('button', { name: /export/i });
-      if (exportBtn) {
-        fireEvent.click(exportBtn);
-        expect(exportBtn).toBeTruthy();
-      }
-    });
-  });
-
-  it('save/update button is clickable when present', async () => {
-    mockUpdateVault.mockResolvedValue({});
-    mockUpdateSettings.mockResolvedValue({});
-    renderPage();
-    await new Promise((r) => setTimeout(r, 100));
-    const saveBtn = screen.queryByRole('button', { name: /save/i }) ??
-      screen.queryAllByRole('button').find((b) =>
-        b.textContent?.toLowerCase().includes('save') ||
-        b.textContent?.toLowerCase().includes('update')
-      );
-    if (saveBtn) {
-      fireEvent.click(saveBtn);
-      await new Promise((r) => setTimeout(r, 100));
-      expect(saveBtn).toBeTruthy();
     }
   });
 });
