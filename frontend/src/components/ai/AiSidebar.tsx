@@ -1,6 +1,13 @@
 /**
  * AiSidebar — collapsible AI tools panel shown alongside the note editor.
  * Provides: note summary, link suggestions, tag suggestions, and Zettelkasten critique.
+ *
+ * Data-unwrapping notes
+ * ---------------------
+ *  useLinkSuggestions → { data: LinkSuggestResult }  shape: { suggestions: LinkSuggestion[] }
+ *  useTagSuggestions  → { data: TagSuggestResult }   shape: { suggestions: TagSuggestion[] }
+ *  useNoteSummary     → { data: SummarizeResult }    shape: { summary: string }
+ *  useNoteCritique    → { data: CritiqueResult }     shape: { critique: AiCritique }
  */
 import React, { useState } from 'react';
 import { Sparkles, Link2, Tag, MessageSquare, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
@@ -43,14 +50,16 @@ function Section({
 
 /** Summary section. */
 function SummarySection({ noteId }: { noteId: string }) {
-  const { mutate, data, isPending } = useNoteSummary(noteId);
+  const { mutate, data: result, isPending } = useNoteSummary(noteId);
+  // result shape: SummarizeResult = { summary: string }
+  const summary = result?.summary;
   return (
     <Section title="AI Summary" icon={<Sparkles size={12} />}>
-      {data ? (
-        <p className="text-xs text-gnosis-fg leading-relaxed">{data.summary}</p>
+      {summary ? (
+        <p className="text-xs text-gnosis-fg leading-relaxed">{summary}</p>
       ) : (
         <button
-          onClick={() => mutate()}
+          onClick={() => mutate(undefined)}
           disabled={isPending}
           className="text-xs text-gnosis-accent hover:underline flex items-center gap-1"
         >
@@ -66,7 +75,9 @@ function SummarySection({ noteId }: { noteId: string }) {
 function LinkSection({
   noteId, onInsertLink,
 }: { noteId: string; onInsertLink?: (s: LinkSuggestion) => void }) {
-  const { data: suggestions = [], isLoading } = useLinkSuggestions(noteId);
+  const { data: result, isLoading } = useLinkSuggestions(noteId);
+  // result shape: LinkSuggestResult = { suggestions: LinkSuggestion[] }
+  const suggestions = result?.suggestions ?? [];
   return (
     <Section title="Suggested Links" icon={<Link2 size={12} />}>
       {isLoading ? (
@@ -101,7 +112,9 @@ function LinkSection({
 function TagSection({
   noteId, onInsertTag,
 }: { noteId: string; onInsertTag?: (tag: string) => void }) {
-  const { data: suggestions = [], isLoading } = useTagSuggestions(noteId);
+  const { data: result, isLoading } = useTagSuggestions(noteId);
+  // result shape: TagSuggestResult = { suggestions: TagSuggestion[] }
+  const suggestions: TagSuggestion[] = result?.suggestions ?? [];
   return (
     <Section title="Suggested Tags" icon={<Tag size={12} />}>
       {isLoading ? (
@@ -127,14 +140,16 @@ function TagSection({
 
 /** Zettelkasten critique section. */
 function CritiqueSection({ noteId }: { noteId: string }) {
-  const { mutate, data, isPending } = useNoteCritique(noteId);
+  const { mutate, data: result, isPending } = useNoteCritique(noteId);
+  // result shape: CritiqueResult = { critique: AiCritique }
+  const critique = result?.critique;
   return (
     <Section title="ZK Critique" icon={<MessageSquare size={12} />}>
-      {data ? (
-        <CritiqueResult critique={data} />
+      {critique ? (
+        <CritiqueDisplay critique={critique} />
       ) : (
         <button
-          onClick={() => mutate()}
+          onClick={() => mutate(undefined)}
           disabled={isPending}
           className="text-xs text-gnosis-accent hover:underline flex items-center gap-1"
         >
@@ -146,12 +161,12 @@ function CritiqueSection({ noteId }: { noteId: string }) {
   );
 }
 
-function CritiqueResult({ critique }: { critique: AiCritique }) {
+function CritiqueDisplay({ critique }: { critique: AiCritique }) {
   const items: Array<{ label: string; score: number; feedback: string }> = [
-    { label: 'Atomicity',         score: critique.atomicity_score,      feedback: critique.atomicity_feedback },
-    { label: 'Connectivity',      score: critique.connectivity_score,   feedback: critique.connectivity_feedback },
-    { label: 'Self-containedness',score: critique.standalone_score,     feedback: critique.standalone_feedback },
-    { label: 'Insight density',   score: critique.insight_score,        feedback: critique.insight_feedback },
+    { label: 'Atomicity',          score: critique.atomicity_score     ?? 0, feedback: critique.atomicity_feedback     ?? '' },
+    { label: 'Connectivity',       score: critique.connectivity_score  ?? 0, feedback: critique.connectivity_feedback  ?? '' },
+    { label: 'Self-containedness', score: critique.standalone_score    ?? 0, feedback: critique.standalone_feedback    ?? '' },
+    { label: 'Insight density',    score: critique.insight_score       ?? 0, feedback: critique.insight_feedback       ?? '' },
   ];
   return (
     <ul className="space-y-2">

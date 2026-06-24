@@ -1,10 +1,13 @@
 /**
  * hooks/useNotes.ts — TanStack Query hooks for note data.
+ *
+ * notesApi.listNotes() returns Note[] directly (no envelope).
+ * notesApi.getNote()   returns Note directly.
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { notesApi } from '../api/notes';
 import type { ListNotesParams } from '../api/notes';
-import type { Note, NoteCreate, NoteUpdate, Backlink } from '../types';
+import type { Note, NoteCreate, NoteUpdate } from '../types';
 
 export const NOTES_KEY    = 'notes';
 export const NOTE_KEY     = 'note';
@@ -12,8 +15,9 @@ export const BACKLINK_KEY = 'backlinks';
 
 // ── List ──────────────────────────────────────────────────────────────────────
 
+/** Returns Note[] directly — no envelope. */
 export function useNotes(params: ListNotesParams = {}) {
-  return useQuery({
+  return useQuery<Note[]>({
     queryKey: [NOTES_KEY, params],
     queryFn:  () => notesApi.listNotes(params),
   });
@@ -24,82 +28,53 @@ export const useNotesList = useNotes;
 
 // ── Single note ───────────────────────────────────────────────────────────────
 
-export function useNote(id: string | null | undefined) {
-  return useQuery({
-    queryKey:  [NOTE_KEY, id],
-    queryFn:   () => notesApi.getNote(id!),
-    enabled:   Boolean(id),
+export function useNote(id?: string | null) {
+  return useQuery<Note>({
+    queryKey: [NOTE_KEY, id],
+    queryFn:  () => notesApi.getNote(id!),
+    enabled:  Boolean(id),
   });
 }
 
-// ── Backlinks ─────────────────────────────────────────────────────────────────
-
-export function useBacklinks(noteId: string | null | undefined) {
-  return useQuery({
-    queryKey: [BACKLINK_KEY, noteId],
-    queryFn:  () => notesApi.getBacklinks(noteId!),
-    enabled:  Boolean(noteId),
-    select:   (d): Backlink[] => d.backlinks,
-  });
-}
-
-// ── Daily note ────────────────────────────────────────────────────────────────
-/**
- * Returns { data, isLoading, create, today } so DailyNoteWidget can
- * destructure data/isLoading directly (not nested under .query).
- */
-export function useDailyNote() {
-  const qc    = useQueryClient();
-  const today = new Date().toISOString().slice(0, 10);
-  const key   = [NOTE_KEY, 'daily', today];
-
-  const { data, isLoading, isError } = useQuery<Note | null>({
-    queryKey: key,
-    queryFn:  () =>
-      notesApi.listNotes({ note_type: 'journal', q: today, per_page: 1 })
-        .then(ns => ns[0] ?? null),
-  });
-
-  const create = useMutation({
-    mutationFn: () =>
-      notesApi.createNote({
-        title:     `Daily Note — ${today}`,
-        body:      '',
-        note_type: 'journal',
-        folder:    'journal',
-      }),
-    onSuccess: (note) => qc.setQueryData(key, note),
-  });
-
-  return { data, isLoading, isError, create, today };
-}
-
-// ── Create / Update / Delete ──────────────────────────────────────────────────
+// ── Create ────────────────────────────────────────────────────────────────────
 
 export function useCreateNote() {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (data: NoteCreate) => notesApi.createNote(data),
+  return useMutation<Note, Error, NoteCreate>({
+    mutationFn: (data) => notesApi.createNote(data),
     onSuccess:  () => qc.invalidateQueries({ queryKey: [NOTES_KEY] }),
   });
 }
 
-export function useUpdateNote() {
+// ── Update ────────────────────────────────────────────────────────────────────
+
+export function useUpdateNote(id: string) {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: NoteUpdate }) =>
-      notesApi.updateNote(id, data),
-    onSuccess:  (note: Note) => {
-      qc.setQueryData([NOTE_KEY, note.note_id], note);
+  return useMutation<Note, Error, NoteUpdate>({
+    mutationFn: (data) => notesApi.updateNote(id, data),
+    onSuccess:  () => {
+      qc.invalidateQueries({ queryKey: [NOTE_KEY, id] });
       qc.invalidateQueries({ queryKey: [NOTES_KEY] });
     },
   });
 }
 
+// ── Delete ────────────────────────────────────────────────────────────────────
+
 export function useDeleteNote() {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => notesApi.deleteNote(id),
+  return useMutation<void, Error, string>({
+    mutationFn: (id) => notesApi.deleteNote(id),
     onSuccess:  () => qc.invalidateQueries({ queryKey: [NOTES_KEY] }),
+  });
+}
+
+// ── Backlinks ─────────────────────────────────────────────────────────────────
+
+export function useBacklinks(id?: string | null) {
+  return useQuery({
+    queryKey: [BACKLINK_KEY, id],
+    queryFn:  () => notesApi.getBacklinks(id!),
+    enabled:  Boolean(id),
   });
 }

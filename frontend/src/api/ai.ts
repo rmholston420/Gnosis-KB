@@ -1,5 +1,8 @@
 /**
  * api/ai.ts — typed API client for AI/LLM endpoints.
+ *
+ * All result types re-exported so both hooks/useAI.ts and components
+ * can import them from a single canonical location.
  */
 import type { LinkSuggestion, TagSuggestion, AiCritique } from '../types';
 
@@ -14,10 +17,13 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export interface SummarizeResult  { summary:    string }
-export interface CritiqueResult   { critique:   AiCritique }
+export interface SummarizeResult   { summary:     string }
+export interface CritiqueResult    { critique:    AiCritique }
 export interface LinkSuggestResult { suggestions: LinkSuggestion[] }
 export interface TagSuggestResult  { suggestions: TagSuggestion[] }
+
+// Re-export entity types so components don't need a separate import
+export type { LinkSuggestion, TagSuggestion, AiCritique };
 
 export const aiApi = {
   summarizeNote:  (id: string) =>
@@ -57,5 +63,5 @@ export const aiApi = {
 
 export default aiApi;
 
-// ── Standalone named export used by LinkSuggestions.tsx ─────────────────────
+// ── Standalone named exports used by LinkSuggestions.tsx ────────────────────
 export const suggestLinks = aiApi.suggestLinks;

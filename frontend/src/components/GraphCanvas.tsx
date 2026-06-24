@@ -1,5 +1,6 @@
 /**
  * GraphCanvas: Cytoscape.js force-directed knowledge graph.
+ * Uses gnosis-* CSS token classes — NOT legacy bg-bg-primary classes.
  */
 
 import { useEffect, useRef } from 'react';
@@ -21,6 +22,9 @@ const NOTE_TYPE_COLORS: Record<NoteType | 'default', string> = {
   reference:  '#fb923c',
   project:    '#38bdf8',
   template:   '#6b7280',
+  area:       '#84cc16',
+  resource:   '#06b6d4',
+  moc:        '#8b5cf6',
   default:    '#9ca3af',
 };
 
@@ -44,18 +48,18 @@ export default function GraphCanvas({ data, onNodeClick }: GraphCanvasProps) {
     const elements: cytoscape.ElementDefinition[] = [
       ...data.nodes.map((n) => ({
         data: {
-          id:    n.id,
+          id:    n.note_id ?? n.id,
           label: n.title,
-          type:  n.note_type,
-          color: NOTE_TYPE_COLORS[n.note_type ?? 'default'] ?? NOTE_TYPE_COLORS.default,
+          type:  n.note_type ?? n.type,
+          color: NOTE_TYPE_COLORS[(n.note_type ?? n.type ?? 'default') as NoteType | 'default'] ?? NOTE_TYPE_COLORS.default,
           size:  Math.max(20, Math.sqrt((n.incoming_link_count ?? 0) + (n.outgoing_link_count ?? 0) + 1) * 12),
         },
       })),
       ...data.edges.map((e) => ({
         data: {
-          id:     `${e.source}-${e.target}`,
-          source: e.source,
-          target: e.target,
+          id:     `${e.source_id ?? e.source}-${e.target_id ?? e.target}`,
+          source: e.source_id ?? e.source,
+          target: e.target_id ?? e.target,
           label:  e.link_text ?? '',
         },
       })),
@@ -103,16 +107,16 @@ export default function GraphCanvas({ data, onNodeClick }: GraphCanvasProps) {
         },
       ],
       layout: {
-        name:             'fcose',
-        animate:          true,
+        name:              'fcose',
+        animate:           true,
         animationDuration: 600,
-        nodeSep:          80,
-        idealEdgeLength:  120,
-        quality:          'default',
+        nodeSep:           80,
+        idealEdgeLength:   120,
+        quality:           'default',
       } as cytoscape.LayoutOptions,
-      userZoomingEnabled:    true,
-      userPanningEnabled:    true,
-      boxSelectionEnabled:   false,
+      userZoomingEnabled:  true,
+      userPanningEnabled:  true,
+      boxSelectionEnabled: false,
       minZoom: 0.1,
       maxZoom: 5,
     });
@@ -137,7 +141,7 @@ export default function GraphCanvas({ data, onNodeClick }: GraphCanvasProps) {
   return (
     <div
       ref={containerRef}
-      className="h-full w-full bg-bg-primary"
+      className="h-full w-full bg-gnosis-bg"
       style={{ minHeight: '400px' }}
     />
   );

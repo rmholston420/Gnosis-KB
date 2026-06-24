@@ -1,19 +1,22 @@
 /**
  * LinkSuggestions — standalone panel for AI-suggested wikilinks.
  * Used in the inline editor toolbar when user wants on-demand link suggestions.
+ *
+ * The suggestLinks API call returns LinkSuggestResult = { suggestions: LinkSuggestion[] }.
+ * We unwrap .suggestions before filtering/rendering.
  */
 import React, { useState } from 'react';
 import { Link2, Check, X, Loader2, Sparkles } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
 import { suggestLinks } from '../../api/ai';
-import type { LinkSuggestion } from '../../types';
+import type { LinkSuggestion, LinkSuggestResult } from '../../api/ai';
 
 interface LinkSuggestionsProps {
-  noteId:       string;
-  /** Called when the user clicks \"Insert\" on a suggestion. */
-  onInsert:     (suggestion: LinkSuggestion) => void;
+  noteId:    string;
+  /** Called when the user clicks "Insert" on a suggestion. */
+  onInsert:  (suggestion: LinkSuggestion) => void;
   /** Called when the panel is dismissed. */
-  onDismiss:    () => void;
+  onDismiss: () => void;
 }
 
 /**
@@ -23,11 +26,13 @@ interface LinkSuggestionsProps {
 export function LinkSuggestions({ noteId, onInsert, onDismiss }: LinkSuggestionsProps) {
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
 
-  const { mutate, data: suggestions, isPending } = useMutation({
+  const { mutate, data: result, isPending } = useMutation<LinkSuggestResult, Error>({
     mutationFn: () => suggestLinks(noteId),
   });
 
-  const visible = (suggestions ?? []).filter((s) => !dismissed.has(s.target_note_id));
+  // Unwrap from { suggestions: [...] } envelope
+  const allSuggestions: LinkSuggestion[] = result?.suggestions ?? [];
+  const visible = allSuggestions.filter((s) => !dismissed.has(s.target_note_id));
 
   return (
     <div
@@ -46,7 +51,7 @@ export function LinkSuggestions({ noteId, onInsert, onDismiss }: LinkSuggestions
 
       {/* Body */}
       <div className="p-3">
-        {!suggestions && !isPending && (
+        {!result && !isPending && (
           <button
             onClick={() => mutate()}
             className="w-full text-xs text-gnosis-accent hover:underline flex items-center justify-center gap-1 py-2"
@@ -57,11 +62,11 @@ export function LinkSuggestions({ noteId, onInsert, onDismiss }: LinkSuggestions
 
         {isPending && (
           <div className="flex items-center justify-center gap-2 py-4 text-gnosis-muted text-xs">
-            <Loader2 size={13} className="animate-spin" /> Analyzing note\u2026
+            <Loader2 size={13} className="animate-spin" /> Analyzing note…
           </div>
         )}
 
-        {suggestions && visible.length === 0 && (
+        {result && visible.length === 0 && (
           <p className="text-xs text-gnosis-muted text-center py-3">No more suggestions.</p>
         )}
 

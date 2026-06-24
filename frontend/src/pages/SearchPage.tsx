@@ -1,14 +1,21 @@
 /**
- * SearchPage — hybrid + semantic search UI.
+ * SearchPage — hybrid, semantic, keyword, and fulltext search UI.
  */
 import React, { useState } from 'react';
 import { SearchResults } from '../components/search/SearchResults';
 import { SemanticSearch } from '../components/search/SemanticSearch';
 import type { SearchMode } from '../hooks/useSearch';
 
+const MODES: { value: SearchMode; label: string }[] = [
+  { value: 'hybrid',   label: 'Hybrid' },
+  { value: 'semantic', label: 'Semantic' },
+  { value: 'keyword',  label: 'Keyword' },
+  { value: 'fulltext', label: 'Fulltext' },
+];
+
 export default function SearchPage() {
-  const [query, setQuery]   = useState('');
-  const [mode, setMode]     = useState<SearchMode>('hybrid');
+  const [query, setQuery]         = useState('');
+  const [mode, setMode]           = useState<SearchMode>('hybrid');
   const [submitted, setSubmitted] = useState('');
 
   const handleSearch = (e: React.FormEvent) => {
@@ -39,18 +46,18 @@ export default function SearchPage() {
 
       {/* Mode tabs */}
       <div className="flex gap-1 mb-6">
-        {(['hybrid', 'semantic', 'fulltext'] as SearchMode[]).map((m) => (
+        {MODES.map(({ value, label }) => (
           <button
-            key={m}
-            onClick={() => setMode(m)}
+            key={value}
+            onClick={() => setMode(value)}
             className={[
               'px-3 py-1 rounded-md text-xs font-medium transition-colors',
-              mode === m
+              mode === value
                 ? 'bg-gnosis-accent text-white'
                 : 'bg-gnosis-surface text-gnosis-muted border border-gnosis-border hover:bg-gnosis-hover',
             ].join(' ')}
           >
-            {m.charAt(0).toUpperCase() + m.slice(1)}
+            {label}
           </button>
         ))}
       </div>

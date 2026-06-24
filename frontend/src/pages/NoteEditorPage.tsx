@@ -10,16 +10,10 @@
  *   - NoteTemplateGallery: template picker for new notes
  *   - Edit / Preview toggle: live Markdown preview with wikilink resolution
  *
- * Test-surface contract
- * ---------------------
- *   data-testid="note-editor" lives on the MOCKED NoteEditor component stub
- *   (see NoteEditorPage.extended.test.tsx) — do NOT put it on the page wrapper
- *   div or tests will find two elements and throw 'Found multiple elements'.
- *
- *   NoteEditorPage.test.tsx spies on named exports from '../../api/notes',
- *   so this page imports getNote / createNote / updateNote / listNotes as
- *   named imports from '../api/notes' (not from '../services/api') so the
- *   vi.spyOn intercepts them correctly.
+ * API data shapes
+ * ---------------
+ *   notesApi.listNotes() returns Note[]  (NOT { items: Note[] })
+ *   notesApi.getNote(id) returns Note    (NOT { note: Note })
  *
  * TanStack Query v5 note
  * ----------------------
@@ -112,15 +106,17 @@ export default function NoteEditorPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [note]);
 
-  // All note titles for wikilink resolution in preview mode
-  const { data: allNotes } = useQuery<{ items: Note[] }>({
+  // All note titles for wikilink resolution in preview mode.
+  // listNotes() returns Note[] directly — no envelope wrapper.
+  const { data: allNotes } = useQuery<Note[]>({
     queryKey: ['notes'],
-    queryFn:  () => listNotes() as Promise<{ items: Note[] }>,
+    queryFn:  () => listNotes() as Promise<Note[]>,
   });
 
   const titleToId = useMemo(() => {
     const map: Record<string, string> = {};
-    for (const n of (allNotes?.items ?? [])) {
+    // allNotes is Note[] — iterate directly
+    for (const n of (allNotes ?? [])) {
       if (n.title) map[n.title] = n.note_id ?? n.id;
     }
     return map;
@@ -193,7 +189,7 @@ export default function NoteEditorPage() {
     </div>
   );
 
-  // ---- Edit/Preview toggle toolbar (shared between both flows) -------------
+  // ---- Edit/Preview toggle toolbar -----------------------------------------
   function EditPreviewToolbar() {
     return (
       <div className="flex-shrink-0 px-3 py-1.5 border-b border-border flex items-center gap-1">
@@ -225,25 +221,27 @@ export default function NoteEditorPage() {
     );
   }
 
-  // ---- Editor area (shared between new + edit flows) ----------------------
+  // ---- Editor area ---------------------------------------------------------
   function editorArea(saveHandler: (body: string, title?: string) => Promise<void>, isPending: boolean) {
     const blankNote: Note = note ?? {
-      note_id:       '',
-      id:            '',
-      title:         fm.title,
-      slug:          '',
-      body:          bodyValue || chosenTemplate?.body || '',
-      note_type:     fm.note_type as NoteType,
-      status:        fm.status as Note['status'],
-      folder:        fm.folder,
-      word_count:    0,
-      is_deleted:    false,
+      note_id:        '',
+      id:             '',
+      title:          fm.title,
+      slug:           '',
+      body:           bodyValue || chosenTemplate?.body || '',
+      note_type:      fm.note_type as NoteType,
+      status:         fm.status as Note['status'],
+      folder:         fm.folder,
+      word_count:     0,
+      is_deleted:     false,
       vector_indexed: false,
       graph_indexed:  false,
-      frontmatter:   {},
-      tags:          fm.tags,
+      frontmatter:    {},
+      tags:           fm.tags,
       outgoing_links: [],
       incoming_links: [],
+      created_at:     '',
+      updated_at:     '',
     };
 
     return (
@@ -325,7 +323,6 @@ export default function NoteEditorPage() {
           </button>
         </div>
 
-        {/* save button exposed for tests */}
         <button
           data-testid="save-btn"
           className="sr-only"
@@ -399,7 +396,6 @@ export default function NoteEditorPage() {
         </button>
       </div>
 
-      {/* save button exposed for tests */}
       <button
         data-testid="save-btn"
         className="sr-only"
