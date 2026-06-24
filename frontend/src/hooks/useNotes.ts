@@ -3,6 +3,10 @@
  *
  * notesApi.listNotes() returns Note[] directly (no envelope).
  * notesApi.getNote()   returns Note directly.
+ *
+ * useUpdateNote: accepts an optional noteId arg for backwards-compat.
+ * When called without an arg, the mutation payload must include { id, payload }.
+ * When called with a string arg, the mutation payload is NoteUpdate directly.
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { notesApi } from '../api/notes';
@@ -48,12 +52,31 @@ export function useCreateNote() {
 
 // ── Update ────────────────────────────────────────────────────────────────────
 
-export function useUpdateNote(id: string) {
+/**
+ * useUpdateNote — two calling conventions:
+ *
+ * 1. useUpdateNote(id)  → mutateAsync(NoteUpdate)
+ *    Legacy: hook is bound to a fixed note id.
+ *
+ * 2. useUpdateNote()    → mutateAsync({ id: string; payload: NoteUpdate })
+ *    Modern: note id is supplied in the mutation payload.
+ */
+export function useUpdateNote(id?: string) {
   const qc = useQueryClient();
-  return useMutation<Note, Error, NoteUpdate>({
-    mutationFn: (data) => notesApi.updateNote(id, data),
-    onSuccess:  () => {
-      qc.invalidateQueries({ queryKey: [NOTE_KEY, id] });
+
+  return useMutation<Note, Error, NoteUpdate | { id: string; payload: NoteUpdate }>({
+    mutationFn: (data) => {
+      if (id !== undefined) {
+        // Convention 1: bound id, data is NoteUpdate
+        return notesApi.updateNote(id, data as NoteUpdate);
+      }
+      // Convention 2: id inside payload object
+      const { id: noteId, payload } = data as { id: string; payload: NoteUpdate };
+      return notesApi.updateNote(noteId, payload);
+    },
+    onSuccess: (_note, data) => {
+      const resolvedId = id ?? (data as { id: string }).id;
+      qc.invalidateQueries({ queryKey: [NOTE_KEY, resolvedId] });
       qc.invalidateQueries({ queryKey: [NOTES_KEY] });
     },
   });
