@@ -36,7 +36,7 @@ const titlesById = new Map([
 ]);
 
 function link(sourceId: string, targetId: string): LinkRef {
-  return { source_id: sourceId, target_id: targetId, context: '' };
+  return { source_id: sourceId, target_id: targetId, context: '', link_text: '', link_type: 'wikilink' };
 }
 
 function renderPanel(props: {
@@ -57,7 +57,7 @@ function renderPanel(props: {
   );
 }
 
-afterEach(() => vi.clearAllMocks());
+afterEach(() => { vi.clearAllMocks(); });
 
 describe('BacklinkPanel', () => {
   it('panel starts open — incoming links visible immediately', () => {

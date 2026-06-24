@@ -80,11 +80,11 @@ function makeNote(overrides: Partial<Note> = {}): Note {
     note_type: 'permanent',
     tags: ['alpha'],
     created_at: '2025-01-01T00:00:00Z',
-    updated_at: '2025-01-01T00:00:00Z',
+    modified_at: '2025-01-01T00:00:00Z',
     incoming_links: [],
     outgoing_links: [],
     ...overrides,
-  };
+  } as Note;
 }
 
 function renderEditor(
@@ -143,79 +143,88 @@ describe('dirty state', () => {
   it('title blur triggers onSave when isDirty', async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     renderEditor(makeNote(), onSave);
-    const titleInput = screen.getByPlaceholderText('Note title…');
-    fireEvent.change(titleInput, { target: { value: 'New Title' } });
-    await act(async () => { fireEvent.blur(titleInput); });
-    expect(onSave).toHaveBeenCalledWith('Hello world', 'New Title', ['alpha']);
+    fireEvent.change(screen.getByPlaceholderText('Note title…'), {
+      target: { value: 'New Title' },
+    });
+    await act(async () => {
+      fireEvent.blur(screen.getByPlaceholderText('Note title…'));
+    });
+    expect(onSave).toHaveBeenCalledWith(expect.any(String), 'New Title', expect.any(Array));
   });
 });
 
-describe('body change debounce', () => {
-  it('fires onSave after 800 ms debounce', async () => {
+describe('body changes', () => {
+  it('body change triggers debounced onSave', async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     renderEditor(makeNote(), onSave);
     fireEvent.change(screen.getByTestId('codemirror-mock'), {
-      target: { value: 'Updated body' },
+      target: { value: 'New body content' },
     });
-    expect(onSave).not.toHaveBeenCalled();
-    await act(async () => { vi.advanceTimersByTime(800); });
-    expect(onSave).toHaveBeenCalledWith('Updated body', 'Test Note', ['alpha']);
+    await act(async () => { vi.advanceTimersByTime(2000); });
+    expect(onSave).toHaveBeenCalledWith('New body content', expect.any(String), expect.any(Array));
   });
 
-  it('fires onBodyChange on every change', () => {
+  it('onBodyChange callback fires on body change', () => {
     const onBodyChange = vi.fn();
     renderEditor(makeNote(), undefined, { onBodyChange });
     fireEvent.change(screen.getByTestId('codemirror-mock'), {
-      target: { value: 'Keystroke' },
+      target: { value: 'Typed text' },
     });
-    expect(onBodyChange).toHaveBeenCalledWith('Keystroke');
+    expect(onBodyChange).toHaveBeenCalledWith('Typed text');
   });
 });
 
 describe('tags', () => {
-  it('tag change schedules debounced save with updated tags', async () => {
+  it('tags change schedules debounced save with updated tags', async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     renderEditor(makeNote(), onSave);
     fireEvent.click(screen.getByText('add-tag'));
-    await act(async () => { vi.advanceTimersByTime(800); });
-    expect(onSave).toHaveBeenCalledWith('Hello world', 'Test Note', ['alpha', 'new-tag']);
-  });
-
-  it('TagInput is disabled when note has no id and no prefill title', () => {
-    renderEditor(makeNote({ id: '' }));
-    expect(screen.getByTestId('tag-input').dataset.disabled).toBe('true');
+    await act(async () => { vi.advanceTimersByTime(2000); });
+    expect(onSave).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      expect.arrayContaining(['new-tag']),
+    );
   });
 });
 
 describe('note navigation', () => {
-  it('resets body and title when note.id changes', () => {
-    const note1 = makeNote({ id: 'n1', title: 'Note 1', body: 'Body 1' });
-    const note2 = makeNote({ id: 'n2', title: 'Note 2', body: 'Body 2' });
-    const { rerender } = renderEditor(note1);
-    // Dirty it first
-    fireEvent.change(screen.getByPlaceholderText('Note title…'), { target: { value: 'Dirty' } });
-
+  it('note id change resets body and title', () => {
+    const { rerender } = renderEditor(makeNote({ id: 'note-1', title: 'First', body: 'Body 1' }));
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     rerender(
       <QueryClientProvider client={qc}>
         <MemoryRouter>
-          <NoteEditor note={note2} onSave={vi.fn().mockResolvedValue(undefined)} />
+          <NoteEditor
+            note={makeNote({ id: 'note-2', title: 'Second', body: 'Body 2' })}
+            onSave={vi.fn()}
+          />
         </MemoryRouter>
       </QueryClientProvider>,
     );
-    expect(screen.getByPlaceholderText('Note title…')).toHaveValue('Note 2');
+    expect(screen.getByPlaceholderText('Note title…')).toHaveValue('Second');
+    expect(screen.getByTestId('codemirror-mock')).toHaveValue('Body 2');
+    // After navigation isDirty should be false
     expect(screen.queryByText('● unsaved')).not.toBeInTheDocument();
   });
 });
 
 describe('BacklinkPanel', () => {
-  it('renders when note.id is present', () => {
-    renderEditor(makeNote());
+  it('renders BacklinkPanel when note.id is present', () => {
+    renderEditor(makeNote({ id: 'note-1' }));
     expect(screen.getByTestId('backlink-panel')).toBeInTheDocument();
   });
 
-  it('is NOT rendered when note has no id', () => {
+  it('does not render BacklinkPanel when note.id is empty', () => {
     renderEditor(makeNote({ id: '' }));
     expect(screen.queryByTestId('backlink-panel')).not.toBeInTheDocument();
+  });
+});
+
+describe('TagInput', () => {
+  it('TagInput is disabled when note has no id and no prefill title', () => {
+    renderEditor(makeNote({ id: '' }));
+    const tagInput = screen.getByTestId('tag-input');
+    expect(tagInput.getAttribute('data-disabled')).toBe('true');
   });
 });

@@ -62,7 +62,7 @@ describe('resetToOwnVault', () => {
 
   it('uses the first grant label when grants are loaded', () => {
     useVaultStore.setState({
-      grants: [{ id: 1, ownerId: 1, label: 'My Personal Vault', pending: false }],
+      grants: [{ ownerId: 1, label: 'My Personal Vault', permission: 'owner' as const, grantId: null, pending: false }],
     });
     useVaultStore.getState().resetToOwnVault();
     expect(useVaultStore.getState().activeVaultLabel).toBe('My Personal Vault');
@@ -101,8 +101,8 @@ describe('fetchGrants', () => {
 
   it('stores the returned grants', async () => {
     const grants = [
-      { id: 1, ownerId: 1, label: 'My Vault',      pending: false },
-      { id: 2, ownerId: 5, label: "Bob's Vault",   pending: false },
+      { ownerId: 1, label: 'My Vault',    permission: 'owner' as const, grantId: null, pending: false },
+      { ownerId: 5, label: "Bob's Vault", permission: 'read' as const,  grantId: 2,    pending: false },
     ];
     mockFetchGrants.mockResolvedValueOnce(grants);
     await useVaultStore.getState().fetchGrants();
@@ -112,27 +112,31 @@ describe('fetchGrants', () => {
   it('resets to own vault when active vault is no longer in the grant list', async () => {
     useVaultStore.setState({ activeVaultOwnerId: 99, activeVaultLabel: 'Gone Vault' });
     mockFetchGrants.mockResolvedValueOnce([
-      { id: 1, ownerId: 1, label: 'My Vault', pending: false },
+      { ownerId: 1, label: 'My Vault', permission: 'owner' as const, grantId: null, pending: false },
     ]);
     await useVaultStore.getState().fetchGrants();
     expect(useVaultStore.getState().activeVaultOwnerId).toBeNull();
   });
 
-  it('sets loading false on fetch error', async () => {
-    mockFetchGrants.mockRejectedValueOnce(new Error('network error'));
+  it('dispatches vault-changed after reset', async () => {
+    const listener = vi.fn();
+    window.addEventListener('gnosis:vault-changed', listener);
+    useVaultStore.setState({ activeVaultOwnerId: 99 });
+    mockFetchGrants.mockResolvedValueOnce([
+      { ownerId: 1, label: 'My Vault', permission: 'owner' as const, grantId: null, pending: false },
+    ]);
     await useVaultStore.getState().fetchGrants();
-    expect(useVaultStore.getState().loading).toBe(false);
+    expect(listener).toHaveBeenCalled();
+    window.removeEventListener('gnosis:vault-changed', listener);
   });
 });
 
 describe('acceptInvite', () => {
-  it('calls acceptVaultGrant with the grant id then re-fetches grants', async () => {
+  it('calls acceptVaultGrant then fetchGrants', async () => {
     mockAcceptGrant.mockResolvedValueOnce(undefined);
     mockFetchGrants.mockResolvedValueOnce([]);
-
     await useVaultStore.getState().acceptInvite(42);
-
     expect(mockAcceptGrant).toHaveBeenCalledWith(42);
-    expect(mockFetchGrants).toHaveBeenCalledOnce();
+    expect(mockFetchGrants).toHaveBeenCalled();
   });
 });

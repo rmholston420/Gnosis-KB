@@ -16,6 +16,7 @@ export function makeNote(overrides: Partial<NoteListItem> = {}): NoteListItem {
     title:       `Test Note ${n}`,
     slug:        `test-note-${n}`,
     note_type:   'permanent',
+    status:      'draft' as const,
     tags:        [],
     word_count:  42,
     created_at:  '2025-01-01T00:00:00Z',

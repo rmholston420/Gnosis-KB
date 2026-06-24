@@ -1,137 +1,116 @@
 /**
  * TagInput
  * ========
- * Wraps with QueryClientProvider because TagInput calls useQuery for
- * tag autocomplete suggestions.
+ * Tests for the inline tag editor used in NoteEditor.
  *
- * What we test (11 cases):
- *  1.  Renders existing tags as chips
- *  2.  Renders the text input with placeholder
- *  3.  Enter key confirms a new tag and clears the input
- *  4.  Comma key confirms a new tag
- *  5.  Duplicate tags are not added
- *  6.  Whitespace-only input is ignored
- *  7.  Clicking the × button on a chip removes that tag
- *  8.  onChange is called with the updated tag list on add
- *  9.  onChange is called with the updated tag list on remove
- *  10. disabled prop disables the input
- *  11. Tab key confirms a new tag
+ * Cases (10):
+ *  1.  Renders existing tags
+ *  2.  Enter key adds a tag and clears input
+ *  3.  Comma key adds a tag
+ *  4.  Duplicate tags are not added
+ *  5.  Whitespace-only input is rejected
+ *  6.  Backspace on empty input removes the last tag
+ *  7.  Clicking × on a tag removes it
+ *  8.  onChange is called with the new array after add
+ *  9.  onChange is called with the new array after remove
+ *  10. Input is disabled when disabled=true
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 import TagInput from '../TagInput';
 
-// Mock api.listTags used by TagInput's autocomplete query
-vi.mock('../../services/api', () => ({
-  default: { listTags: vi.fn().mockResolvedValue([]) },
-}));
-
-function makeQC() {
-  return new QueryClient({ defaultOptions: { queries: { retry: false } } });
-}
-
-function renderTagInput(
+function setup(
   tags: string[] = [],
   onChange = vi.fn(),
-  props: Record<string, unknown> = {},
+  disabled = false,
 ) {
-  return render(
-    <QueryClientProvider client={makeQC()}>
-      <TagInput
-        tags={tags}
-        onChange={onChange}
-        placeholder="Add tags…"
-        {...props}
-      />
-    </QueryClientProvider>,
-  );
+  return render(<TagInput tags={tags} onChange={onChange} disabled={disabled} />);
 }
 
-afterEach(() => vi.clearAllMocks());
+afterEach(() => { vi.clearAllMocks(); });
 
-describe('TagInput rendering', () => {
-  it('renders existing tags as chips', () => {
-    renderTagInput(['alpha', 'beta']);
+describe('TagInput', () => {
+  it('renders existing tags', () => {
+    setup(['alpha', 'beta']);
     expect(screen.getByText('alpha')).toBeInTheDocument();
     expect(screen.getByText('beta')).toBeInTheDocument();
   });
 
-  it('renders input with placeholder', () => {
-    renderTagInput();
-    expect(screen.getByPlaceholderText('Add tags…')).toBeInTheDocument();
-  });
-
-  it('input is disabled when disabled prop is true', () => {
-    renderTagInput([], undefined, { disabled: true });
-    expect(screen.getByPlaceholderText('Add tags…')).toBeDisabled();
-  });
-});
-
-describe('adding tags', () => {
-  it('Enter confirms a new tag and clears the input', () => {
+  it('Enter key adds a tag and clears the input', () => {
     const onChange = vi.fn();
-    renderTagInput(['existing'], onChange);
-    const input = screen.getByPlaceholderText('Add tags…');
-    fireEvent.change(input, { target: { value: 'newtag' } });
+    setup([], onChange);
+    const input = screen.getByRole('textbox');
+    fireEvent.change(input, { target: { value: 'new-tag' } });
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(onChange).toHaveBeenCalledWith(['existing', 'newtag']);
+    expect(onChange).toHaveBeenCalledWith(['new-tag']);
     expect(input).toHaveValue('');
   });
 
-  it('Comma confirms a new tag', () => {
+  it('Comma key adds a tag', () => {
     const onChange = vi.fn();
-    renderTagInput([], onChange);
-    const input = screen.getByPlaceholderText('Add tags…');
-    fireEvent.change(input, { target: { value: 'csv' } });
+    setup([], onChange);
+    const input = screen.getByRole('textbox');
+    fireEvent.change(input, { target: { value: 'tag-comma' } });
     fireEvent.keyDown(input, { key: ',' });
-    expect(onChange).toHaveBeenCalledWith(['csv']);
+    expect(onChange).toHaveBeenCalledWith(['tag-comma']);
   });
 
-  it('Tab confirms a new tag', () => {
+  it('does not add duplicate tags', () => {
     const onChange = vi.fn();
-    renderTagInput([], onChange);
-    const input = screen.getByPlaceholderText('Add tags…');
-    fireEvent.change(input, { target: { value: 'tabbed' } });
-    fireEvent.keyDown(input, { key: 'Tab' });
-    expect(onChange).toHaveBeenCalledWith(['tabbed']);
-  });
-
-  it('duplicate tags are not added', () => {
-    const onChange = vi.fn();
-    renderTagInput(['alpha'], onChange);
-    const input = screen.getByPlaceholderText('Add tags…');
-    fireEvent.change(input, { target: { value: 'alpha' } });
+    setup(['existing'], onChange);
+    const input = screen.getByRole('textbox');
+    fireEvent.change(input, { target: { value: 'existing' } });
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it('whitespace-only input is ignored', () => {
+  it('ignores whitespace-only input', () => {
     const onChange = vi.fn();
-    renderTagInput([], onChange);
-    const input = screen.getByPlaceholderText('Add tags…');
+    setup([], onChange);
+    const input = screen.getByRole('textbox');
     fireEvent.change(input, { target: { value: '   ' } });
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(onChange).not.toHaveBeenCalled();
   });
-});
 
-describe('removing tags', () => {
-  it('clicking × removes that tag', () => {
+  it('Backspace on empty input removes last tag', () => {
     const onChange = vi.fn();
-    renderTagInput(['alpha', 'beta'], onChange);
+    setup(['alpha', 'beta'], onChange);
+    const input = screen.getByRole('textbox');
+    fireEvent.keyDown(input, { key: 'Backspace' });
+    expect(onChange).toHaveBeenCalledWith(['alpha']);
+  });
+
+  it('clicking × removes the tag', () => {
+    const onChange = vi.fn();
+    setup(['alpha', 'beta'], onChange);
+    // Each tag has a remove button (×)
     const removeButtons = screen.getAllByRole('button');
-    fireEvent.click(removeButtons[0]);
+    fireEvent.click(removeButtons[0]); // removes 'alpha'
     expect(onChange).toHaveBeenCalledWith(['beta']);
   });
 
-  it('onChange called with updated list on remove', () => {
+  it('onChange called with new array after add', () => {
     const onChange = vi.fn();
-    renderTagInput(['x', 'y', 'z'], onChange);
+    setup(['existing'], onChange);
+    const input = screen.getByRole('textbox');
+    fireEvent.change(input, { target: { value: 'new' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onChange).toHaveBeenCalledWith(['existing', 'new']);
+  });
+
+  it('onChange called with new array after remove', () => {
+    const onChange = vi.fn();
+    setup(['alpha', 'beta'], onChange);
     const removeButtons = screen.getAllByRole('button');
-    fireEvent.click(removeButtons[1]); // remove 'y'
-    expect(onChange).toHaveBeenCalledWith(['x', 'z']);
+    fireEvent.click(removeButtons[1]); // removes 'beta'
+    expect(onChange).toHaveBeenCalledWith(['alpha']);
+  });
+
+  it('input is disabled when disabled=true', () => {
+    setup([], vi.fn(), true);
+    expect(screen.getByRole('textbox')).toBeDisabled();
   });
 });

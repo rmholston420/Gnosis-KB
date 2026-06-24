@@ -33,7 +33,7 @@ import api from '../services/api';
 import NoteEditor from '../components/NoteEditor';
 import { useAppStore } from '../store/useAppStore';
 import { Loader2, ArrowLeft } from 'lucide-react';
-import type { Note, NoteCreate } from '../types';
+import type { Note, NoteCreate, NoteType } from '../types';
 import { WikilinkAutocomplete, useWikilinkDetector } from '../components/editor/WikilinkAutocomplete';
 import { NoteTemplateGallery } from '../components/notes/NoteTemplateGallery';
 import type { NoteTemplate } from '../components/notes/NoteTemplateGallery';
@@ -50,9 +50,6 @@ export default function NoteEditorPage() {
   const [chosenTemplate, setChosenTemplate] = useState<NoteTemplate | null>(null);
 
   // ---- Wikilink autocomplete -----------------------------------------------
-  // anchorRef points to the editor wrapper div; WikilinkAutocomplete positions
-  // itself relative to it.  A better approach is to expose the inner textarea
-  // ref from NoteEditor (future refactor).
   const editorWrapperRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -108,7 +105,7 @@ export default function NoteEditorPage() {
   // ---- New note flow -------------------------------------------------------
   if (!id) {
     const prefillTitle = searchParams.get('title') ?? '';
-    const folder = chosenTemplate?.folder ?? '10-zettelkasten';
+    const folder   = chosenTemplate?.folder ?? '10-zettelkasten';
     const noteType = chosenTemplate?.note_type ?? 'permanent';
     const initialBody = bodyValue || chosenTemplate?.body || '';
 
@@ -118,7 +115,7 @@ export default function NoteEditorPage() {
       slug: '',
       body: initialBody,
       body_html: '',
-      note_type: noteType,
+      note_type: noteType as NoteType,
       status: 'draft',
       folder,
       word_count: 0,
@@ -133,7 +130,6 @@ export default function NoteEditorPage() {
 
     return (
       <>
-        {/* Template Gallery modal — shown until user picks a template */}
         {showTemplateGallery && (
           <NoteTemplateGallery
             onSelect={handleTemplateSelect}
@@ -170,19 +166,17 @@ export default function NoteEditorPage() {
                   title: title || prefillTitle || 'Untitled',
                   body,
                   folder,
-                  note_type: noteType,
+                  note_type: noteType as NoteType,
                 });
               }}
               isLoading={createMutation.isPending}
               onBodyChange={(v) => {
                 setBodyValue(v);
-                // Re-run detector synchronously after state is updated next tick
                 requestAnimationFrame(detectQuery);
               }}
               textareaRef={textareaRef}
             />
 
-            {/* Wikilink autocomplete overlay */}
             {wikilinkQuery !== null && (
               <WikilinkAutocomplete
                 anchorRef={textareaRef as React.RefObject<HTMLTextAreaElement>}

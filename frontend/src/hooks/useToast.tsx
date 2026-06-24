@@ -40,9 +40,9 @@ const _store = {
   toasts: [] as ToastItem[],
   listeners: new Set<Listener>(),
 
-  subscribe(fn: Listener) {
+  subscribe(fn: Listener): () => void {
     this.listeners.add(fn);
-    return () => this.listeners.delete(fn);
+    return () => { this.listeners.delete(fn); };
   },
 
   _emit() {
@@ -50,10 +50,12 @@ const _store = {
   },
 
   add(message: string, variant: ToastVariant, duration = 4000) {
-    const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     this.toasts = [...this.toasts, { id, message, variant, duration }];
     this._emit();
-    setTimeout(() => this.remove(id), duration);
+    if (duration > 0) {
+      setTimeout(() => this.remove(id), duration);
+    }
   },
 
   remove(id: string) {
@@ -62,61 +64,58 @@ const _store = {
   },
 };
 
-/** Imperative API — call anywhere (hooks, service functions, useOfflineSync). */
+// ---------------------------------------------------------------------------
+// Imperative API
+// ---------------------------------------------------------------------------
+
 export const toast = {
-  success: (msg: string, duration?: number) => _store.add(msg, 'success', duration),
-  error:   (msg: string, duration?: number) => _store.add(msg, 'error', duration),
-  info:    (msg: string, duration?: number) => _store.add(msg, 'info', duration),
-  warning: (msg: string, duration?: number) => _store.add(msg, 'warning', duration),
+  success: (message: string, duration?: number) => _store.add(message, 'success', duration),
+  error:   (message: string, duration?: number) => _store.add(message, 'error',   duration),
+  info:    (message: string, duration?: number) => _store.add(message, 'info',    duration),
+  warning: (message: string, duration?: number) => _store.add(message, 'warning', duration),
+  dismiss: (id: string)                         => _store.remove(id),
 };
 
 // ---------------------------------------------------------------------------
-// React component
+// Hook for reactive components
 // ---------------------------------------------------------------------------
 
-const VARIANT_STYLES: Record<ToastVariant, { bg: string; icon: string }> = {
-  success: { bg: 'var(--color-success)',      icon: '✓' },
-  error:   { bg: 'var(--color-error)',         icon: '✕' },
-  info:    { bg: 'var(--color-primary)',        icon: 'ℹ' },
-  warning: { bg: 'var(--color-warning)',        icon: '⚠' },
+export function useToast() {
+  const toastRef = useRef<typeof toast>(toast);
+  return toastRef.current;
+}
+
+// ---------------------------------------------------------------------------
+// Single toast item renderer
+// ---------------------------------------------------------------------------
+
+const VARIANT_STYLES: Record<ToastVariant, React.CSSProperties> = {
+  success: { background: 'var(--color-success-highlight)', color: 'var(--color-success)', border: '1px solid var(--color-success)' },
+  error:   { background: 'var(--color-error-highlight)',   color: 'var(--color-error)',   border: '1px solid var(--color-error)' },
+  info:    { background: 'var(--color-primary-highlight)', color: 'var(--color-primary)', border: '1px solid var(--color-primary)' },
+  warning: { background: 'var(--color-warning-highlight)', color: 'var(--color-warning)', border: '1px solid var(--color-warning)' },
 };
 
-function ToastItemComponent({ item, onDismiss }: { item: ToastItem; onDismiss: (id: string) => void }) {
-  const style = VARIANT_STYLES[item.variant];
+function ToastItem({ item, onDismiss }: { item: ToastItem; onDismiss: (id: string) => void }) {
   return (
     <div
       role="alert"
-      aria-live="assertive"
       style={{
         display: 'flex',
-        alignItems: 'flex-start',
-        gap: 'var(--space-3)',
+        alignItems: 'center',
+        gap: 'var(--space-2)',
         padding: 'var(--space-3) var(--space-4)',
-        background: 'var(--color-surface)',
-        border: '1px solid var(--color-border)',
-        borderLeft: `3px solid ${style.bg}`,
         borderRadius: 'var(--radius-md)',
-        boxShadow: 'var(--shadow-md)',
         fontSize: 'var(--text-sm)',
-        color: 'var(--color-text)',
-        maxWidth: '360px',
-        minWidth: '220px',
-        animation: 'toast-in 220ms cubic-bezier(0.16,1,0.3,1)',
+        fontWeight: 500,
+        pointerEvents: 'auto',
+        minWidth: '240px',
+        maxWidth: '420px',
+        boxShadow: 'var(--shadow-md)',
+        ...VARIANT_STYLES[item.variant],
       }}
     >
-      <span
-        style={{
-          color: style.bg,
-          fontWeight: 700,
-          flexShrink: 0,
-          fontSize: '1rem',
-          lineHeight: 1.4,
-        }}
-        aria-hidden
-      >
-        {style.icon}
-      </span>
-      <span style={{ flex: 1, lineHeight: 1.5 }}>{item.message}</span>
+      <span style={{ flex: 1 }}>{item.message}</span>
       <button
         onClick={() => onDismiss(item.id)}
         aria-label="Dismiss"
@@ -141,7 +140,8 @@ export function ToastContainer() {
   const [toasts, setToasts] = React.useState<ToastItem[]>([..._store.toasts]);
 
   useEffect(() => {
-    return _store.subscribe(setToasts);
+    const unsub = _store.subscribe(setToasts);
+    return () => { unsub(); };
   }, []);
 
   if (toasts.length === 0) return null;
@@ -160,33 +160,23 @@ export function ToastContainer() {
         pointerEvents: 'none',
       }}
     >
-      <style>{`
-        @keyframes toast-in {
-          from { opacity: 0; transform: translateY(8px) scale(0.97); }
-          to   { opacity: 1; transform: translateY(0) scale(1); }
-        }
-      `}</style>
       {toasts.map((t) => (
-        <div key={t.id} style={{ pointerEvents: 'auto' }}>
-          <ToastItemComponent item={t} onDismiss={(id) => _store.remove(id)} />
-        </div>
+        <ToastItem key={t.id} item={t} onDismiss={_store.remove.bind(_store)} />
       ))}
     </div>
   );
 }
 
-/**
- * mountToastContainer()
- * ---------------------
- * Call once at app startup (e.g. in main.tsx) to inject the ToastContainer
- * into a portal outside the React component tree.  Idempotent.
- */
+// ---------------------------------------------------------------------------
+// Mount helper — call once at app root if not using ToastContainer directly
+// ---------------------------------------------------------------------------
+
+let _mounted = false;
 export function mountToastContainer() {
-  if (document.getElementById('gnosis-toast-root')) return;
+  if (_mounted) return;
+  _mounted = true;
   const el = document.createElement('div');
   el.id = 'gnosis-toast-root';
   document.body.appendChild(el);
-  createRoot(el).render(React.createElement(ToastContainer));
+  createRoot(el).render(<ToastContainer />);
 }
-
-export default toast;

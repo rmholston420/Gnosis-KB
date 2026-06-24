@@ -22,8 +22,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { apiClient } from '@/api/client';
 import {
-  Loader2, ZoomIn, ZoomOut, RotateCcw, BarChart2, Network,
-  BookOpen, Search, RefreshCw, List,
+  Search, RefreshCw, ZoomIn, ZoomOut, Maximize2, Filter, X, ChevronDown, ChevronRight, List,
 } from 'lucide-react';
 import type { ForceGraphMethods } from 'react-force-graph-2d';
 import { LightRagNodePanel } from '../components/graph/LightRagNodePanel';
@@ -35,613 +34,559 @@ import type { GraphEntitySummary } from '../services/api';
 // Types
 // ---------------------------------------------------------------------------
 
-const NODE_COLORS: Record<string, string> = {
-  permanent:  '#3b82f6',
-  fleeting:   '#94a3b8',
-  project:    '#f59e0b',
-  area:       '#10b981',
-  resource:   '#8b5cf6',
-  journal:    '#ec4899',
-  moc:        '#ef4444',
-  literature: '#06b6d4',
-};
-
-const CLUSTER_COLORS = [
-  '#4f98a3', '#8b5cf6', '#f59e0b', '#10b981', '#ec4899',
-  '#3b82f6', '#ef4444', '#06b6d4', '#a78bfa', '#34d399',
-];
-
-function clusterColor(cluster?: number) {
-  if (cluster === undefined || cluster === null) return CLUSTER_COLORS[0];
-  return CLUSTER_COLORS[cluster % CLUSTER_COLORS.length];
-}
-
-interface GraphNode {
+interface WikilinkNode {
   id: string;
-  title?: string;
-  label?: string;
-  note_type?: string;
-  incoming_link_count?: number;
+  title: string;
+  note_type: string;
+  status: string;
+  folder: string;
+  word_count: number;
+  tag_count: number;
+  incoming_link_count: number;
+  outgoing_link_count: number;
+  val?: number;
+  color?: string;
+  x?: number;
+  y?: number;
 }
-interface GraphEdge   { source: string; target: string; }
-interface GraphData   { nodes: GraphNode[]; edges?: GraphEdge[]; links?: GraphEdge[]; }
-interface GraphStats  {
-  node_count: number; edge_count: number;
-  density: number; avg_degree: number; orphan_count: number;
+
+interface WikilinkLink {
+  source: string | WikilinkNode;
+  target: string | WikilinkNode;
+  link_text?: string;
 }
 
 interface LightRagNode {
   id: string;
   label: string;
-  description?: string;
   cluster?: number;
-  source_note_ids?: string[];
-  x?: number; y?: number; vx?: number; vy?: number;
+  x?: number;
+  y?: number;
+  vx?: number;
+  vy?: number;
+  fx?: number;
+  fy?: number;
 }
+
 interface LightRagLink {
   source: string | LightRagNode;
   target: string | LightRagNode;
-  label?: string;
-  weight?: number;
 }
-interface LightRagGraphData {
+
+interface LightRagGraph {
   nodes: LightRagNode[];
   links: LightRagLink[];
-  error?: string;
 }
 
 const ForceGraph2D = React.lazy(() => import('react-force-graph-2d'));
 
-type Tab = 'wikilinks' | 'lightrag';
+// ---------------------------------------------------------------------------
+// Colour helpers
+// ---------------------------------------------------------------------------
+
+const NOTE_TYPE_COLOURS: Record<string, string> = {
+  permanent:  '#4f98a3',
+  fleeting:   '#bb653b',
+  literature: '#6daa45',
+  journal:    '#a86fdf',
+  map:        '#e8af34',
+  reference:  '#5591c7',
+  project:    '#dd6974',
+  template:   '#797876',
+};
+
+const CLUSTER_COLOURS = [
+  '#4f98a3','#bb653b','#6daa45','#a86fdf','#e8af34',
+  '#5591c7','#dd6974','#797876','#fdab43','#d163a7',
+];
+
+function clusterColour(cluster?: number) {
+  if (cluster === undefined) return '#797876';
+  return CLUSTER_COLOURS[cluster % CLUSTER_COLOURS.length];
+}
 
 // ---------------------------------------------------------------------------
-// Main component
+// Component
 // ---------------------------------------------------------------------------
 
 export default function GraphPage() {
-  const navigate = useNavigate();
+  const navigate    = useNavigate();
   const queryClient = useQueryClient();
-  const fgRef = useRef<ForceGraphMethods | undefined>(undefined);
-  const [highlighted,    setHighlighted]    = useState<string | null>(null);
-  const [showStats,      setShowStats]      = useState(false);
-  const [activeTab,      setActiveTab]      = useState<Tab>('wikilinks');
-  const [selectedEntity, setSelectedEntity] = useState<LightRagEntity | null>(null);
+  const [tab, setTab]           = useState<'wikilinks' | 'lightrag'>('wikilinks');
+  const [search, setSearch]     = useState('');
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [typeFilter, setTypeFilter] = useState<string[]>([]);
+  const [selectedNode, setSelectedNode] = useState<WikilinkNode | null>(null);
 
-  // Entities sidebar state
-  const [showEntities,   setShowEntities]   = useState(true);
-  const [entitySearch,   setEntitySearch]   = useState('');
+  // LightRAG tab state
+  const [lrSearch, setLrSearch]         = useState('');
+  const [lrNodes, setLrNodes]           = useState<LightRagNode[]>([]);
+  const [lrLinks, setLrLinks]           = useState<LightRagLink[]>([]);
+  const [lrSelectedEntity, setLrSelectedEntity] = useState<LightRagEntity | null>(null);
+  const [lrSelectedRelations, setLrSelectedRelations] = useState<LightRagRelation[]>([]);
+  const [entitiesPanelOpen, setEntitiesPanelOpen] = useState(true);
+  const [entitySearch, setEntitySearch] = useState('');
 
-  // D3 canvas
+  const fgRef    = useRef<ForceGraphMethods | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const lrSimRef    = useRef<any>(null);
   const lrCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const lrSimRef    = useRef<ReturnType<typeof import('d3-force')['forceSimulation']> | null>(null);
-  const [tooltip,   setTooltip]   = useState<{ x: number; y: number; label: string } | null>(null);
+  const animFrameRef = useRef<number | null>(null);
 
-  // ── Wikilinks graph data ─────────────────────────────────────────────────
-  const { data: graphData, isLoading } = useQuery<GraphData>({
-    queryKey: ['graph'],
-    queryFn: () => apiClient.get<GraphData>('/api/v1/graph/').then((r) => r.data),
+  // ── Data fetching ─────────────────────────────────────────────────────────
+
+  const { data: graphData, isLoading: graphLoading } = useQuery({
+    queryKey: ['graph-data'],
+    queryFn: () => apiClient.get<{ nodes: WikilinkNode[]; links: WikilinkLink[] }>('/api/v1/graph/data').then(r => r.data),
     staleTime: 60_000,
   });
 
-  const { data: stats } = useQuery<GraphStats>({
-    queryKey: ['graph-stats'],
-    queryFn: () => apiClient.get<GraphStats>('/api/v1/graph/stats').then((r) => r.data),
-    enabled: showStats,
-  });
-
-  // ── LightRAG full graph (D3 canvas) ──────────────────────────────────────
-  const { data: lrData, isLoading: lrLoading } = useQuery<LightRagGraphData>({
+  const { data: lrData, isLoading: lrLoading } = useQuery({
     queryKey: ['lightrag-graph'],
-    queryFn: () => api.getLightRagGraph() as Promise<LightRagGraphData>,
-    enabled: activeTab === 'lightrag',
-    staleTime: 5 * 60_000,
-  });
-
-  // ── LightRAG entity list (sidebar) ───────────────────────────────────────
-  const { data: entitiesData, isLoading: entitiesLoading } = useQuery<{
-    entities: GraphEntitySummary[];
-    total: number;
-    error?: string;
-  }>({
-    queryKey: ['graph-entities'],
-    queryFn: () => api.getGraphEntities(200) as Promise<{ entities: GraphEntitySummary[]; total: number; error?: string }>,
-    enabled: activeTab === 'lightrag',
-    staleTime: 5 * 60_000,
-  });
-
-  const allEntities = entitiesData?.entities ?? [];
-
-  // Filtered entity list for sidebar search
-  const filteredEntities = entitySearch.trim()
-    ? allEntities.filter((e) =>
-        e.label.toLowerCase().includes(entitySearch.toLowerCase()) ||
-        (e.description ?? '').toLowerCase().includes(entitySearch.toLowerCase())
-      )
-    : allEntities;
-
-  // ── Notes list for source-note resolution in panel ───────────────────────
-  const { data: notesData } = useQuery({
-    queryKey: ['notes'],
-    queryFn: () => api.listNotes({ page_size: 200 }) as Promise<{ items: Array<{ id: string; title: string; folder?: string }> }>,
+    queryFn: () => apiClient.get<LightRagGraph>('/api/v1/graph/lightrag').then(r => r.data),
     staleTime: 60_000,
+    enabled: tab === 'lightrag',
   });
-  const allNotes = notesData?.items ?? [];
 
-  // ── Vault sync mutation (for empty-state button) ──────────────────────────
+  const { data: entitiesData } = useQuery({
+    queryKey: ['graph-entities'],
+    queryFn:  () => api.listGraphEntities(),
+    staleTime: 60_000,
+    enabled: tab === 'lightrag',
+  });
+
   const syncMutation = useMutation({
-    mutationFn: () => api.triggerVaultSync(),
-    onSuccess: () => {
-      // Invalidate graph queries so they refetch after sync
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ['lightrag-graph'] });
-        queryClient.invalidateQueries({ queryKey: ['graph-entities'] });
-      }, 3000);
+    mutationFn: () => apiClient.post('/api/v1/graph/sync').then(r => r.data),
+    onSuccess:  () => {
+      queryClient.invalidateQueries({ queryKey: ['graph-data'] });
+      queryClient.invalidateQueries({ queryKey: ['lightrag-graph'] });
+      queryClient.invalidateQueries({ queryKey: ['graph-entities'] });
     },
   });
 
-  // ── D3 LightRAG canvas render ─────────────────────────────────────────────
+  // ── D3 canvas simulation for LightRAG ─────────────────────────────────────
+
   useEffect(() => {
-    if (activeTab !== 'lightrag' || !lrData || !lrCanvasRef.current) return;
-    if (lrData.nodes.length === 0) return;
+    if (tab !== 'lightrag' || !lrData || !lrCanvasRef.current) return;
 
     import('d3-force').then((d3) => {
-      const canvas = lrCanvasRef.current!;
-      const ctx    = canvas.getContext('2d')!;
-      const W = canvas.width;
-      const H = canvas.height;
+      if (!lrCanvasRef.current) return;
+      const canvas  = lrCanvasRef.current;
+      const ctx     = canvas.getContext('2d');
+      if (!ctx) return;
 
       const nodes: LightRagNode[] = lrData.nodes.map((n) => ({ ...n }));
       const links: LightRagLink[] = lrData.links.map((l) => ({ ...l }));
 
       lrSimRef.current?.stop();
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
 
       const sim = d3.forceSimulation<LightRagNode>(nodes)
         .force('link', d3.forceLink<LightRagNode, LightRagLink>(links).id((d) => d.id).distance(80))
         .force('charge', d3.forceManyBody().strength(-120))
-        .force('center', d3.forceCenter(W / 2, H / 2))
-        .force('collide', d3.forceCollide(18))
-        .alpha(0.8).alphaDecay(0.03);
+        .force('center', d3.forceCenter(canvas.width / 2, canvas.height / 2))
+        .force('collision', d3.forceCollide(18));
 
       lrSimRef.current = sim;
+      setLrNodes(nodes);
+      setLrLinks(links);
 
       function draw() {
-        ctx.clearRect(0, 0, W, H);
-        ctx.save();
-        ctx.strokeStyle = 'rgba(100,120,130,0.35)';
+        if (!ctx || !canvas) return;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Draw links
+        ctx.strokeStyle = 'oklch(0.5 0 0 / 0.3)';
         ctx.lineWidth = 1;
         for (const link of links) {
           const s = link.source as LightRagNode;
           const t = link.target as LightRagNode;
-          if (s.x == null || t.x == null) continue;
+          if (s.x == null || s.y == null || t.x == null || t.y == null) continue;
           ctx.beginPath();
-          ctx.moveTo(s.x, s.y!);
-          ctx.lineTo(t.x, t.y!);
+          ctx.moveTo(s.x, s.y);
+          ctx.lineTo(t.x, t.y);
           ctx.stroke();
         }
-        ctx.restore();
+
+        // Draw nodes
         for (const node of nodes) {
-          if (node.x == null) continue;
+          if (node.x == null || node.y == null) continue;
           ctx.beginPath();
-          ctx.arc(node.x, node.y!, 7, 0, Math.PI * 2);
-          ctx.fillStyle = clusterColor(node.cluster);
+          ctx.arc(node.x, node.y, 6, 0, 2 * Math.PI);
+          ctx.fillStyle = clusterColour(node.cluster);
           ctx.fill();
-          if (selectedEntity?.id === node.id) {
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 2;
-            ctx.stroke();
-          }
         }
       }
 
-      sim.on('tick', draw);
+      sim.on('tick', () => {
+        animFrameRef.current = requestAnimationFrame(draw);
+      });
 
-      function handleClick(e: MouseEvent) {
-        const rect = canvas.getBoundingClientRect();
-        const mx = e.clientX - rect.left;
-        const my = e.clientY - rect.top;
-        for (const node of nodes) {
-          if (node.x == null) continue;
-          const dx = mx - node.x;
-          const dy = my - node.y!;
-          if (Math.sqrt(dx * dx + dy * dy) < 10) {
-            setSelectedEntity({
-              id: node.id, label: node.label,
-              description: node.description,
-              cluster: node.cluster,
-              source_note_ids: node.source_note_ids,
-            });
-            return;
-          }
-        }
-        setSelectedEntity(null);
-      }
-
-      function handleMouseMove(e: MouseEvent) {
-        const rect = canvas.getBoundingClientRect();
-        const mx = e.clientX - rect.left;
-        const my = e.clientY - rect.top;
-        for (const node of nodes) {
-          if (node.x == null) continue;
-          const dx = mx - node.x;
-          const dy = my - node.y!;
-          if (Math.sqrt(dx * dx + dy * dy) < 10) {
-            setTooltip({ x: e.clientX, y: e.clientY, label: node.label });
-            return;
-          }
-        }
-        setTooltip(null);
-      }
-
-      canvas.addEventListener('click', handleClick);
-      canvas.addEventListener('mousemove', handleMouseMove);
-      return () => {
-        sim.stop();
-        canvas.removeEventListener('click', handleClick);
-        canvas.removeEventListener('mousemove', handleMouseMove);
-      };
+      sim.on('end', draw);
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, lrData]);
 
-  // ── Wikilinks handlers ───────────────────────────────────────────────────
-  const handleNodeClick  = useCallback((node: GraphNode) => navigate(`/notes/${node.id}`), [navigate]);
-  const handleNodeHover  = useCallback((node: GraphNode | null) => setHighlighted(node?.id ?? null), []);
+    return () => {
+      lrSimRef.current?.stop();
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+    };
+  }, [tab, lrData]);
 
-  if (isLoading && activeTab === 'wikilinks') {
-    return (
-      <div className="flex h-screen items-center justify-center">
-        <Loader2 className="animate-spin text-blue-500" size={40} />
-      </div>
-    );
-  }
+  // ── Wikilink graph helpers ─────────────────────────────────────────────────
 
-  const fgData = {
-    nodes: (graphData?.nodes ?? []).map((n) => ({ ...n })),
-    links: ((graphData?.edges ?? graphData?.links) ?? []).map((e) => ({ source: e.source, target: e.target })),
-  };
+  const filteredNodes = (graphData?.nodes ?? []).filter((n) => {
+    const matchSearch = !search || n.title.toLowerCase().includes(search.toLowerCase());
+    const matchType   = typeFilter.length === 0 || typeFilter.includes(n.note_type);
+    return matchSearch && matchType;
+  });
 
-  // ── Derived booleans for LightRAG tab rendering ──────────────────────────
-  const lrHasNodes  = (lrData?.nodes.length ?? 0) > 0;
-  const lrHasError  = !lrLoading && !!lrData?.error;
-  const lrEmpty     = !lrLoading && !lrData?.error && !lrHasNodes;
+  const filteredNodeIds = new Set(filteredNodes.map((n) => n.id));
+  const filteredLinks   = (graphData?.links ?? []).filter((l) => {
+    const src = typeof l.source === 'string' ? l.source : (l.source as WikilinkNode).id;
+    const tgt = typeof l.target === 'string' ? l.target : (l.target as WikilinkNode).id;
+    return filteredNodeIds.has(src) && filteredNodeIds.has(tgt);
+  });
+
+  const graphDataFiltered = { nodes: filteredNodes, links: filteredLinks };
+
+  const handleNodeClick = useCallback((node: WikilinkNode) => {
+    setSelectedNode(node);
+  }, []);
+
+  const handleZoomIn  = () => fgRef.current?.zoom(1.5, 300);
+  const handleZoomOut = () => fgRef.current?.zoom(0.75, 300);
+  const handleFit     = () => fgRef.current?.zoomToFit(400, 40);
+
+  // LightRAG entity click → fetch full entity + relations
+  const handleLrNodeClick = useCallback(async (nodeId: string) => {
+    try {
+      const [entityRes, relationsRes] = await Promise.all([
+        apiClient.get<LightRagEntity>(`/api/v1/graph/entities/${encodeURIComponent(nodeId)}`),
+        apiClient.get<{ relations: LightRagRelation[] }>(`/api/v1/graph/entities/${encodeURIComponent(nodeId)}/relations`),
+      ]);
+      setLrSelectedEntity(entityRes.data);
+      setLrSelectedRelations(relationsRes.data.relations ?? []);
+    } catch {
+      // ignore — node panel stays closed
+    }
+  }, []);
+
+  const handleCanvasClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!lrCanvasRef.current) return;
+    const rect = lrCanvasRef.current.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const HIT_R = 10;
+    for (const node of lrNodes) {
+      if (node.x == null || node.y == null) continue;
+      const dx = node.x - mx;
+      const dy = node.y - my;
+      if (dx * dx + dy * dy < HIT_R * HIT_R) {
+        void handleLrNodeClick(node.id);
+        break;
+      }
+    }
+  }, [lrNodes, handleLrNodeClick]);
+
+  // ── Sidebar entity list (LightRAG tab) ────────────────────────────────────
+
+  const allEntities: GraphEntitySummary[] = entitiesData ?? [];
+  const filteredEntities = allEntities.filter(
+    (e) => !entitySearch || e.entity_id.toLowerCase().includes(entitySearch.toLowerCase())
+  );
+
+  // ── Stats ─────────────────────────────────────────────────────────────────
+
+  const nodeCount = graphData?.nodes.length ?? 0;
+  const linkCount = graphData?.links.length ?? 0;
+  const orphanCount = graphData?.nodes.filter(
+    (n) => n.incoming_link_count === 0 && n.outgoing_link_count === 0
+  ).length ?? 0;
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  const NOTE_TYPES = ['permanent','fleeting','literature','journal','map','reference','project','template'];
 
   return (
-    <div className="relative h-screen w-full" style={{ background: '#030712' }}>
+    <div className="flex h-full flex-col bg-bg-primary text-text-primary">
 
-      {/* Tab bar */}
-      <div className="absolute top-0 left-0 right-0 z-20 flex gap-0 border-b border-white/10" style={{ background: 'rgba(3,7,18,0.9)' }}>
-        <button
-          className={`flex items-center gap-2 px-5 py-3 text-sm font-medium transition-colors ${
-            activeTab === 'wikilinks' ? 'text-white border-b-2 border-blue-400' : 'text-gray-400 hover:text-white'
-          }`}
-          onClick={() => setActiveTab('wikilinks')}
-        >
-          <Network size={14} /> Wikilinks
-        </button>
-        <button
-          className={`flex items-center gap-2 px-5 py-3 text-sm font-medium transition-colors ${
-            activeTab === 'lightrag' ? 'text-white border-b-2 border-purple-400' : 'text-gray-400 hover:text-white'
-          }`}
-          onClick={() => setActiveTab('lightrag')}
-        >
-          <BookOpen size={14} /> LightRAG Knowledge
-        </button>
-
-        {/* Entity panel toggle — only shown on lightrag tab */}
-        {activeTab === 'lightrag' && lrHasNodes && (
-          <button
-            className={`ml-auto flex items-center gap-2 px-4 py-3 text-xs transition-colors ${
-              showEntities ? 'text-purple-400' : 'text-gray-500 hover:text-gray-300'
-            }`}
-            onClick={() => setShowEntities((v) => !v)}
-            title={showEntities ? 'Hide entity list' : 'Show entity list'}
-          >
-            <List size={13} />
-            {entitiesLoading ? '…' : `${allEntities.length} entities`}
-          </button>
-        )}
-      </div>
-
-      {/* ── WIKILINKS TAB ──────────────────────────────────────────────── */}
-      {activeTab === 'wikilinks' && (
-        <>
-          <div className="absolute left-4 z-10 flex gap-2" style={{ top: '56px' }}>
-            <button className="rounded bg-gray-800 p-2 text-white hover:bg-gray-700" title="Zoom in"
-              onClick={() => fgRef.current?.zoom(1.5, 400)}><ZoomIn size={16} /></button>
-            <button className="rounded bg-gray-800 p-2 text-white hover:bg-gray-700" title="Zoom out"
-              onClick={() => fgRef.current?.zoom(0.67, 400)}><ZoomOut size={16} /></button>
-            <button className="rounded bg-gray-800 p-2 text-white hover:bg-gray-700" title="Reset zoom"
-              onClick={() => fgRef.current?.zoomToFit(400)}><RotateCcw size={16} /></button>
-            <button
-              className={`rounded p-2 text-white hover:bg-gray-700 ${ showStats ? 'bg-blue-700' : 'bg-gray-800' }`}
-              title="Stats panel" onClick={() => setShowStats((s) => !s)}>
-              <BarChart2 size={16} />
-            </button>
+      {/* ── Header ──────────────────────────────────────────────────────── */}
+      <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-2 flex-shrink-0">
+        <div className="flex items-center gap-2">
+          <h1 className="text-sm font-semibold">Knowledge Graph</h1>
+          <div className="flex rounded border border-border overflow-hidden">
+            {(['wikilinks','lightrag'] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                className={`px-3 py-1 text-xs font-medium transition-colors ${
+                  tab === t
+                    ? 'bg-accent-teal/20 text-accent-teal'
+                    : 'text-text-muted hover:text-text-primary hover:bg-bg-tertiary'
+                }`}
+              >
+                {t === 'wikilinks' ? 'Wikilinks' : 'LightRAG'}
+              </button>
+            ))}
           </div>
+        </div>
 
-          {showStats && stats && (
-            <div className="absolute right-4 z-10 rounded-lg bg-gray-900/90 p-4 text-sm text-white shadow-xl" style={{ top: '56px' }}>
-              <h3 className="mb-2 font-semibold">Graph Stats</h3>
-              <dl className="space-y-1">
-                {([
-                  ['Nodes',      stats.node_count],
-                  ['Edges',      stats.edge_count],
-                  ['Density',    stats.density?.toFixed(4) ?? '—'],
-                  ['Avg degree', stats.avg_degree?.toFixed(2) ?? '—'],
-                  ['Orphans',    stats.orphan_count],
-                ] as [string, string | number][]).map(([k, v]) => (
-                  <div key={k} className="flex justify-between gap-6">
-                    <dt className="text-gray-400">{k}</dt>
-                    <dd className="font-mono">{v}</dd>
-                  </div>
-                ))}
-              </dl>
+        <div className="flex items-center gap-2">
+          {/* Stats */}
+          {tab === 'wikilinks' && (
+            <div className="flex items-center gap-3 text-xs text-text-muted">
+              <span>{nodeCount} notes</span>
+              <span>{linkCount} links</span>
+              {orphanCount > 0 && <span className="text-accent-orange">{orphanCount} orphans</span>}
             </div>
           )}
 
-          <div className="absolute bottom-4 left-4 z-10 rounded-lg bg-gray-900/80 p-3 text-xs text-white">
-            {Object.entries(NODE_COLORS).map(([type, color]) => (
-              <div key={type} className="flex items-center gap-2">
-                <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: color }} />
-                {type}
-              </div>
-            ))}
+          {/* Search */}
+          <div className="relative">
+            <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-text-faint" />
+            <input
+              value={tab === 'wikilinks' ? search : lrSearch}
+              onChange={(e) => tab === 'wikilinks' ? setSearch(e.target.value) : setLrSearch(e.target.value)}
+              placeholder="Search nodes…"
+              className="w-44 rounded border border-border bg-bg-secondary pl-7 pr-2 py-1 text-xs text-text-primary placeholder:text-text-faint focus:outline-none focus:border-accent-teal"
+            />
           </div>
 
-          <div style={{ paddingTop: '48px', height: '100%' }}>
-            <React.Suspense fallback={
-              <div className="flex h-screen items-center justify-center text-white">Loading graph…</div>
-            }>
-              <ForceGraph2D
-                ref={fgRef}
-                graphData={fgData}
-                nodeColor={(node) => {
-                  const n = node as GraphNode;
-                  return highlighted === n.id ? '#ffffff' : (NODE_COLORS[n.note_type ?? ''] ?? '#6b7280');
-                }}
-                nodeVal={(node) => {
-                  const n = node as GraphNode;
-                  return Math.sqrt((n.incoming_link_count ?? 0) + 1) * 3;
-                }}
-                nodeLabel={(node) => (node as GraphNode).title ?? (node as GraphNode).label ?? ''}
-                linkWidth={1}
-                linkDirectionalArrowLength={3}
-                linkDirectionalArrowRelPos={1}
-                onNodeClick={handleNodeClick as (node: object) => void}
-                onNodeHover={handleNodeHover as (node: object | null) => void}
-                enableNodeDrag
-                cooldownTicks={100}
-                backgroundColor="#030712"
-              />
-            </React.Suspense>
-          </div>
-        </>
-      )}
-
-      {/* ── LIGHTRAG TAB ─────────────────────────────────────────────────── */}
-      {activeTab === 'lightrag' && (
-        <div style={{ paddingTop: '48px', height: '100%', position: 'relative', display: 'flex' }}>
-
-          {/* ── Canvas area ────────────────────────────────────────────── */}
-          <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-
-            {lrLoading && (
-              <div className="flex h-full items-center justify-center">
-                <Loader2 className="animate-spin text-purple-400" size={40} />
-                <span className="ml-3 text-gray-400">Loading LightRAG graph…</span>
-              </div>
-            )}
-
-            {/* Error state */}
-            {lrHasError && (
-              <div className="flex h-full flex-col items-center justify-center text-gray-400">
-                <BookOpen size={48} className="mb-4 opacity-30" />
-                <p className="text-lg font-medium">LightRAG graph unavailable</p>
-                <p className="mt-1 text-sm opacity-60">{lrData!.error}</p>
-                <p className="mt-3 text-xs opacity-40">Ingest notes to populate the knowledge graph.</p>
-              </div>
-            )}
-
-            {/* Empty state — with Sync Vault button */}
-            {lrEmpty && (
-              <div className="flex h-full flex-col items-center justify-center text-gray-400">
-                <BookOpen size={48} className="mb-4 opacity-30" />
-                <p className="text-lg font-medium">No knowledge graph yet</p>
-                <p className="mt-2 text-sm opacity-60 max-w-xs text-center">
-                  Sync your vault to populate the graph. This ingests your notes into LightRAG.
-                </p>
-                <button
-                  onClick={() => syncMutation.mutate()}
-                  disabled={syncMutation.isPending}
-                  className="mt-6 flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-colors"
-                  style={{
-                    background: syncMutation.isPending ? 'rgba(139,92,246,0.2)' : 'rgba(139,92,246,0.3)',
-                    border: '1px solid rgba(139,92,246,0.5)',
-                    color: syncMutation.isPending ? '#a78bfa' : '#c4b5fd',
-                  }}
-                >
-                  {syncMutation.isPending
-                    ? <><RefreshCw size={14} className="animate-spin" /> Syncing vault…</>
-                    : syncMutation.isSuccess
-                      ? <><RefreshCw size={14} /> Synced — refresh in a moment</>
-                      : <><RefreshCw size={14} /> Sync Vault Now</>}
-                </button>
-                {syncMutation.isSuccess && (
-                  <p className="mt-3 text-xs opacity-40">Graph data will appear after ingest completes.</p>
-                )}
-              </div>
-            )}
-
-            {!lrLoading && lrHasNodes && (
-              <>
-                {/* Cluster legend */}
-                <div className="absolute bottom-4 left-4 z-10 rounded-lg p-3 text-xs text-white"
-                  style={{ background: 'rgba(3,7,18,0.8)' }}>
-                  <p className="mb-1 font-semibold text-gray-300">Clusters</p>
-                  {CLUSTER_COLORS.slice(0, 5).map((c, i) => (
-                    <div key={i} className="flex items-center gap-2">
-                      <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: c }} />
-                      <span className="text-gray-400">Cluster {i + 1}</span>
-                    </div>
-                  ))}
-                </div>
-
-                <canvas
-                  ref={lrCanvasRef}
-                  width={window.innerWidth - (showEntities ? 280 : 0)}
-                  height={window.innerHeight - 48}
-                  style={{ display: 'block', cursor: 'crosshair' }}
-                />
-
-                {tooltip && (
-                  <div style={{
-                    position: 'fixed', left: tooltip.x + 12, top: tooltip.y - 8,
-                    background: 'rgba(15,20,30,0.92)', color: '#e2e8f0',
-                    padding: '4px 10px', borderRadius: '6px', fontSize: '12px',
-                    pointerEvents: 'none', zIndex: 9000,
-                    border: '1px solid rgba(100,120,150,0.3)',
-                  }}>
-                    {tooltip.label}
-                  </div>
-                )}
-
-                <LightRagNodePanel
-                  entity={selectedEntity}
-                  relations={(lrData?.links ?? []).map((l) => ({
-                    source: typeof l.source === 'string' ? l.source : (l.source as LightRagNode).id,
-                    target: typeof l.target === 'string' ? l.target : (l.target as LightRagNode).id,
-                    label: l.label,
-                    weight: l.weight,
-                  })) as LightRagRelation[]}
-                  notes={allNotes}
-                  onClose={() => setSelectedEntity(null)}
-                  onNavigateToNote={(noteId) => navigate(`/notes/${noteId}`)}
-                />
-              </>
-            )}
-          </div>
-
-          {/* ── Entities sidebar panel ──────────────────────────────────── */}
-          {lrHasNodes && showEntities && (
-            <div
-              style={{
-                width: '280px',
-                flexShrink: 0,
-                borderLeft: '1px solid rgba(255,255,255,0.08)',
-                background: 'rgba(10,12,20,0.95)',
-                display: 'flex',
-                flexDirection: 'column',
-                overflow: 'hidden',
-              }}
+          {/* Filter toggle (wikilinks only) */}
+          {tab === 'wikilinks' && (
+            <button
+              onClick={() => setFilterOpen(!filterOpen)}
+              className={`rounded p-1.5 text-xs transition-colors ${
+                filterOpen || typeFilter.length > 0
+                  ? 'bg-accent-teal/20 text-accent-teal'
+                  : 'text-text-muted hover:bg-bg-tertiary'
+              }`}
+              title="Filter by type"
             >
-              {/* Sidebar header */}
-              <div style={{
-                padding: '10px 12px 8px',
-                borderBottom: '1px solid rgba(255,255,255,0.07)',
-                flexShrink: 0,
-              }}>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-semibold text-gray-300">Entities</span>
-                  <span className="text-xs text-gray-600 font-mono">
-                    {filteredEntities.length}/{allEntities.length}
-                  </span>
-                </div>
-                {/* Search input */}
-                <div className="relative">
-                  <Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-600" />
-                  <input
-                    type="text"
-                    value={entitySearch}
-                    onChange={(e) => setEntitySearch(e.target.value)}
-                    placeholder="Filter entities…"
-                    className="w-full pl-6 pr-2 py-1 text-xs rounded outline-none"
-                    style={{
-                      background: 'rgba(255,255,255,0.05)',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      color: '#d1d5db',
-                    }}
-                  />
-                </div>
-              </div>
+              <Filter size={13} />
+            </button>
+          )}
 
-              {/* Entity list */}
-              <div style={{ flex: 1, overflowY: 'auto' }}>
-                {entitiesLoading && (
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 size={16} className="animate-spin text-purple-400" />
-                  </div>
-                )}
+          {/* Sync */}
+          <button
+            onClick={() => syncMutation.mutate()}
+            disabled={syncMutation.isPending}
+            className="flex items-center gap-1 rounded bg-bg-tertiary px-2.5 py-1 text-xs text-text-muted hover:text-text-primary transition-colors disabled:opacity-50"
+          >
+            <RefreshCw size={11} className={syncMutation.isPending ? 'animate-spin' : ''} />
+            {syncMutation.isPending ? 'Syncing…' : 'Sync'}
+          </button>
+        </div>
+      </div>
 
-                {!entitiesLoading && filteredEntities.length === 0 && (
-                  <div className="px-3 py-6 text-center text-xs text-gray-600">
-                    {entitySearch ? 'No matching entities' : 'No entities yet'}
-                  </div>
-                )}
-
-                {!entitiesLoading && filteredEntities.map((entity) => {
-                  const isSelected = selectedEntity?.id === entity.id;
-                  return (
-                    <button
-                      key={entity.id}
-                      onClick={() => setSelectedEntity({
-                        id: entity.id,
-                        label: entity.label,
-                        description: entity.description,
-                        cluster: entity.cluster,
-                        source_note_ids: entity.source_note_ids,
-                      })}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'flex-start',
-                        gap: '8px',
-                        width: '100%',
-                        padding: '7px 12px',
-                        textAlign: 'left',
-                        borderBottom: '1px solid rgba(255,255,255,0.04)',
-                        background: isSelected ? 'rgba(139,92,246,0.15)' : 'transparent',
-                        cursor: 'pointer',
-                        transition: 'background 120ms',
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!isSelected) (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.04)';
-                      }}
-                      onMouseLeave={(e) => {
-                        if (!isSelected) (e.currentTarget as HTMLElement).style.background = 'transparent';
-                      }}
-                    >
-                      {/* Cluster colour dot */}
-                      <span
-                        style={{
-                          width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0,
-                          marginTop: '3px',
-                          background: clusterColor(entity.cluster),
-                        }}
-                      />
-                      <div style={{ minWidth: 0, flex: 1 }}>
-                        <p style={{
-                          fontSize: '12px', fontWeight: isSelected ? 600 : 400,
-                          color: isSelected ? '#c4b5fd' : '#d1d5db',
-                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                        }}>
-                          {entity.label}
-                        </p>
-                        {entity.description && (
-                          <p style={{
-                            fontSize: '10px', color: '#6b7280', marginTop: '1px',
-                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                          }}>
-                            {entity.description}
-                          </p>
-                        )}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+      {/* ── Type filter dropdown ─────────────────────────────────────────── */}
+      {filterOpen && tab === 'wikilinks' && (
+        <div className="flex flex-wrap gap-1.5 border-b border-border px-4 py-2 flex-shrink-0">
+          {NOTE_TYPES.map((type) => (
+            <button
+              key={type}
+              onClick={() =>
+                setTypeFilter((prev) =>
+                  prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]
+                )
+              }
+              className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors border ${
+                typeFilter.includes(type)
+                  ? 'border-transparent text-bg-primary'
+                  : 'border-border text-text-muted hover:border-text-muted'
+              }`}
+              style={typeFilter.includes(type) ? { background: NOTE_TYPE_COLOURS[type] } : {}}
+            >
+              {type}
+            </button>
+          ))}
+          {typeFilter.length > 0 && (
+            <button
+              onClick={() => setTypeFilter([])}
+              className="flex items-center gap-0.5 rounded-full border border-border px-2 py-0.5 text-xs text-text-muted hover:text-text-primary"
+            >
+              <X size={10} /> Clear
+            </button>
           )}
         </div>
       )}
+
+      {/* ── Main area ───────────────────────────────────────────────────── */}
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+
+        {/* ── Wikilinks tab ─────────────────────────────────────────────── */}
+        {tab === 'wikilinks' && (
+          <div className="relative flex-1 min-w-0">
+            {graphLoading ? (
+              <div className="flex h-full items-center justify-center text-text-muted text-sm">
+                Loading graph…
+              </div>
+            ) : nodeCount === 0 ? (
+              <div className="flex h-full flex-col items-center justify-center gap-3 text-text-muted">
+                <p className="text-sm">No notes with wikilinks yet.</p>
+                <button
+                  onClick={() => syncMutation.mutate()}
+                  disabled={syncMutation.isPending}
+                  className="flex items-center gap-1 rounded bg-accent-teal/20 px-3 py-1.5 text-xs text-accent-teal hover:bg-accent-teal/30 transition-colors disabled:opacity-50"
+                >
+                  <RefreshCw size={12} className={syncMutation.isPending ? 'animate-spin' : ''} />
+                  Sync Vault
+                </button>
+              </div>
+            ) : (
+              <React.Suspense fallback={<div className="flex h-full items-center justify-center text-text-muted text-sm">Loading renderer…</div>}>
+                <ForceGraph2D
+                  ref={fgRef}
+                  graphData={graphDataFiltered as { nodes: WikilinkNode[]; links: WikilinkLink[] }}
+                  nodeId="id"
+                  nodeLabel="title"
+                  nodeColor={(n) => NOTE_TYPE_COLOURS[(n as WikilinkNode).note_type] ?? '#797876'}
+                  nodeVal={(n) => Math.max(1, ((n as WikilinkNode).incoming_link_count ?? 0) + 1)}
+                  linkColor={() => 'oklch(0.5 0 0 / 0.3)'}
+                  linkWidth={1}
+                  backgroundColor="transparent"
+                  onNodeClick={(n) => handleNodeClick(n as WikilinkNode)}
+                  onNodeRightClick={(n) => navigate(`/notes/${(n as WikilinkNode).id}`)}
+                  width={undefined}
+                  height={undefined}
+                />
+              </React.Suspense>
+            )}
+
+            {/* Zoom controls */}
+            <div className="absolute bottom-4 right-4 flex flex-col gap-1">
+              <button onClick={handleZoomIn}  className="rounded bg-bg-secondary border border-border p-1.5 text-text-muted hover:text-text-primary"><ZoomIn  size={13} /></button>
+              <button onClick={handleZoomOut} className="rounded bg-bg-secondary border border-border p-1.5 text-text-muted hover:text-text-primary"><ZoomOut size={13} /></button>
+              <button onClick={handleFit}     className="rounded bg-bg-secondary border border-border p-1.5 text-text-muted hover:text-text-primary"><Maximize2 size={13} /></button>
+            </div>
+
+            {/* Selected node panel */}
+            {selectedNode && (
+              <div className="absolute top-3 left-3 w-64 rounded-lg border border-border bg-bg-secondary p-3 shadow-lg text-xs">
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <span className="font-semibold text-text-primary truncate">{selectedNode.title}</span>
+                  <button onClick={() => setSelectedNode(null)} className="text-text-faint hover:text-text-primary"><X size={12} /></button>
+                </div>
+                <div className="space-y-0.5 text-text-muted">
+                  <div>Type: <span className="text-text-primary">{selectedNode.note_type}</span></div>
+                  <div>Folder: <span className="text-text-primary">{selectedNode.folder}</span></div>
+                  <div>In: <span className="text-text-primary">{selectedNode.incoming_link_count}</span> / Out: <span className="text-text-primary">{selectedNode.outgoing_link_count}</span></div>
+                </div>
+                <button
+                  onClick={() => navigate(`/notes/${selectedNode.id}`)}
+                  className="mt-2 w-full rounded bg-accent-teal/20 py-1 text-accent-teal hover:bg-accent-teal/30 transition-colors"
+                >
+                  Open note
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── LightRAG tab ──────────────────────────────────────────────── */}
+        {tab === 'lightrag' && (
+          <div className="flex flex-1 min-w-0">
+
+            {/* Canvas */}
+            <div className="relative flex-1 min-w-0">
+              {lrLoading ? (
+                <div className="flex h-full items-center justify-center text-text-muted text-sm">Loading graph…</div>
+              ) : !lrData || lrData.nodes.length === 0 ? (
+                <div className="flex h-full flex-col items-center justify-center gap-3 text-text-muted">
+                  <p className="text-sm">No LightRAG graph data yet.</p>
+                  <button
+                    onClick={() => syncMutation.mutate()}
+                    disabled={syncMutation.isPending}
+                    className="flex items-center gap-1 rounded bg-accent-teal/20 px-3 py-1.5 text-xs text-accent-teal hover:bg-accent-teal/30 transition-colors disabled:opacity-50"
+                  >
+                    <RefreshCw size={12} className={syncMutation.isPending ? 'animate-spin' : ''} />
+                    Sync Vault
+                  </button>
+                </div>
+              ) : (
+                <canvas
+                  ref={lrCanvasRef}
+                  onClick={handleCanvasClick}
+                  className="w-full h-full cursor-crosshair"
+                  style={{ display: 'block' }}
+                />
+              )}
+
+              {lrSelectedEntity && (
+                <LightRagNodePanel
+                  entity={lrSelectedEntity}
+                  relations={lrSelectedRelations}
+                  onRelationClick={(rel) => {
+                    const otherId = rel.source === lrSelectedEntity.entity_id ? rel.target : rel.source;
+                    void handleLrNodeClick(otherId);
+                  }}
+                  onClose={() => { setLrSelectedEntity(null); setLrSelectedRelations([]); }}
+                />
+              )}
+            </div>
+
+            {/* Entities sidebar */}
+            <div className={`flex-shrink-0 border-l border-border bg-bg-secondary transition-all ${
+              entitiesPanelOpen ? 'w-56' : 'w-8'
+            }`}>
+              <div className="flex items-center justify-between px-2 py-1.5 border-b border-border">
+                {entitiesPanelOpen && (
+                  <span className="text-xs font-medium text-text-muted">
+                    Entities
+                    {allEntities.length > 0 && (
+                      <span className="ml-1 rounded-full bg-bg-tertiary px-1.5 py-0.5 text-xs">{allEntities.length}</span>
+                    )}
+                  </span>
+                )}
+                <button
+                  onClick={() => setEntitiesPanelOpen(!entitiesPanelOpen)}
+                  className="ml-auto rounded p-0.5 text-text-faint hover:text-text-primary"
+                  title={entitiesPanelOpen ? 'Collapse' : 'Expand entities'}
+                >
+                  {entitiesPanelOpen ? <ChevronRight size={13} /> : <List size={13} />}
+                </button>
+              </div>
+
+              {entitiesPanelOpen && (
+                <>
+                  <div className="px-2 py-1.5 border-b border-border">
+                    <div className="relative">
+                      <Search size={11} className="absolute left-1.5 top-1/2 -translate-y-1/2 text-text-faint" />
+                      <input
+                        value={entitySearch}
+                        onChange={(e) => setEntitySearch(e.target.value)}
+                        placeholder="Filter…"
+                        className="w-full rounded border border-border bg-bg-tertiary pl-5 pr-2 py-0.5 text-xs placeholder:text-text-faint focus:outline-none focus:border-accent-teal"
+                      />
+                    </div>
+                  </div>
+                  <div className="overflow-y-auto flex-1" style={{ maxHeight: 'calc(100% - 72px)' }}>
+                    {filteredEntities.length === 0 ? (
+                      <p className="px-3 py-4 text-xs text-text-faint text-center">No entities</p>
+                    ) : (
+                      filteredEntities.map((e) => (
+                        <button
+                          key={e.entity_id}
+                          onClick={() => void handleLrNodeClick(e.entity_id)}
+                          className="flex w-full items-center gap-2 px-2 py-1 text-left hover:bg-bg-tertiary transition-colors group"
+                        >
+                          <span
+                            className="h-2 w-2 flex-shrink-0 rounded-full"
+                            style={{ background: clusterColour(e.cluster) }}
+                          />
+                          <span className="truncate text-xs text-text-secondary group-hover:text-text-primary">
+                            {e.entity_id}
+                          </span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
