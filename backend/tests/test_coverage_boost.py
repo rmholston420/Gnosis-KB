@@ -38,6 +38,7 @@ def _make_note(
     n = MagicMock()
     n.id = id
     n.title = title
+    n.slug = "test-note"
     n.body = body
     n.body_html = f"<p>{body}</p>"
     n.folder = folder
@@ -48,6 +49,8 @@ def _make_note(
     n.graph_indexed = graph_indexed
     n.word_count = len(body.split())
     n.tags = []
+    n.created_at = None
+    n.modified_at = None
     return n
 
 
@@ -516,6 +519,7 @@ async def test_daily_review_with_notes_json_response():
 async def test_stream_chat_qdrant_path():
     """Lines 573-576: qdrant path → tokens streamed via SSE."""
     from gnosis.routers.ai import stream_chat
+    import anyio
 
     async def _fake_stream(message, owner_ids, mode):
         yield "hello"
@@ -536,9 +540,60 @@ async def test_stream_chat_qdrant_path():
             message="test", mode="hybrid", session=db, current_user=user, owner_ids={1}
         )
 
+    # Collect SSE chunks from the async generator
+    chunks = []
+    async with anyio.from_thread.start_blocking_portal() if False else anyio.from_thread.start_blocking_portal.__class__.__mro__[0].__subclasshook__.__class__.__mro__[0].__subclasshook__.__class__.__mro__[0].__subclasshook__ if False else _noop_ctx() if False else _collect_streaming(response) as collected:
+        chunks = collected
+
+
+async def _collect_streaming_async(response) -> list[str]:
     chunks = []
     async for chunk in response.body_iterator:
-        chunks.append(chunk)
+        if isinstance(chunk, bytes):
+            chunks.append(chunk.decode())
+        else:
+            chunks.append(chunk)
+    return chunks
+
+
+class _collect_streaming:
+    def __init__(self, response):
+        self.response = response
+        self.result = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_qdrant_path_v2():
+    """Lines 573-576: qdrant path → [DONE] present in SSE output."""
+    from gnosis.routers.ai import stream_chat
+
+    async def _fake_stream(message, owner_ids, mode):
+        yield "hello"
+        yield " world"
+
+    db = AsyncMock()
+    user = MagicMock()
+    user.id = 1
+
+    with (
+        patch("gnosis.routers.ai.graph_rag") as mock_gr,
+        patch("gnosis.routers.ai.llm_provider") as mock_llm,
+        patch("gnosis.routers.ai._qdrant_rag_stream", side_effect=_fake_stream),
+    ):
+        mock_gr.is_available = AsyncMock(return_value=False)
+        mock_llm.is_available = True
+        response = await stream_chat(
+            message="test", mode="hybrid", session=db, current_user=user, owner_ids={1}
+        )
+
+    # Consume the async generator directly
+    chunks = await _collect_streaming_async(response)
     full = "".join(chunks)
     assert "[DONE]" in full
     assert "hello" in full
@@ -563,16 +618,14 @@ async def test_stream_chat_no_provider_emits_error():
             message="test", mode="hybrid", session=db, current_user=user, owner_ids={1}
         )
 
-    chunks = []
-    async for chunk in response.body_iterator:
-        chunks.append(chunk)
+    chunks = await _collect_streaming_async(response)
     full = "".join(chunks)
     assert "No AI provider" in full
     assert "[DONE]" in full
 
 
 @pytest.mark.asyncio
-async def test_stream_chat_exception_emits_error_event():
+async def test_stream_chat_exception_emits_error_event_v2():
     """Lines 580-582: stream raises → error SSE event + [DONE]."""
     from gnosis.routers.ai import stream_chat
 
@@ -580,13 +633,14 @@ async def test_stream_chat_exception_emits_error_event():
     user = MagicMock()
     user.id = 1
 
+    async def _boom(message, owner_ids, mode):
+        raise RuntimeError("boom")
+        yield  # make it an async generator
+
     with (
         patch("gnosis.routers.ai.graph_rag") as mock_gr,
         patch("gnosis.routers.ai.llm_provider") as mock_llm,
-        patch(
-            "gnosis.routers.ai._qdrant_rag_stream",
-            side_effect=Exception("boom"),
-        ),
+        patch("gnosis.routers.ai._qdrant_rag_stream", side_effect=_boom),
     ):
         mock_gr.is_available = AsyncMock(return_value=False)
         mock_llm.is_available = True
@@ -594,9 +648,7 @@ async def test_stream_chat_exception_emits_error_event():
             message="test", mode="hybrid", session=db, current_user=user, owner_ids={1}
         )
 
-    chunks = []
-    async for chunk in response.body_iterator:
-        chunks.append(chunk)
+    chunks = await _collect_streaming_async(response)
     full = "".join(chunks)
     assert "boom" in full
     assert "[DONE]" in full
@@ -817,12 +869,21 @@ async def test_upsert_tags_creates_new_tag():
 
 # ===========================================================================
 # notes.py — get_note_graph (lines 309-327)
+# The route returns .all() on both queries (column-level selects, not ORM
+# objects), so we return plain Row-like tuples from execute.
 # ===========================================================================
+
+
+class _Row:
+    """Minimal attribute-access row to stand in for SQLAlchemy Row objects."""
+    def __init__(self, **kw):
+        for k, v in kw.items():
+            setattr(self, k, v)
 
 
 def test_get_note_graph_via_http():
     """Lines 309-327: GET /notes/graph returns nodes and edges."""
-    from gnosis.core.auth import get_current_user
+    from gnosis.core.auth import get_current_user, get_vault_owner_ids
     from gnosis.database import get_db
     from gnosis.models.user import User
     from gnosis.routers.notes import router
@@ -833,16 +894,8 @@ def test_get_note_graph_via_http():
     user = User(email="u@t.com", hashed_password="x", is_superuser=False, is_active=True)
     user.id = 1
 
-    note_row = MagicMock()
-    note_row.id = "n1"
-    note_row.title = "A"
-    note_row.folder = "00-inbox"
-    note_row.note_type = "permanent"
-
-    link_row = MagicMock()
-    link_row.source_id = "n1"
-    link_row.target_id = "n2"
-    link_row.link_type = "wikilink"
+    note_row = _Row(id="n1", title="A", folder="00-inbox", note_type="permanent")
+    link_row = _Row(source_id="n1", target_id="n2", link_type="wikilink")
 
     call = [0]
 
@@ -863,6 +916,7 @@ def test_get_note_graph_via_http():
 
     app.dependency_overrides[get_db] = _fake_db
     app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_vault_owner_ids] = lambda: {1}
 
     client = TestClient(app)
     resp = client.get("/api/v1/notes/graph")
@@ -874,12 +928,13 @@ def test_get_note_graph_via_http():
 
 # ===========================================================================
 # notes.py — search_notes (lines 343-383)
+# The route executes two queries: (1) scalar_one count, (2) scalars().unique().all()
 # ===========================================================================
 
 
 def test_search_notes_via_http():
     """Lines 343-383: GET /notes/search?q=... returns matching notes."""
-    from gnosis.core.auth import get_current_user
+    from gnosis.core.auth import get_current_user, get_vault_owner_ids
     from gnosis.database import get_db
     from gnosis.models.user import User
     from gnosis.routers.notes import router
@@ -899,8 +954,8 @@ def test_search_notes_via_http():
     note.status = "evergreen"
     note.folder = "20-lit"
     note.word_count = 50
-    note.created_at = datetime(2024, 1, 1)
-    note.modified_at = datetime(2024, 1, 2)
+    note.created_at = None
+    note.modified_at = None
     note.tags = []
 
     call = [0]
@@ -910,8 +965,10 @@ def test_search_notes_via_http():
         call[0] += 1
         r = MagicMock()
         if idx == 0:
+            # First call: count query → scalar_one()
             r.scalar_one.return_value = 1
         else:
+            # Second call: rows query → scalars().unique().all()
             r.scalars.return_value.unique.return_value.all.return_value = [note]
         return r
 
@@ -922,6 +979,7 @@ def test_search_notes_via_http():
 
     app.dependency_overrides[get_db] = _fake_db
     app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_vault_owner_ids] = lambda: {1}
 
     client = TestClient(app)
     resp = client.get("/api/v1/notes/search?q=zen")
@@ -933,21 +991,19 @@ def test_search_notes_via_http():
 
 # ===========================================================================
 # review.py — enroll card: note not found 404 (lines 145-147)
+# review uses get_db (not get_session) for the DB dep, and get_current_user
+# is NOT a dependency on the enroll/submit endpoints — they only take note_id
+# + payload + db.
 # ===========================================================================
 
 
 def test_review_enroll_note_not_found():
     """Lines 145-147: note not found → 404."""
-    from gnosis.core.auth import get_current_user
     from gnosis.database import get_db
-    from gnosis.models.user import User
     from gnosis.routers.review import router
 
     app = FastAPI()
     app.include_router(router, prefix="/api/v1")
-
-    user = User(email="u@t.com", hashed_password="x", is_superuser=False, is_active=True)
-    user.id = 1
 
     async def _fake_db():
         db = AsyncMock()
@@ -957,7 +1013,6 @@ def test_review_enroll_note_not_found():
         yield db
 
     app.dependency_overrides[get_db] = _fake_db
-    app.dependency_overrides[get_current_user] = lambda: user
 
     client = TestClient(app, raise_server_exceptions=False)
     resp = client.post("/api/v1/review/missing-note/enroll", json={})
@@ -966,17 +1021,12 @@ def test_review_enroll_note_not_found():
 
 def test_review_enroll_existing_card_returns_it():
     """Lines 148-150: card already exists → returned without creating new one."""
-    from gnosis.core.auth import get_current_user
     from gnosis.database import get_db
-    from gnosis.models.user import User
     from gnosis.routers.review import router
     from datetime import date
 
     app = FastAPI()
     app.include_router(router, prefix="/api/v1")
-
-    user = User(email="u@t.com", hashed_password="x", is_superuser=False, is_active=True)
-    user.id = 1
 
     card = MagicMock()
     card.id = "card-1"
@@ -1001,14 +1051,13 @@ def test_review_enroll_existing_card_returns_it():
             if idx == 0:
                 r.scalar_one_or_none.return_value = MagicMock(id="note-1")  # note found
             else:
-                r.scalar_one_or_none.return_value = card  # card found
+                r.scalar_one_or_none.return_value = card  # existing card
             return r
 
         db.execute = _execute
         yield db
 
     app.dependency_overrides[get_db] = _fake_db
-    app.dependency_overrides[get_current_user] = lambda: user
 
     client = TestClient(app)
     resp = client.post("/api/v1/review/note-1/enroll", json={})
@@ -1018,17 +1067,12 @@ def test_review_enroll_existing_card_returns_it():
 
 def test_review_submit_updates_note_last_reviewed():
     """Lines 188-190: submit review → note.last_reviewed updated."""
-    from gnosis.core.auth import get_current_user
     from gnosis.database import get_db
-    from gnosis.models.user import User
     from gnosis.routers.review import router
     from datetime import date
 
     app = FastAPI()
     app.include_router(router, prefix="/api/v1")
-
-    user = User(email="u@t.com", hashed_password="x", is_superuser=False, is_active=True)
-    user.id = 1
 
     card = MagicMock()
     card.id = "card-1"
@@ -1054,7 +1098,8 @@ def test_review_submit_updates_note_last_reviewed():
             call[0] += 1
             r = MagicMock()
             if idx == 0:
-                r.scalar_one_or_none.return_value = card
+                # _get_card_or_404 uses scalars().one_or_none()
+                r.scalars.return_value.one_or_none.return_value = card
             else:
                 r.scalar_one_or_none.return_value = note
             return r
@@ -1065,7 +1110,6 @@ def test_review_submit_updates_note_last_reviewed():
         yield db
 
     app.dependency_overrides[get_db] = _fake_db
-    app.dependency_overrides[get_current_user] = lambda: user
 
     client = TestClient(app)
     resp = client.post("/api/v1/review/note-1", json={"quality": 4})
@@ -1074,12 +1118,14 @@ def test_review_submit_updates_note_last_reviewed():
 
 # ===========================================================================
 # users.py — update_grant (lines 343-351)
+# users.py uses get_session (not get_db) and require_user (not get_current_user)
 # ===========================================================================
 
 
 @pytest.mark.asyncio
 async def test_update_grant_member_not_found_404():
     """Lines 338-341: SharedVaultMember not found → 404."""
+    from gnosis.core.auth import require_user
     from gnosis.models.user import User
     from gnosis.routers.users import UpdateGrantRequest, update_grant
 
@@ -1091,6 +1137,7 @@ async def test_update_grant_member_not_found_404():
     session = AsyncMock()
     session.execute = AsyncMock(return_value=r)
 
+    # role must be valid to pass the initial validation check
     req = UpdateGrantRequest(role="editor")
     with pytest.raises(Exception) as exc_info:
         await update_grant(grant_id="g1", req=req, session=session, current_user=user)
@@ -1118,7 +1165,7 @@ async def test_update_grant_not_vault_owner_403():
     session = AsyncMock()
     session.execute = AsyncMock(side_effect=[member_result, vault_result])
 
-    req = UpdateGrantRequest(role="editor")
+    req = UpdateGrantRequest(role="viewer")
     with pytest.raises(Exception) as exc_info:
         await update_grant(grant_id="g1", req=req, session=session, current_user=user)
     assert "403" in str(exc_info.value)
@@ -1215,12 +1262,16 @@ def test_get_sync_status_entry_present():
 
 # ===========================================================================
 # vault.py — get_vault_stats (lines 192-220)
+# Three execute calls in order:
+#   1. total_count  → scalar_one()
+#   2. total_words  → scalar_one()
+#   3. type_counts  → .all()  (returns list of (note_type, count) tuples)
 # ===========================================================================
 
 
 def test_get_vault_stats():
     """Lines 192-220: GET /vault/stats returns note counts and word total."""
-    from gnosis.core.auth import get_current_user
+    from gnosis.core.auth import get_current_user, get_vault_owner_ids
     from gnosis.database import get_db
     from gnosis.models.user import User
     from gnosis.routers.vault import router
@@ -1238,11 +1289,11 @@ def test_get_vault_stats():
         call[0] += 1
         r = MagicMock()
         if idx == 0:
-            r.scalar_one.return_value = 7
+            r.scalar_one.return_value = 7    # total_count
         elif idx == 1:
-            r.scalar_one.return_value = 1234
+            r.scalar_one.return_value = 1234  # total_words
         else:
-            r.all.return_value = [("permanent", 5), ("fleeting", 2)]
+            r.all.return_value = [("permanent", 5), ("fleeting", 2)]  # type_counts
         return r
 
     async def _fake_db():
@@ -1252,6 +1303,7 @@ def test_get_vault_stats():
 
     app.dependency_overrides[get_db] = _fake_db
     app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_vault_owner_ids] = lambda: {1}
 
     client = TestClient(app)
     resp = client.get("/api/v1/vault/stats")
