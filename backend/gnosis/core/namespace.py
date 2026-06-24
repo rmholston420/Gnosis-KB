@@ -1,8 +1,8 @@
 """Namespace helpers for multi-user vault isolation.
 
 All note queries that touch the database MUST go through one of:
-  - ``scoped_note_stmt()`` — returns a Select with owner filter applied
-  - ``get_accessible_user_ids()`` — set of user IDs readable by current_user
+  - ``scoped_note_stmt()`` -- returns a Select with owner filter applied
+  - ``get_accessible_user_ids()`` -- set of user IDs readable by current_user
 
 This keeps the isolation logic in one place rather than scattered across routers.
 """
@@ -69,22 +69,18 @@ async def get_accessible_owner_ids(
 
     accessible: set[int] = {current_user.id}
 
-    # SharedVaultMember rows where this user is the member
+    # Fetch SharedVault records that this user is a member of in a single join query.
+    # Returns SharedVault ORM objects so .owner_id is accessible on each result.
     result = await session.execute(
-        select(SharedVaultMember.vault_id).where(
+        select(SharedVault).join(
+            SharedVaultMember,
+            SharedVaultMember.vault_id == SharedVault.id,
+        ).where(
             SharedVaultMember.member_id == current_user.id,
         )
     )
-    vault_ids = [row[0] for row in result.all()]
-
-    if vault_ids:
-        vault_result = await session.execute(
-            select(SharedVault.owner_id).where(
-                SharedVault.id.in_(vault_ids),
-            )
-        )
-        for (owner_id,) in vault_result.all():
-            accessible.add(owner_id)
+    for vault in result.scalars().all():
+        accessible.add(vault.owner_id)
 
     if target_owner_id is not None and target_owner_id not in accessible:
         raise ValueError(
