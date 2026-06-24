@@ -62,7 +62,6 @@ export interface CommandPaletteProps {
 }
 
 export default function CommandPalette({ open: openProp, onClose }: CommandPaletteProps = {}) {
-  // Controlled mode: open prop wins. Uncontrolled: manage internally.
   const isControlled = openProp !== undefined;
   const [internalOpen, setInternalOpen] = useState(false);
   const open = isControlled ? openProp : internalOpen;
@@ -73,21 +72,26 @@ export default function CommandPalette({ open: openProp, onClose }: CommandPalet
   const fuseRef = useRef<Fuse<NoteStub> | null>(null);
   const navigate = useNavigate();
 
-  // Fetch note stubs once on first open
+  // Fetch note stubs once on first open.
+  // .catch(() => []) ensures any network/auth rejection is absorbed silently
+  // rather than escaping as an unhandled promise rejection.
   useEffect(() => {
     if (open && notes.length === 0) {
-      void fetchNoteStubs().then((stubs) => {
-        setNotes(stubs);
-        fuseRef.current = new Fuse(stubs, {
-          keys: ['title', 'folder'],
-          threshold: 0.35,
-          includeScore: true,
+      fetchNoteStubs()
+        .then((stubs) => {
+          setNotes(stubs);
+          fuseRef.current = new Fuse(stubs, {
+            keys: ['title', 'folder'],
+            threshold: 0.35,
+            includeScore: true,
+          });
+        })
+        .catch(() => {
+          // On error: leave notes as [], palette stays functional with actions only.
         });
-      });
     }
   }, [open, notes.length]);
 
-  // Global keyboard handler
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
