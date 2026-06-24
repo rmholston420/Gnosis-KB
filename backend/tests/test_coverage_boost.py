@@ -26,6 +26,7 @@ from fastapi.testclient import TestClient
 # Helpers
 # ===========================================================================
 
+
 def _make_note(
     id="note-1",
     title="Test Note",
@@ -144,8 +145,9 @@ async def test_get_providers_ollama_available_http_200():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("gnosis.routers.ai.llm_provider") as mock_llm, patch(
-        "gnosis.routers.ai.httpx.AsyncClient", return_value=mock_client
+    with (
+        patch("gnosis.routers.ai.llm_provider") as mock_llm,
+        patch("gnosis.routers.ai.httpx.AsyncClient", return_value=mock_client),
     ):
         mock_llm.is_available = True
         mock_llm.active_provider = "ollama"
@@ -168,8 +170,9 @@ async def test_get_providers_ollama_http_exception_falls_back():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("gnosis.routers.ai.llm_provider") as mock_llm, patch(
-        "gnosis.routers.ai.httpx.AsyncClient", return_value=mock_client
+    with (
+        patch("gnosis.routers.ai.llm_provider") as mock_llm,
+        patch("gnosis.routers.ai.httpx.AsyncClient", return_value=mock_client),
     ):
         mock_llm.is_available = True
         mock_llm.active_provider = "ollama"
@@ -211,8 +214,9 @@ async def test_set_model_success_lines_250_251():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("gnosis.routers.ai.llm_provider") as mock_llm, patch(
-        "gnosis.routers.ai.httpx.AsyncClient", return_value=mock_client
+    with (
+        patch("gnosis.routers.ai.llm_provider") as mock_llm,
+        patch("gnosis.routers.ai.httpx.AsyncClient", return_value=mock_client),
     ):
         mock_llm._available = {"ollama"}
         mock_llm.swap_model = MagicMock()
@@ -259,9 +263,10 @@ async def test_chat_no_provider_raises_503():
     user = MagicMock()
     user.id = 1
 
-    with patch("gnosis.routers.ai.graph_rag") as mock_gr, patch(
-        "gnosis.routers.ai.llm_provider"
-    ) as mock_llm:
+    with (
+        patch("gnosis.routers.ai.graph_rag") as mock_gr,
+        patch("gnosis.routers.ai.llm_provider") as mock_llm,
+    ):
         mock_gr.is_available = AsyncMock(return_value=False)
         mock_llm.is_available = False
         with pytest.raises(Exception) as exc_info:
@@ -660,9 +665,7 @@ async def test_ingest_note_lightrag_not_available():
     user.id = 1
 
     with patch("gnosis.routers.ai._lightrag_available", return_value=False):
-        resp = await ingest_note(
-            note_id="note-1", session=db, current_user=user, owner_ids={1}
-        )
+        resp = await ingest_note(note_id="note-1", session=db, current_user=user, owner_ids={1})
 
     assert resp.graph_indexed is False
     assert "not available" in resp.message.lower()
@@ -688,9 +691,7 @@ async def test_ingest_note_happy_path():
     ):
         mock_gr.__bool__ = lambda self: True
         mock_gr.ingest_note = AsyncMock()
-        resp = await ingest_note(
-            note_id="note-1", session=db, current_user=user, owner_ids={1}
-        )
+        resp = await ingest_note(note_id="note-1", session=db, current_user=user, owner_ids={1})
 
     assert resp.graph_indexed is True
     assert "note-1" in resp.note_id
@@ -716,9 +717,7 @@ async def test_ingest_note_lightrag_raises_500():
         mock_gr.__bool__ = lambda self: True
         mock_gr.ingest_note = AsyncMock(side_effect=RuntimeError("graph error"))
         with pytest.raises(Exception) as exc_info:
-            await ingest_note(
-                note_id="note-1", session=db, current_user=user, owner_ids={1}
-            )
+            await ingest_note(note_id="note-1", session=db, current_user=user, owner_ids={1})
     assert "500" in str(exc_info.value) or "graph error" in str(exc_info.value)
 
 
@@ -861,6 +860,7 @@ async def test_upsert_tags_creates_new_tag():
 
 class _Row:
     """Minimal attribute-access row to stand in for SQLAlchemy Row objects."""
+
     def __init__(self, **kw):
         for k, v in kw.items():
             setattr(self, k, v)

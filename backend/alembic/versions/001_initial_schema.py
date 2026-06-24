@@ -38,7 +38,8 @@ def upgrade() -> None:
     # ------------------------------------------------------------------
     # users
     # ------------------------------------------------------------------
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         CREATE TABLE IF NOT EXISTS users (
             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
             email               VARCHAR(320) NOT NULL UNIQUE,
@@ -51,14 +52,16 @@ def upgrade() -> None:
             vault_path          TEXT,
             vault_display_name  VARCHAR(200)
         )
-    """))
+    """)
+    )
     conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_users_email      ON users (email)"))
     conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_users_vault_slug ON users (vault_slug)"))
 
     # ------------------------------------------------------------------
     # notes
     # ------------------------------------------------------------------
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         CREATE TABLE IF NOT EXISTS notes (
             id             VARCHAR(20)   PRIMARY KEY,
             title          VARCHAR(500)  NOT NULL,
@@ -80,7 +83,8 @@ def upgrade() -> None:
             frontmatter    TEXT,
             owner_id       INTEGER       REFERENCES users(id) ON DELETE CASCADE
         )
-    """))
+    """)
+    )
     conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_notes_title      ON notes (title)"))
     conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_notes_slug       ON notes (slug)"))
     conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_notes_folder     ON notes (folder)"))
@@ -92,25 +96,30 @@ def upgrade() -> None:
     # ------------------------------------------------------------------
     # tags / note_tags
     # ------------------------------------------------------------------
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         CREATE TABLE IF NOT EXISTS tags (
             name        VARCHAR(100) PRIMARY KEY,
             description VARCHAR(500) DEFAULT ''
         )
-    """))
+    """)
+    )
 
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         CREATE TABLE IF NOT EXISTS note_tags (
             note_id VARCHAR(20)  NOT NULL REFERENCES notes(id)  ON DELETE CASCADE,
             tag_id  VARCHAR(100) NOT NULL REFERENCES tags(name) ON DELETE CASCADE,
             PRIMARY KEY (note_id, tag_id)
         )
-    """))
+    """)
+    )
 
     # ------------------------------------------------------------------
     # links
     # ------------------------------------------------------------------
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         CREATE TABLE IF NOT EXISTS links (
             id        INTEGER PRIMARY KEY AUTOINCREMENT,
             source_id VARCHAR(20) NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
@@ -119,14 +128,16 @@ def upgrade() -> None:
             context   TEXT,
             link_type VARCHAR(50) DEFAULT 'wikilink'
         )
-    """))
+    """)
+    )
     conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_links_source_id ON links (source_id)"))
     conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_links_target_id ON links (target_id)"))
 
     # ------------------------------------------------------------------
     # attachments
     # ------------------------------------------------------------------
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         CREATE TABLE IF NOT EXISTS attachments (
             id                INTEGER PRIMARY KEY AUTOINCREMENT,
             note_id           VARCHAR(20) NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
@@ -138,15 +149,17 @@ def upgrade() -> None:
             extracted_text    TEXT,
             uploaded_at       DATETIME     DEFAULT CURRENT_TIMESTAMP
         )
-    """))
-    conn.execute(sa.text(
-        "CREATE INDEX IF NOT EXISTS ix_attachments_note_id ON attachments (note_id)"
-    ))
+    """)
+    )
+    conn.execute(
+        sa.text("CREATE INDEX IF NOT EXISTS ix_attachments_note_id ON attachments (note_id)")
+    )
 
     # ------------------------------------------------------------------
     # review_cards
     # ------------------------------------------------------------------
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         CREATE TABLE IF NOT EXISTS review_cards (
             id          VARCHAR(20) PRIMARY KEY,
             note_id     VARCHAR(20) NOT NULL UNIQUE REFERENCES notes(id) ON DELETE CASCADE,
@@ -158,18 +171,20 @@ def upgrade() -> None:
             created_at  DATETIME    DEFAULT CURRENT_TIMESTAMP,
             updated_at  DATETIME
         )
-    """))
-    conn.execute(sa.text(
-        "CREATE INDEX IF NOT EXISTS ix_review_cards_note_id  ON review_cards (note_id)"
-    ))
-    conn.execute(sa.text(
-        "CREATE INDEX IF NOT EXISTS ix_review_cards_due_date ON review_cards (due_date)"
-    ))
+    """)
+    )
+    conn.execute(
+        sa.text("CREATE INDEX IF NOT EXISTS ix_review_cards_note_id  ON review_cards (note_id)")
+    )
+    conn.execute(
+        sa.text("CREATE INDEX IF NOT EXISTS ix_review_cards_due_date ON review_cards (due_date)")
+    )
 
     # ------------------------------------------------------------------
     # saved_queries
     # ------------------------------------------------------------------
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         CREATE TABLE IF NOT EXISTS saved_queries (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             owner_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -179,30 +194,34 @@ def upgrade() -> None:
             created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at  DATETIME
         )
-    """))
-    conn.execute(sa.text(
-        "CREATE INDEX IF NOT EXISTS ix_saved_queries_owner_id ON saved_queries (owner_id)"
-    ))
+    """)
+    )
+    conn.execute(
+        sa.text("CREATE INDEX IF NOT EXISTS ix_saved_queries_owner_id ON saved_queries (owner_id)")
+    )
 
     # ------------------------------------------------------------------
     # shared_vaults
     # ------------------------------------------------------------------
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         CREATE TABLE IF NOT EXISTS shared_vaults (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             owner_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             name       VARCHAR(200) NOT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
-    """))
-    conn.execute(sa.text(
-        "CREATE INDEX IF NOT EXISTS ix_shared_vaults_owner_id ON shared_vaults (owner_id)"
-    ))
+    """)
+    )
+    conn.execute(
+        sa.text("CREATE INDEX IF NOT EXISTS ix_shared_vaults_owner_id ON shared_vaults (owner_id)")
+    )
 
     # ------------------------------------------------------------------
     # shared_vault_members
     # ------------------------------------------------------------------
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         CREATE TABLE IF NOT EXISTS shared_vault_members (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             vault_id   INTEGER NOT NULL REFERENCES shared_vaults(id) ON DELETE CASCADE,
@@ -211,13 +230,14 @@ def upgrade() -> None:
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             UNIQUE (vault_id, member_id)
         )
-    """))
-    conn.execute(sa.text(
-        "CREATE INDEX IF NOT EXISTS ix_svm_vault_id   ON shared_vault_members (vault_id)"
-    ))
-    conn.execute(sa.text(
-        "CREATE INDEX IF NOT EXISTS ix_svm_member_id  ON shared_vault_members (member_id)"
-    ))
+    """)
+    )
+    conn.execute(
+        sa.text("CREATE INDEX IF NOT EXISTS ix_svm_vault_id   ON shared_vault_members (vault_id)")
+    )
+    conn.execute(
+        sa.text("CREATE INDEX IF NOT EXISTS ix_svm_member_id  ON shared_vault_members (member_id)")
+    )
 
 
 def downgrade() -> None:

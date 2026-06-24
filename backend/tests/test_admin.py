@@ -26,7 +26,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -41,7 +40,9 @@ from gnosis.models.user import User
 
 
 @pytest_asyncio.fixture
-async def admin_client(test_engine, vault_dir) -> AsyncGenerator[tuple[AsyncClient, AsyncSession], None]:
+async def admin_client(
+    test_engine, vault_dir
+) -> AsyncGenerator[tuple[AsyncClient, AsyncSession], None]:
     """Yield (client, session) that share the same SQLite connection.
 
     Both the HTTP layer's get_db override and the seed session use the same
@@ -85,21 +86,21 @@ async def admin_client(test_engine, vault_dir) -> AsyncGenerator[tuple[AsyncClie
                 vault_path: str | None = None
                 is_active: bool = True
                 is_superuser: bool = False
+
             return _FU()
 
         async def _fake_owner_ids() -> set[int]:
             return {1}
 
         from gnosis.database import get_db
+
         app.dependency_overrides[get_db] = _override_get_db
         app.dependency_overrides[require_user] = _fake_user
         app.dependency_overrides[get_current_user] = _fake_user
         app.dependency_overrides[get_vault_owner_ids] = _fake_owner_ids
 
         async with session_factory() as seed_session:
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as c:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
                 yield c, seed_session
 
         app.dependency_overrides.clear()
