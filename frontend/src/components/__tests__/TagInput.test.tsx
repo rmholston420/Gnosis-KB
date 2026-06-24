@@ -16,17 +16,45 @@
  *  10. Input is disabled when disabled=true
  */
 
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import React from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import TagInput from '../TagInput';
+
+// Prevent TagInput's useQuery from making real HTTP requests in unit tests.
+// The autocomplete feature is not under test here — we just need the
+// component to mount without crashing.
+vi.mock('../../services/api', () => ({
+  default: {
+    listTags: vi.fn().mockResolvedValue([]),
+  },
+}));
+
+function makeClient() {
+  return new QueryClient({
+    defaultOptions: {
+      queries: {
+        // Never retry in tests — fail fast
+        retry: false,
+        // Don't cache between tests
+        gcTime: 0,
+      },
+    },
+  });
+}
 
 function setup(
   tags: string[] = [],
   onChange = vi.fn(),
   disabled = false,
 ) {
-  return render(<TagInput tags={tags} onChange={onChange} disabled={disabled} />);
+  const client = makeClient();
+  return render(
+    <QueryClientProvider client={client}>
+      <TagInput tags={tags} onChange={onChange} disabled={disabled} />
+    </QueryClientProvider>,
+  );
 }
 
 afterEach(() => { vi.clearAllMocks(); });
