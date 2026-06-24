@@ -1,17 +1,17 @@
-"""Vault router — sync (background + SSE), sync status, stats, and path.
+"""Vault router -- sync (background + SSE), sync status, stats, and path.
 
 Endpoints
 ---------
-POST /vault/sync               — Trigger a full vault sync.
-                                  ?stream=false (default) → 202 SyncStartResponse (BackgroundTask)
-                                  ?stream=true            → 200 text/event-stream SSE
-GET  /vault/sync/status        — Poll background sync progress (SyncStatusResponse)
-GET  /vault/stats              — Aggregate note counts and disk usage
-GET  /vault/path               — Resolved filesystem path for the current user
+POST /vault/sync               -- Trigger a full vault sync.
+                                  ?stream=false (default) -> 202 SyncStartResponse (BackgroundTask)
+                                  ?stream=true            -> 200 text/event-stream SSE
+GET  /vault/sync/status        -- Poll background sync progress (SyncStatusResponse)
+GET  /vault/stats              -- Aggregate note counts and disk usage
+GET  /vault/path               -- Resolved filesystem path for the current user
 
 Module-level state
 ------------------
-_sync_status : dict[int, dict]  — per-user background sync state
+_sync_status : dict[int, dict]  -- per-user background sync state
     Keys: state (idle|running|done|error), started (float), files_processed (int),
           files_total (int), last_error (str|None)
 """
@@ -83,7 +83,7 @@ async def _run_sync_background(user_id: int) -> None:
                     _sync_status[user_id]["files_total"] = int(line.split(":", 1)[1].strip())
                 except ValueError:
                     pass
-            elif line.startswith(("synced:", "updated:", "deleted:")):
+            elif line.startswith(("synced:", "updated:", "deleted:", "skipped:")):
                 _sync_status[user_id]["files_processed"] += 1
         _sync_status[user_id]["state"] = "done"
     except Exception as exc:  # noqa: BLE001
@@ -109,7 +109,7 @@ async def _sync_sse_generator(user_id: int):
                     _sync_status[user_id]["files_total"] = int(line.split(":", 1)[1].strip())
                 except ValueError:
                     pass
-            elif line.startswith(("synced:", "updated:", "deleted:")):
+            elif line.startswith(("synced:", "updated:", "deleted:", "skipped:")):
                 _sync_status[user_id]["files_processed"] += 1
             yield f"data: {line}\n\n"
         _sync_status[user_id]["state"] = "done"
@@ -184,62 +184,45 @@ async def get_sync_status(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/stats", summary="Vault statistics for the current user")
-async def vault_stats(
+@router.get("/stats", summary="Aggregate note statistics for the current user")
+async def get_vault_stats(
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
-) -> dict[str, Any]:
-    """Return aggregate counts and storage metrics for the user's vault."""
+) -> dict:
+    """Return counts by note_type and total word count."""
     from gnosis.core.namespace import scoped_note_stmt
 
     base = scoped_note_stmt(
         select(Note).where(Note.is_deleted.is_(False)),
         owner_ids,
     )
-
-    total_result = await db.execute(select(func.count()).select_from(base.subquery()))
-    total_notes: int = int(total_result.scalar_one() or 0)  # type: ignore[arg-type]
-
-    word_result = await db.execute(select(func.sum(Note.word_count)).select_from(base.subquery()))
-    total_words: int = int(word_result.scalar_one() or 0)  # type: ignore[arg-type]
-
-    folder_result = await db.execute(
-        select(Note.folder, func.count(Note.id))
-        .select_from(base.subquery().alias("scoped"))
-        .join(Note, Note.id == base.subquery().c.id)
-        .group_by(Note.folder)
-        .order_by(func.count(Note.id).desc())
-        .limit(10)
+    total_count = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
+    total_words = (
+        await db.execute(
+            select(func.coalesce(func.sum(Note.word_count), 0)).select_from(
+                scoped_note_stmt(
+                    select(Note).where(Note.is_deleted.is_(False)),
+                    owner_ids,
+                ).subquery()
+            )
+        )
+    ).scalar_one()
+    type_counts_rows = await db.execute(
+        select(Note.note_type, func.count())
+        .select_from(
+            scoped_note_stmt(
+                select(Note).where(Note.is_deleted.is_(False)),
+                owner_ids,
+            ).subquery()
+        )
+        .group_by(Note.note_type)
     )
-
-    folders = [{"folder": row[0] or "(none)", "count": int(row[1])} for row in folder_result.all()]
-
-    settings_obj = None
-    vault_path_str: str | None = None
-    disk_used_mb: float | None = None
-    file_count: int | None = None
-
-    try:
-        from gnosis.config import get_settings
-
-        settings_obj = get_settings()
-        vault_path_str = str(getattr(settings_obj, "vault_path", None) or "")
-        if vault_path_str:
-            vault_path = Path(vault_path_str)
-            if vault_path.exists():
-                total_size = sum(f.stat().st_size for f in vault_path.rglob("*") if f.is_file())
-                disk_used_mb = round(total_size / (1024 * 1024), 2)
-                file_count = sum(1 for _ in vault_path.rglob("*.md"))
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Could not read vault disk stats: %s", exc)
-
+    type_counts = {row[0] or "unknown": row[1] for row in type_counts_rows.all()}
     return {
-        "total_notes": total_notes,
+        "total_notes": total_count,
         "total_words": total_words,
-        "top_folders": folders,
-        "vault_path": vault_path_str,
-        "disk_used_mb": disk_used_mb,
-        "file_count": file_count,
+        "by_type": type_counts,
     }
 
 
@@ -248,11 +231,12 @@ async def vault_stats(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/path", summary="Resolve vault filesystem path for the current user")
+@router.get("/path", summary="Resolved filesystem path for the current user's vault")
 async def get_vault_path(
     current_user: User = Depends(get_current_user),
-) -> dict[str, str]:
+) -> dict:
+    """Return the resolved filesystem path for the current user's vault."""
     from gnosis.core.namespace import resolve_vault_path
 
     path = resolve_vault_path(current_user)
-    return {"vault_path": str(path), "exists": str(path.exists())}
+    return {"vault_path": str(path), "exists": path.exists()}
