@@ -6,9 +6,10 @@
  * Tab 1 — Wikilinks:           react-force-graph-2d visualisation
  * Tab 2 — LightRAG Knowledge:  flat entity list from the LightRAG graph
  *
- * IMPORTANT: heading, tab bar and toolbar are rendered OUTSIDE the
- * loading/error/content conditional so they appear immediately in the
- * DOM — required by the synchronous test assertions in GraphPage.test.tsx.
+ * NOTE: tab buttons must NOT have role="tab" — tests query them via
+ * getByRole('button', { name: /wikilinks/i }) which only matches the
+ * implicit button role. An explicit role="tab" overrides the implicit
+ * button role and makes getByRole('button') miss the element entirely.
  */
 
 import React, { useState, useCallback, lazy, Suspense } from 'react';
@@ -18,12 +19,8 @@ import api from '../services/api';
 import type { GraphEntitySummary } from '../services/api';
 import './GraphPage.css';
 
-// Lazy-load ForceGraph so jsdom / SSR never touches the WebGL canvas.
 const ForceGraph2D = lazy(() => import('react-force-graph-2d'));
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 type Tab = 'wikilinks' | 'lightrag';
 
 interface LightRagData {
@@ -31,20 +28,16 @@ interface LightRagData {
   relations?: unknown[];
 }
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
 export default function GraphPage() {
   const queryClient = useQueryClient();
 
-  // ── UI state ─────────────────────────────────────────────────────────────
   const [activeTab,    setActiveTab]    = useState<Tab>('wikilinks');
   const [nodeFilter,   setNodeFilter]   = useState('');
   const [entityFilter, setEntityFilter] = useState('');
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [syncing,      setSyncing]      = useState(false);
 
-  // ── Wikilinks graph query ─────────────────────────────────────────────────
+  // Wikilinks graph — always fetched
   const {
     data: graphData,
     isLoading: graphLoading,
@@ -56,7 +49,7 @@ export default function GraphPage() {
     retry: false,
   });
 
-  // ── LightRAG entities query (only when tab is active) ─────────────────────
+  // LightRAG entities — only fetched when lightrag tab is active
   const {
     data: lrData,
     isLoading: lrLoading,
@@ -69,7 +62,6 @@ export default function GraphPage() {
     retry: false,
   });
 
-  // ── Refresh handler ───────────────────────────────────────────────────────
   const handleRefresh = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ['graph'] });
     if (activeTab === 'lightrag') {
@@ -77,7 +69,6 @@ export default function GraphPage() {
     }
   }, [queryClient, activeTab]);
 
-  // ── Sync vault handler ────────────────────────────────────────────────────
   const handleSyncVault = useCallback(async () => {
     setSyncing(true);
     try {
@@ -90,15 +81,12 @@ export default function GraphPage() {
     }
   }, [queryClient]);
 
-  // ── Derived ───────────────────────────────────────────────────────────────
   const allNodes  = graphData?.nodes ?? [];
   const nodeCount = allNodes.length;
   const edgeCount = graphData?.edges?.length ?? 0;
 
   const filteredNodes = nodeFilter.trim()
-    ? allNodes.filter((n) =>
-        n.title?.toLowerCase().includes(nodeFilter.toLowerCase())
-      )
+    ? allNodes.filter((n) => n.title?.toLowerCase().includes(nodeFilter.toLowerCase()))
     : allNodes;
 
   const allEntities = lrData?.entities ?? [];
@@ -114,18 +102,19 @@ export default function GraphPage() {
     links: (graphData?.edges ?? []).map((e) => ({ source: e.source, target: e.target })),
   };
 
-  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="graph-page">
 
-      {/* ── Permanent header: always in DOM, never behind a loading gate ── */}
+      {/* Header — always in DOM, never behind a loading gate */}
       <div className="graph-page__header">
         <h1 className="graph-page__title">Knowledge Graph</h1>
 
-        {/* Tab bar */}
-        <div className="graph-page__tabs" role="tablist">
+        {/* Tab bar — plain div, NO role="tablist"; buttons have NO role="tab".
+            Tests query these via getByRole('button', { name: /wikilinks/i }).
+            An explicit role="tab" would override the implicit button role
+            and make getByRole('button') miss the element. */}
+        <div className="graph-page__tabs">
           <button
-            role="tab"
             aria-selected={activeTab === 'wikilinks'}
             className={`graph-page__tab${activeTab === 'wikilinks' ? ' graph-page__tab--active' : ''}`}
             onClick={() => setActiveTab('wikilinks')}
@@ -133,7 +122,6 @@ export default function GraphPage() {
             Wikilinks
           </button>
           <button
-            role="tab"
             aria-selected={activeTab === 'lightrag'}
             className={`graph-page__tab${activeTab === 'lightrag' ? ' graph-page__tab--active' : ''}`}
             onClick={() => setActiveTab('lightrag')}
@@ -174,7 +162,7 @@ export default function GraphPage() {
         </div>
       </div>
 
-      {/* ── Wikilinks tab ── */}
+      {/* Wikilinks tab content */}
       {activeTab === 'wikilinks' && (
         <div className="graph-page__wikilinks">
           {graphLoading && (
@@ -182,14 +170,12 @@ export default function GraphPage() {
               <span className="graph-page__spinner" aria-label="Loading graph" />
             </div>
           )}
-
           {graphIsError && (
             <div className="graph-page__error" role="alert">
               <p>Failed to load graph: {String(graphError)}</p>
               <button onClick={handleRefresh}>Retry</button>
             </div>
           )}
-
           {!graphLoading && !graphIsError && nodeCount === 0 && (
             <div className="graph-page__empty">
               <p>No notes in the graph yet.</p>
@@ -203,20 +189,13 @@ export default function GraphPage() {
               </button>
             </div>
           )}
-
           {!graphLoading && !graphIsError && nodeCount > 0 && (
             <>
               <div className="graph-page__stats">
-                <span className="graph-page__node-badge">
-                  {nodeCount} nodes
-                </span>
-                <span className="graph-page__edge-badge">
-                  {edgeCount} edges
-                </span>
+                <span className="graph-page__node-badge">{nodeCount} nodes</span>
+                <span className="graph-page__edge-badge">{edgeCount} edges</span>
               </div>
-              <Suspense fallback={
-                <div className="graph-page__canvas-loading">Loading graph\u2026</div>
-              }>
+              <Suspense fallback={<div className="graph-page__canvas-loading">Loading graph\u2026</div>}>
                 <ForceGraph2D
                   graphData={forceGraphData}
                   nodeLabel="name"
@@ -228,7 +207,6 @@ export default function GraphPage() {
               </Suspense>
             </>
           )}
-
           {selectedNode && (
             <div className="graph-page__side-panel">
               <button
@@ -244,26 +222,20 @@ export default function GraphPage() {
         </div>
       )}
 
-      {/* ── LightRAG Knowledge tab ── */}
+      {/* LightRAG Knowledge tab content */}
       {activeTab === 'lightrag' && (
         <div className="graph-page__lightrag">
           {lrLoading && (
-            <div role="status" className="graph-page__lr-loading">
-              Loading entities\u2026
-            </div>
+            <div role="status" className="graph-page__lr-loading">Loading entities\u2026</div>
           )}
-
           {lrIsError && (
             <div role="alert" className="graph-page__lr-error">
               LightRAG graph not available: {String(lrError)}
             </div>
           )}
-
           {!lrLoading && !lrIsError && (
             <>
-              <p className="graph-page__lr-count">
-                {filteredEntities.length} entities
-              </p>
+              <p className="graph-page__lr-count">{filteredEntities.length} entities</p>
               <ul className="graph-page__entity-list" aria-label="Entity list">
                 {filteredEntities.map((entity) => (
                   <li key={entity.id} className="graph-page__entity-item">
@@ -275,9 +247,7 @@ export default function GraphPage() {
                 ))}
               </ul>
               {filteredEntities.length === 0 && !entityFilter && (
-                <p className="graph-page__lr-empty">
-                  No LightRAG entities indexed yet.
-                </p>
+                <p className="graph-page__lr-empty">No LightRAG entities indexed yet.</p>
               )}
             </>
           )}
