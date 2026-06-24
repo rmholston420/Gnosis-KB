@@ -1,5 +1,5 @@
 /**
- * hooks/useAI.ts — TanStack Query + Mutation hooks for AI features.
+ * hooks/useAI.ts — TanStack Query hooks for AI features plus streaming chat mutation.
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
@@ -44,7 +44,10 @@ export const useCritiqueNote = useNoteCritique;
 export function useLinkSuggestions(noteId?: string | null) {
   return useQuery<LinkSuggestResult>({
     queryKey: ['ai', 'link-suggestions', noteId],
-    queryFn: () => api.suggestLinks(noteId!) as Promise<LinkSuggestResult>,
+    queryFn: async () => {
+      const result = await api.suggestLinks(noteId!);
+      return Array.isArray(result) ? ({ suggestions: result } as LinkSuggestResult) : (result as LinkSuggestResult);
+    },
     enabled: Boolean(noteId),
   });
 }
@@ -52,7 +55,10 @@ export function useLinkSuggestions(noteId?: string | null) {
 export function useTagSuggestions(noteId?: string | null) {
   return useQuery<TagSuggestResult>({
     queryKey: ['ai', 'tag-suggestions', noteId],
-    queryFn: () => api.suggestTags(noteId!) as Promise<TagSuggestResult>,
+    queryFn: async () => {
+      const result = await api.suggestTags(noteId!);
+      return Array.isArray(result) ? ({ suggestions: result } as TagSuggestResult) : (result as TagSuggestResult);
+    },
     enabled: Boolean(noteId),
   });
 }
