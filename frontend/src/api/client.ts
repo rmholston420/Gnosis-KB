@@ -29,3 +29,7 @@ apiClient.interceptors.response.use(
     return Promise.reject(err);
   },
 );
+
+// Default export so `import client from './client'` works in api/* modules
+// AND named export is preserved for direct imports.
+export default apiClient;
