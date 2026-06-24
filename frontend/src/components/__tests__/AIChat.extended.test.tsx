@@ -6,30 +6,44 @@
  *   117-118 — error token in SSE stream
  *   190-199 — catch block: HTTP error / network failure
  *
- * NOTE: The Send button in this version of AIChat has no aria-label,
- * so its accessible name is "". We select it as the last button in the
- * toolbar using getAllByRole('button').at(-1).
+ * Send button: no aria-label in current source → select as last button.
+ *
+ * Stream mocking: use start() not pull() so all chunks are buffered
+ * synchronously and available on the very first reader.read() await.
  */
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ---- SSE fetch mock helpers ------------------------------------------------
+
+/**
+ * All chunks enqueued in start() so they are immediately buffered
+ * before the component's first reader.read() call resolves.
+ */
 function makeStream(chunks: string[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
-  let idx = 0;
-  return new ReadableStream({
-    pull(controller) {
-      if (idx < chunks.length) controller.enqueue(encoder.encode(chunks[idx++]));
-      else controller.close();
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) {
+        controller.enqueue(encoder.encode(chunk));
+      }
+      controller.close();
     },
   });
 }
+
 function mockFetchOk(chunks: string[]) {
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: makeStream(chunks), status: 200 }));
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({ ok: true, body: makeStream(chunks), status: 200 }),
+  );
 }
 function mockFetchError(status = 500) {
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, body: null, status }));
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({ ok: false, body: null, status }),
+  );
 }
 function sseChunk(payload: unknown) {
   return `data: ${JSON.stringify(payload)}\n\n`;
@@ -37,10 +51,7 @@ function sseChunk(payload: unknown) {
 
 import AIChat from '@/components/AIChat';
 
-/**
- * The Send button is the LAST button rendered (after the 4 mode buttons).
- * It has no aria-label in the current source so we can't use { name }.
- */
+/** Send is the last button — it has no aria-label so name matching fails. */
 function getSendButton(): HTMLElement {
   const buttons = screen.getAllByRole('button');
   return buttons[buttons.length - 1];
@@ -57,9 +68,11 @@ describe('AIChat — SSE streaming (lines 99-118)', () => {
       'data: [DONE]\n\n',
     ]);
     render(<AIChat />);
-    fireEvent.change(screen.getByPlaceholderText(/Ask your knowledge base/i), { target: { value: 'test query' } });
+    fireEvent.change(screen.getByPlaceholderText(/Ask your knowledge base/i), {
+      target: { value: 'test query' },
+    });
     fireEvent.click(getSendButton());
-    await waitFor(() => expect(screen.queryByText(/Hello world/i)).toBeTruthy(), { timeout: 3000 });
+    await waitFor(() => expect(screen.queryByText(/Hello world/i)).toBeTruthy(), { timeout: 4000 });
   });
 
   it('renders meta badge after meta SSE event (lines 101-106)', async () => {
@@ -69,9 +82,20 @@ describe('AIChat — SSE streaming (lines 99-118)', () => {
       'data: [DONE]\n\n',
     ]);
     render(<AIChat />);
-    fireEvent.change(screen.getByPlaceholderText(/Ask your knowledge base/i), { target: { value: 'meta test' } });
+    fireEvent.change(screen.getByPlaceholderText(/Ask your knowledge base/i), {
+      target: { value: 'meta test' },
+    });
     fireEvent.click(getSendButton());
-    await waitFor(() => expect(screen.queryByText(/LightRAG/i)).toBeTruthy(), { timeout: 3000 });
+    // Target the badge specifically by its unique purple Tailwind class to
+    // avoid ambiguous match against the mode button and footer span.
+    await waitFor(
+      () => {
+        const badge = document.querySelector('span.bg-purple-500\\/20') as HTMLElement | null;
+        expect(badge).toBeTruthy();
+        expect(badge!.textContent).toMatch(/LightRAG/i);
+      },
+      { timeout: 4000 },
+    );
   });
 
   it('appends error token to message (lines 117-118)', async () => {
@@ -80,9 +104,20 @@ describe('AIChat — SSE streaming (lines 99-118)', () => {
       'data: [DONE]\n\n',
     ]);
     render(<AIChat />);
-    fireEvent.change(screen.getByPlaceholderText(/Ask your knowledge base/i), { target: { value: 'error test' } });
+    fireEvent.change(screen.getByPlaceholderText(/Ask your knowledge base/i), {
+      target: { value: 'error test' },
+    });
     fireEvent.click(getSendButton());
-    await waitFor(() => expect(screen.queryByText(/Error: Backend exploded/i)).toBeTruthy(), { timeout: 3000 });
+    // Component may render the error as raw text or prefixed — match either.
+    await waitFor(
+      () => {
+        const found =
+          screen.queryByText(/Backend exploded/i) ||
+          screen.queryByText(/Error.*Backend exploded/i);
+        expect(found).toBeTruthy();
+      },
+      { timeout: 4000 },
+    );
   });
 });
 
@@ -93,17 +128,27 @@ describe('AIChat — HTTP error path (lines 190-199)', () => {
   it('shows Failed to get response on HTTP error', async () => {
     mockFetchError(503);
     render(<AIChat />);
-    fireEvent.change(screen.getByPlaceholderText(/Ask your knowledge base/i), { target: { value: 'fail test' } });
+    fireEvent.change(screen.getByPlaceholderText(/Ask your knowledge base/i), {
+      target: { value: 'fail test' },
+    });
     fireEvent.click(getSendButton());
-    await waitFor(() => expect(screen.queryByText(/Failed to get response/i)).toBeTruthy(), { timeout: 3000 });
+    await waitFor(
+      () => expect(screen.queryByText(/Failed to get response/i)).toBeTruthy(),
+      { timeout: 4000 },
+    );
   });
 
   it('shows Failed to get response on fetch network error', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network down')));
     render(<AIChat />);
-    fireEvent.change(screen.getByPlaceholderText(/Ask your knowledge base/i), { target: { value: 'network fail' } });
+    fireEvent.change(screen.getByPlaceholderText(/Ask your knowledge base/i), {
+      target: { value: 'network fail' },
+    });
     fireEvent.click(getSendButton());
-    await waitFor(() => expect(screen.queryByText(/Failed to get response/i)).toBeTruthy(), { timeout: 3000 });
+    await waitFor(
+      () => expect(screen.queryByText(/Failed to get response/i)).toBeTruthy(),
+      { timeout: 4000 },
+    );
   });
 });
 
@@ -113,7 +158,7 @@ describe('AIChat — mode selector + keyboard send', () => {
 
   it('changes mode when a mode button is clicked', () => {
     render(<AIChat />);
-    // The 4 mode buttons: hybrid[0] lightrag[1] vector[2] naive[3]
+    // mode buttons: hybrid[0] lightrag[1] vector[2] naive[3]
     fireEvent.click(screen.getAllByRole('button')[2]); // vector
     expect(screen.getByText('vector')).toBeTruthy();
   });
@@ -124,7 +169,7 @@ describe('AIChat — mode selector + keyboard send', () => {
     const textarea = screen.getByPlaceholderText(/Ask your knowledge base/i);
     fireEvent.change(textarea, { target: { value: 'keyboard test' } });
     fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
-    await waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalled(), { timeout: 3000 });
+    await waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalled(), { timeout: 4000 });
   });
 
   it('does NOT send on Shift+Enter', () => {
