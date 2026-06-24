@@ -328,7 +328,7 @@ export default function NoteEditorPage() {
         {showRightPanel ? (
           <SplitPane
             left={editorArea(
-              async (body, title) => { await updateMutation.mutateAsync({ body, title }); },
+              async (body, title) => { void updateMutation.mutateAsync({ body, title }); },
               updateMutation.isPending,
             )}
             right={rightPanel}
@@ -336,7 +336,7 @@ export default function NoteEditorPage() {
           />
         ) : (
           editorArea(
-            async (body, title) => { await updateMutation.mutateAsync({ body, title }); },
+            async (body, title) => { void updateMutation.mutateAsync({ body, title }); },
             updateMutation.isPending,
           )
         )}

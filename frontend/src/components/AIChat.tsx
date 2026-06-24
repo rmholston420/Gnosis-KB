@@ -12,7 +12,7 @@
 
 import { useRef, useState } from 'react';
 import { Send, Loader2, Bot, User, Zap, BookOpen, Cpu } from 'lucide-react';
-import type { ChatMessage } from '../types';
+import type { AIChatMessage as BaseChatMessage } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api/v1';
 
@@ -32,9 +32,11 @@ const SOURCE_BADGE: Record<RagSource, { label: string; className: string }> = {
   naive:    { label: 'Naive',    className: 'bg-gray-500/20   text-gray-300   border-gray-500/30'   },
 };
 
-interface AIChatMessage extends ChatMessage {
+// Use a type alias intersection instead of interface extension to avoid
+// TS2430 when narrowing the `meta` property type.
+type AIChatMessage = BaseChatMessage & {
   meta?: MetaPayload;
-}
+};
 
 export default function AIChat() {
   const [messages, setMessages] = useState<AIChatMessage[]>([]);
@@ -191,9 +193,9 @@ export default function AIChat() {
               {msg.role === 'assistant' && msg.meta && (
                 <div className="mt-1 flex gap-1">
                   <span className={`text-xs px-1.5 py-0.5 rounded border ${
-                    SOURCE_BADGE[msg.meta.rag_source]?.className ?? 'bg-gray-500/20 text-gray-300 border-gray-500/30'
+                    SOURCE_BADGE[msg.meta.rag_source as RagSource]?.className ?? 'bg-gray-500/20 text-gray-300 border-gray-500/30'
                   }`}>
-                    {SOURCE_BADGE[msg.meta.rag_source]?.label ?? msg.meta.rag_source}
+                    {SOURCE_BADGE[msg.meta.rag_source as RagSource]?.label ?? String(msg.meta.rag_source)}
                   </span>
                 </div>
               )}
