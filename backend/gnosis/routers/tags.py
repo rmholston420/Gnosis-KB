@@ -1,4 +1,4 @@
-"""Tag endpoints — user-scoped tag aggregation.
+"""Tag endpoints -- user-scoped tag aggregation.
 
 GET /tags/
   Returns all tags that have at least one note belonging to the requesting
@@ -34,13 +34,13 @@ async def list_tags(
     Only counts notes owned by the requesting user so cross-user leakage
     is impossible even on a shared database.
     """
-    # Join Tag → NoteTag → Note, filter by owner, group by tag name
+    # Join Tag -> NoteTag (by integer PK) -> Note, filter by owner, group by tag name
     stmt = (
         select(
             Tag.name.label("tag"),
             func.count(NoteTag.c.note_id).label("count"),
         )
-        .join(NoteTag, Tag.name == NoteTag.c.tag_id)
+        .join(NoteTag, Tag.id == NoteTag.c.tag_id)
         .join(Note, Note.id == NoteTag.c.note_id)
         .where(
             Note.owner_id == current_user.id,
