@@ -1,121 +1,121 @@
-/**
- * SettingsPage
- * ============
- * Sections:
- *   1. AI Provider   — model picker + connection status
- *   2. RAG Mode      — hybrid / local / global radio
- *   3. Export        — vault export with format picker (markdown zip / JSON)
- *   4. Vault Sync    — trigger full resync + streamed progress log  [Slice 15]
- *   5. Security      — auth info
- */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Settings, Cpu, Database, Shield, Save, RefreshCw,
-  Download, Archive, FileJson, FolderSync, CheckCircle2,
-  AlertCircle,
+  Settings,
+  Cpu,
+  CircleCheck,
+  Radio,
+  Shield,
+  Download,
+  RefreshCw,
 } from 'lucide-react';
-import { useAppStore } from '../store/useAppStore';
-import type { RagMode } from '../store/useAppStore';
 import api from '../services/api';
+import type { AppSettings, ExportFormat } from '../types/api';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+const RAG_MODES = [
+  {
+    value: 'hybrid',
+    label: 'Hybrid Vector + graph traversal (recommended)',
+    description: 'Uses local embeddings first, then graph neighbors for context expansion.',
+  },
+  {
+    value: 'local',
+    label: 'Local Vector similarity only',
+    description: 'Fastest path for tight, semantically-similar note retrieval.',
+  },
+  {
+    value: 'global',
+    label: 'Global Graph-wide community search',
+    description: 'Best for discovery across distant areas of the vault graph.',
+  },
+] as const;
 
-const EMBED_PATTERNS = ['embed', 'nomic', 'mxbai', 'bge', 'e5', 'minilm'];
-function isChatModel(name: string) {
-  const lower = name.toLowerCase();
-  return !EMBED_PATTERNS.some((p) => lower.includes(p));
-}
-
-const RAG_MODES: { value: RagMode; label: string; desc: string }[] = [
-  { value: 'hybrid', label: 'Hybrid', desc: 'Vector + graph traversal (recommended)' },
-  { value: 'local',  label: 'Local',  desc: 'Vector similarity only' },
-  { value: 'global', label: 'Global', desc: 'Graph-wide community search' },
+const EXPORT_FORMATS: Array<{ value: ExportFormat; label: string }> = [
+  { value: 'markdown', label: 'Markdown ZIP' },
+  { value: 'json', label: 'JSON' },
 ];
 
-type ExportFormat = 'markdown' | 'json';
-
-interface ProviderInfo {
-  provider: string;
-  model: string;
-  available: boolean;
-  models: string[];
+function SectionHeader({ icon, title, status }: { icon: React.ReactNode; title: string; status?: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-2 pb-2 border-b border-border">
+      {icon}
+      <h2 className="text-sm font-semibold text-text-primary">{title}</h2>
+      {status ? <span className="ml-auto">{status}</span> : null}
+    </div>
+  );
 }
 
-// Vault sync states
-type SyncState = 'idle' | 'running' | 'done' | 'error';
-
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
-
 export default function SettingsPage() {
-  const { ragMode, setRagMode } = useAppStore();
-
-  // AI Provider state
-  const [provider, setProvider]             = useState<ProviderInfo | null>(null);
-  const [selectedModel, setSelectedModel]   = useState('');
-  const [saving, setSaving]                 = useState(false);
-  const [saved, setSaved]                   = useState(false);
-  const [error, setError]                   = useState('');
-
-  // Export state
-  const [exportFormat, setExportFormat]     = useState<ExportFormat>('markdown');
-  const [exporting, setExporting]           = useState(false);
-  const [exportError, setExportError]       = useState('');
-
-  // Vault sync state
-  const [syncState, setSyncState]           = useState<SyncState>('idle');
-  const [syncLines, setSyncLines]           = useState<string[]>([]);
-  const [syncError, setSyncError]           = useState('');
-  const logEndRef                           = useRef<HTMLDivElement>(null);
-  const eventSourceRef                      = useRef<EventSource | null>(null);
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [exportFormat, setExportFormat] = useState<ExportFormat>('markdown');
+  const [exporting, setExporting] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [exportError, setExportError] = useState('');
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [selectedModel, setSelectedModel] = useState('');
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'active' | 'error'>('idle');
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
-    api
-      .getProviders()
+    let mounted = true;
+    api.getSettings()
       .then((data) => {
-        const p = data as ProviderInfo;
-        setProvider(p);
-        setSelectedModel(p.model);
+        if (!mounted) return;
+        setSettings(data);
+        setSelectedModel(data.ai.model);
       })
-      .catch(() => setError('Could not load provider info'));
-
-    // Cleanup SSE on unmount — copy ref to local var so the closure
-    // captures the current value at effect-run time, not cleanup time.
-    const es = eventSourceRef.current;
-    return () => es?.close();
+      .catch(() => {})
+      .finally(() => {
+        if (!mounted) return;
+      });
+    return () => {
+      mounted = false;
+    };
   }, []);
 
-  // Auto-scroll log to bottom
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [syncLines]);
+    const es = new EventSource('/api/v1/sync/events');
+    eventSourceRef.current = es;
 
-  async function handleModelSave() {
-    if (!selectedModel || selectedModel === provider?.model) return;
-    setSaving(true);
-    setError('');
-    try {
-      await api.setModel(selectedModel);
-      setProvider((prev) => prev ? { ...prev, model: selectedModel } : prev);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-    } catch {
-      setError('Failed to update model');
-    } finally {
-      setSaving(false);
+    es.addEventListener('sync_started', () => setSyncStatus('active'));
+    es.addEventListener('sync_completed', () => setSyncStatus('idle'));
+    es.addEventListener('sync_error', () => setSyncStatus('error'));
+
+    return () => {
+      es.close();
+      eventSourceRef.current = null;
+    };
+  }, []);
+
+  const providerBadge = useMemo(() => {
+    if (!settings) return null;
+    if (settings.ai.connected) {
+      return (
+        <span className="ml-auto flex items-center gap-1 text-xs text-green-400">
+          <CircleCheck size={12} /> Connected
+        </span>
+      );
     }
-  }
+    return <span className="ml-auto text-xs text-red-400">Disconnected</span>;
+  }, [settings]);
 
-  async function handleExport() {
+  const handleSaveModel = async () => {
+    if (!settings || selectedModel === settings.ai.model) return;
+    setSaveState('saving');
+    try {
+      const updated = await api.patchSettings({ ai: { model: selectedModel } });
+      setSettings(updated);
+      setSaveState('saved');
+      window.setTimeout(() => setSaveState('idle'), 1400);
+    } catch {
+      setSaveState('idle');
+    }
+  };
+
+  const handleExport = async () => {
     setExporting(true);
     setExportError('');
     try {
-      const blob = await (api as unknown as {
-        exportVault: (fmt: ExportFormat) => Promise<Blob>;
-      }).exportVault(exportFormat);
+      const blob = await api.exportVault(exportFormat);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -127,145 +127,99 @@ export default function SettingsPage() {
     } finally {
       setExporting(false);
     }
+  };
+
+  const handleSync = async () => {
+    setSyncing(true);
+    try {
+      await api.syncObsidian();
+      setSyncStatus('idle');
+    } catch {
+      setSyncStatus('error');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  if (!settings) {
+    return (
+      <div className="flex-1 overflow-y-auto px-6 py-6">
+        <div className="animate-pulse space-y-6">
+          <div className="h-4 w-32 rounded bg-bg-tertiary" />
+          <div className="h-24 rounded-xl bg-bg-elevated" />
+          <div className="h-24 rounded-xl bg-bg-elevated" />
+        </div>
+      </div>
+    );
   }
-
-  const handleVaultSync = useCallback(() => {
-    setSyncState('running');
-    setSyncLines([]);
-    setSyncError('');
-
-    eventSourceRef.current?.close();
-    const token = localStorage.getItem('gnosis_token') ?? '';
-    const base  = import.meta.env.VITE_API_BASE_URL ?? '';
-    const url   = `${base}/api/v1/vault/sync/stream?token=${encodeURIComponent(token)}`;
-    const es    = new EventSource(url);
-    eventSourceRef.current = es;
-
-    es.onmessage = (ev: MessageEvent) => {
-      const line = ev.data as string;
-      if (line === '[DONE]') {
-        es.close();
-        setSyncState('done');
-        return;
-      }
-      setSyncLines((prev) => [...prev, line]);
-    };
-
-    es.onerror = () => {
-      es.close();
-      setSyncState('error');
-      setSyncError('Sync stream disconnected. Check server logs.');
-    };
-  }, []);
 
   return (
     <div className="flex-1 overflow-y-auto px-6 py-6 space-y-8 max-w-2xl">
-
-      {/* ── Page header ────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-2">
         <Settings size={16} className="text-text-muted" />
         <h1 className="text-base font-semibold text-text-primary">Settings</h1>
       </div>
 
-      {/* ── AI Provider ────────────────────────────────────────────────────── */}
       <section className="space-y-4">
-        <div className="flex items-center gap-2 pb-2 border-b border-border">
-          <Cpu size={14} className="text-text-muted" />
-          <h2 className="text-sm font-semibold text-text-primary">AI Provider</h2>
-          {provider?.available && (
-            <span className="ml-auto flex items-center gap-1 text-xs text-green-400">
-              <CheckCircle2 size={12} /> Connected
-            </span>
-          )}
-          {provider && !provider.available && (
-            <span className="ml-auto flex items-center gap-1 text-xs text-red-400">
-              <AlertCircle size={12} /> Unavailable
-            </span>
-          )}
-        </div>
-
-        {error && (
-          <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-xs px-3 py-2 rounded">
-            {error}
+        <SectionHeader icon={<Cpu size={14} className="text-text-muted" />} title="AI Provider" status={providerBadge} />
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+            <span className="text-text-muted">Provider</span>
+            <span className="text-text-primary capitalize">{settings.ai.provider}</span>
           </div>
-        )}
-
-        {provider && (
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-              <span className="text-text-muted">Provider</span>
-              <span className="text-text-primary capitalize">{provider.provider}</span>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs text-text-muted" htmlFor="model-select">
-                Active model
-              </label>
-              <select
-                id="model-select"
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                className="w-full rounded bg-bg-elevated border border-border text-sm px-3 py-1.5 text-text-primary focus:outline-none"
-              >
-                {provider.models.filter(isChatModel).map((m) => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </select>
-            </div>
-
-            <button
-              onClick={() => void handleModelSave()}
-              disabled={saving || selectedModel === provider.model}
-              className="flex items-center gap-2 px-3 py-1.5 rounded bg-accent-teal/10 text-accent-teal text-xs hover:bg-accent-teal/20 disabled:opacity-40 transition-colors"
+          <div className="space-y-1.5">
+            <label htmlFor="model-select" className="text-xs text-text-muted">Active model</label>
+            <select
+              id="model-select"
+              value={selectedModel}
+              onChange={(e) => {
+                setSelectedModel(e.target.value);
+                setSaveState('idle');
+              }}
+              className="w-full rounded bg-bg-elevated border border-border text-sm px-3 py-1.5 text-text-primary focus:outline-none"
             >
-              {saving ? <RefreshCw size={12} className="animate-spin" /> : <Save size={12} />}
-              {saved ? 'Saved!' : 'Save model'}
-            </button>
+              {settings.ai.available_models.map((model) => (
+                <option key={model} value={model}>{model}</option>
+              ))}
+            </select>
           </div>
-        )}
-
-        {!provider && !error && (
-          <div className="flex items-center gap-2 text-xs text-text-muted">
-            <RefreshCw size={12} className="animate-spin" /> Loading provider info…
-          </div>
-        )}
+          <button
+            type="button"
+            onClick={handleSaveModel}
+            disabled={saveState === 'saving' || selectedModel === settings.ai.model}
+            className="flex items-center gap-2 px-3 py-1.5 rounded bg-accent-teal/10 text-accent-teal text-xs hover:bg-accent-teal/20 disabled:opacity-40 transition-colors"
+          >
+            {saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved' : 'Save model'}
+          </button>
+        </div>
       </section>
 
-      {/* ── RAG Mode ───────────────────────────────────────────────────────── */}
       <section className="space-y-4">
-        <div className="flex items-center gap-2 pb-2 border-b border-border">
-          <Database size={14} className="text-text-muted" />
-          <h2 className="text-sm font-semibold text-text-primary">RAG Mode</h2>
-        </div>
-        <div className="space-y-2">
-          {RAG_MODES.map(({ value, label, desc }) => (
-            <label
-              key={value}
-              className="flex items-start gap-3 rounded-lg border border-border p-3 cursor-pointer hover:bg-bg-elevated transition-colors"
-            >
+        <SectionHeader icon={<Radio size={14} className="text-text-muted" />} title="RAG Mode" />
+        <div className="space-y-3">
+          {RAG_MODES.map((mode) => (
+            <label key={mode.value} className="flex items-start gap-3 rounded-lg border border-border bg-bg-elevated px-3 py-2.5">
               <input
                 type="radio"
                 name="rag-mode"
-                value={value}
-                checked={ragMode === value}
-                onChange={() => setRagMode(value)}
+                value={mode.value}
+                checked={settings.rag.mode === mode.value}
+                onChange={() => {
+                  setSettings((prev) => prev ? { ...prev, rag: { ...prev.rag, mode: mode.value } } : prev);
+                }}
                 className="mt-0.5"
               />
-              <div>
-                <div className="text-sm font-medium text-text-primary">{label}</div>
-                <div className="text-xs text-text-muted">{desc}</div>
-              </div>
+              <span className="space-y-0.5">
+                <span className="text-sm text-text-primary">{mode.label}</span>
+                <span className="block text-xs text-text-muted">{mode.description}</span>
+              </span>
             </label>
           ))}
         </div>
       </section>
 
-      {/* ── Export ─────────────────────────────────────────────────────────── */}
       <section className="space-y-4">
-        <div className="flex items-center gap-2 pb-2 border-b border-border">
-          <Download size={14} className="text-text-muted" />
-          <h2 className="text-sm font-semibold text-text-primary">Export Vault</h2>
-        </div>
+        <SectionHeader icon={<Download size={14} className="text-text-muted" />} title="Export Vault" />
 
         {exportError && (
           <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-xs px-3 py-2 rounded">
@@ -273,140 +227,79 @@ export default function SettingsPage() {
           </div>
         )}
 
-        <div className="flex items-center gap-3">
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="radio"
-              name="export-format"
-              value="markdown"
-              checked={exportFormat === 'markdown'}
-              onChange={() => setExportFormat('markdown')}
-            />
-            <Archive size={13} className="text-text-muted" />
-            <span className="text-sm text-text-primary">Markdown ZIP</span>
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="radio"
-              name="export-format"
-              value="json"
-              checked={exportFormat === 'json'}
-              onChange={() => setExportFormat('json')}
-            />
-            <FileJson size={13} className="text-text-muted" />
-            <span className="text-sm text-text-primary">JSON</span>
-          </label>
-        </div>
-
-        <button
-          onClick={() => void handleExport()}
-          disabled={exporting}
-          className="flex items-center gap-2 px-4 py-2 bg-bg-elevated hover:bg-bg-tertiary border border-border rounded text-sm text-text-primary disabled:opacity-50 transition-colors"
-        >
-          {exporting
-            ? <RefreshCw size={13} className="animate-spin text-accent-cyan" />
-            : <Download size={13} className="text-text-muted" />}
-          {exporting ? 'Exporting…' : 'Download export'}
-        </button>
-
-        <p className="text-xs text-text-faint">
-          Exports all notes in the active vault. Attachments and binary files
-          are not included.
-        </p>
-      </section>
-
-      {/* ── Vault Sync (Slice 15) ───────────────────────────────────────────── */}
-      <section className="space-y-4">
-        <div className="flex items-center gap-2 pb-2 border-b border-border">
-          <FolderSync size={14} className="text-text-muted" />
-          <h2 className="text-sm font-semibold text-text-primary">Vault Sync</h2>
-          {syncState === 'done' && (
-            <CheckCircle2 size={14} className="ml-auto text-green-400" />
-          )}
-          {syncState === 'error' && (
-            <AlertCircle size={14} className="ml-auto text-red-400" />
-          )}
-        </div>
-
-        <p className="text-xs text-text-muted">
-          Force a full resync of the vault filesystem into the database and
-          vector store. Use this after adding notes directly to the
-          <code className="text-xs bg-bg-tertiary px-1 py-0.5 rounded mx-1">vault/</code>
-          directory, or after an import.
-        </p>
-
-        {syncError && (
-          <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-xs px-3 py-2 rounded">
-            {syncError}
+        <div className="rounded-xl border border-border bg-bg-elevated px-4 py-4 space-y-3">
+          <p className="text-sm text-text-muted">
+            Export your vault as either a Markdown ZIP or raw JSON snapshot.
+          </p>
+          <div className="flex flex-wrap gap-4">
+            {EXPORT_FORMATS.map((format) => (
+              <label key={format.value} className="flex items-center gap-2 text-sm text-text-primary">
+                <input
+                  type="radio"
+                  name="export-format"
+                  value={format.value}
+                  checked={exportFormat === format.value}
+                  onChange={() => setExportFormat(format.value)}
+                />
+                {format.label}
+              </label>
+            ))}
           </div>
-        )}
-
-        <div className="flex items-center gap-3">
           <button
-            onClick={handleVaultSync}
-            disabled={syncState === 'running'}
+            type="button"
+            onClick={handleExport}
+            disabled={exporting}
             className="flex items-center gap-2 px-4 py-2 bg-bg-elevated hover:bg-bg-tertiary border border-border rounded text-sm text-text-primary disabled:opacity-50 transition-colors"
           >
-            {syncState === 'running'
-              ? <RefreshCw size={13} className="animate-spin text-accent-cyan" />
-              : syncState === 'done'
-                ? <CheckCircle2 size={13} className="text-green-400" />
-                : <FolderSync size={13} className="text-text-muted" />}
-            {syncState === 'running' ? 'Syncing…' : syncState === 'done' ? 'Sync complete' : 'Sync Now'}
+            <Download size={14} />
+            {exporting ? 'Preparing export…' : 'Download export'}
           </button>
-
-          {syncState !== 'idle' && (
-            <button
-              onClick={() => { setSyncState('idle'); setSyncLines([]); setSyncError(''); }}
-              className="text-xs text-text-faint hover:text-text-muted transition-colors"
-            >
-              Clear
-            </button>
-          )}
         </div>
-
-        {/* Streaming log terminal */}
-        {syncLines.length > 0 && (
-          <div
-            className="rounded border border-border bg-bg-tertiary font-mono text-xs text-text-secondary overflow-y-auto"
-            style={{ maxHeight: '220px' }}
-          >
-            <div className="px-3 py-2 space-y-0.5">
-              {syncLines.map((line, i) => {
-                const isError   = line.startsWith('error:');
-                const isSynced  = line.startsWith('synced:');
-                const isSkipped = line.startsWith('skipped:') || line.startsWith('total:') || line.startsWith('done:');
-                return (
-                  <div
-                    key={i}
-                    className={`leading-5 ${
-                      isError   ? 'text-red-400'
-                      : isSynced  ? 'text-green-400'
-                      : isSkipped ? 'text-text-faint'
-                      : 'text-text-secondary'
-                    }`}
-                  >
-                    {line}
-                  </div>
-                );
-              })}
-              <div ref={logEndRef} />
-            </div>
-          </div>
-        )}
       </section>
 
-      {/* ── Security ───────────────────────────────────────────────────────────── */}
       <section className="space-y-4">
-        <div className="flex items-center gap-2 pb-2 border-b border-border">
-          <Shield size={14} className="text-text-muted" />
-          <h2 className="text-sm font-semibold text-text-primary">Security</h2>
+        <SectionHeader
+          icon={<RefreshCw size={14} className="text-text-muted" />}
+          title="Vault Sync"
+          status={
+            syncStatus === 'active' ? (
+              <span className="ml-auto text-xs text-accent-teal">Syncing…</span>
+            ) : syncStatus === 'error' ? (
+              <span className="ml-auto text-xs text-red-400">Error</span>
+            ) : null
+          }
+        />
+        <div className="rounded-xl border border-border bg-bg-elevated px-4 py-4 space-y-3">
+          <p className="text-sm text-text-muted">
+            Pull the latest notes from your Obsidian vault and refresh graph, vector, and cache indexes.
+          </p>
+          <button
+            type="button"
+            onClick={handleSync}
+            disabled={syncing || syncStatus === 'active'}
+            className="flex items-center gap-2 px-4 py-2 bg-bg-elevated hover:bg-bg-tertiary border border-border rounded text-sm text-text-primary disabled:opacity-50 transition-colors"
+          >
+            <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
+            {syncing ? 'Syncing…' : 'Sync Now'}
+          </button>
         </div>
-        <p className="text-sm text-text-muted">
-          Authentication is JWT-based. Tokens expire after 24 hours. Change your
-          password via the API at{' '}
-          <code className="text-xs bg-bg-tertiary px-1.5 py-0.5 rounded">/api/v1/auth/change-password</code>.
-        </p>
+      </section>
+
+      <section className="space-y-4">
+        <SectionHeader icon={<Shield size={14} className="text-text-muted" />} title="Security" />
+        <div className="rounded-xl border border-border bg-bg-elevated px-4 py-4 space-y-2 text-sm text-text-muted">
+          <p>
+            Authentication token is stored locally under
+            <code className="text-xs bg-bg-tertiary px-1 py-0.5 rounded mx-1">gnosis_token</code>
+            and attached as a bearer token for API requests.
+          </p>
+          <p>
+            For production, rotate secrets regularly and serve the frontend over HTTPS only.
+          </p>
+          <p className="text-xs text-text-faint">
+            Active API base URL: <code className="text-xs bg-bg-tertiary px-1.5 py-0.5 rounded">{api.defaults.baseURL ?? '/api/v1'}</code>
+          </p>
+        </div>
       </section>
     </div>
   );

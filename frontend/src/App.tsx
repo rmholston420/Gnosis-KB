@@ -1,5 +1,5 @@
 import React, { useCallback } from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import { Toaster, toast } from 'react-hot-toast';
 
 import Layout                        from '@/components/Layout';
@@ -60,22 +60,9 @@ const Fallback = (
   </div>
 );
 
-export default function App() {
-  const handleToast = useCallback(
-    (message: string, variant: 'info' | 'success' | 'warning') => {
-      if (variant === 'success') toast.success(message, { duration: 4000 });
-      else if (variant === 'warning') toast(message, { icon: '⚠️', duration: Infinity });
-      else toast(message, { duration: 4000 });
-    },
-    []
-  );
-
-  const { isOnline, queuedCount, triggerSync } = useOfflineSync(handleToast);
-
+export function AppRoutes() {
   return (
-    <BrowserRouter>
-      <OfflineBanner isOnline={isOnline} queuedCount={queuedCount} onSyncClick={triggerSync} />
-
+    <>
       <React.Suspense fallback={Fallback}>
         <Routes>
           {/* Public */}
@@ -119,6 +106,26 @@ export default function App() {
           },
         }}
       />
-    </BrowserRouter>
+    </>
+  );
+}
+
+export default function App() {
+  const handleToast = useCallback(
+    (message: string, variant: 'info' | 'success' | 'warning') => {
+      if (variant === 'success') toast.success(message, { duration: 4000 });
+      else if (variant === 'warning') toast(message, { icon: '⚠️', duration: Infinity });
+      else toast(message, { duration: 4000 });
+    },
+    []
+  );
+
+  const { isOnline, queuedCount, triggerSync } = useOfflineSync(handleToast);
+
+  return (
+    <>
+      <OfflineBanner isOnline={isOnline} queuedCount={queuedCount} onSyncClick={triggerSync} />
+      <AppRoutes />
+    </>
   );
 }

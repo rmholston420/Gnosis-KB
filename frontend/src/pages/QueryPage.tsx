@@ -5,8 +5,6 @@ import axios from 'axios';
 
 const API = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8010';
 
-// ---- Types ---------------------------------------------------------------
-
 interface QueryResult {
   rows: Record<string, unknown>[];
   total: number;
@@ -22,8 +20,6 @@ interface SavedDashboard {
   updated_at: string;
 }
 
-// ---- API helpers ---------------------------------------------------------
-
 const api = {
   runQuery: (query: string): Promise<QueryResult> =>
     axios.post(`${API}/api/v1/query/run`, { query }).then(r => r.data),
@@ -37,8 +33,6 @@ const api = {
     axios.post(`${API}/api/v1/query/saved/${id}/run`).then(r => r.data),
 };
 
-// ---- Example queries shown in the sidebar --------------------------------
-
 const EXAMPLES = [
   { label: 'Draft zettelkasten notes', query: 'FROM 10-zettelkasten WHERE status=draft SORT modified DESC LIMIT 20' },
   { label: 'Inbox (recent)', query: 'FROM 00-inbox SORT modified_at DESC LIMIT 10 SELECT title,status,modified_at' },
@@ -48,14 +42,12 @@ const EXAMPLES = [
   { label: 'Needs review (last 7 days)', query: 'FROM 10-zettelkasten WHERE status=evergreen SORT last_reviewed ASC LIMIT 20 SELECT title,last_reviewed,folder' },
 ];
 
-// ---- ResultTable component -----------------------------------------------
-
 function ResultTable({ result }: { result: QueryResult }) {
   if (result.rows.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-gray-400">
         <Database size={40} className="mb-3 opacity-40" />
-        <p className="text-sm">No notes matched your query.</p>
+        <p className="text-sm">No results matched your query.</p>
       </div>
     );
   }
@@ -106,7 +98,6 @@ function ResultTable({ result }: { result: QueryResult }) {
                     </span>
                   );
                 } else if (typeof val === 'string' && val.includes('T') && val.includes(':')) {
-                  // ISO datetime — show only date part
                   display = <span className="text-gray-500">{val.slice(0, 10)}</span>;
                 }
                 return <td key={col} className="py-2 px-3 align-top">{display}</td>;
@@ -118,8 +109,6 @@ function ResultTable({ result }: { result: QueryResult }) {
     </div>
   );
 }
-
-// ---- SaveDialog component ------------------------------------------------
 
 function SaveDialog({
   query,
@@ -138,7 +127,7 @@ function SaveDialog({
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="w-full max-w-md rounded-xl bg-white dark:bg-gray-900 shadow-2xl p-6 space-y-4">
         <h2 className="text-base font-semibold">Save Query</h2>
         <input
@@ -169,11 +158,9 @@ function SaveDialog({
   );
 }
 
-// ---- Main component ------------------------------------------------------
-
 export default function QueryPage() {
   const queryClient = useQueryClient();
-  const [queryText, setQueryText]   = useState(EXAMPLES[0].query);
+  const [queryText, setQueryText]   = useState('');
   const [result, setResult]         = useState<QueryResult | null>(null);
   const [error, setError]           = useState<string | null>(null);
   const [showSave, setShowSave]     = useState(false);
@@ -211,9 +198,7 @@ export default function QueryPage() {
 
   return (
     <div className="flex h-full min-h-0 overflow-hidden">
-      {/* Sidebar */}
       <div className="w-64 flex-shrink-0 border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 flex flex-col overflow-hidden">
-        {/* Examples */}
         <div className="px-3 py-3 border-b border-gray-200 dark:border-gray-800">
           <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Examples</p>
           <div className="space-y-1">
@@ -229,45 +214,35 @@ export default function QueryPage() {
           </div>
         </div>
 
-        {/* Saved */}
         <div className="flex-1 overflow-y-auto px-3 py-3">
           <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Saved</p>
           {saved.length === 0 && (
             <p className="text-xs text-gray-400 italic">No saved queries yet.</p>
           )}
           {saved.map((s) => (
-            <div key={s.id} className="mb-1 rounded border border-gray-100 dark:border-gray-800">
+            <div key={s.id} className="mb-1 rounded border border-gray-200 dark:border-gray-800 overflow-hidden">
               <button
                 onClick={() => setExpandedId(expandedId === s.id ? null : s.id)}
-                className="w-full flex items-center gap-1.5 px-2 py-1.5 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                className="w-full flex items-center gap-2 px-2 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors"
               >
-                {expandedId === s.id ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                <span className="truncate flex-1 text-left">{s.name}</span>
+                {expandedId === s.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                <span className="flex-1 text-xs font-medium truncate">{s.name}</span>
               </button>
               {expandedId === s.id && (
-                <div className="px-2 pb-2 space-y-1.5">
-                  {s.description && (
-                    <p className="text-xs text-gray-400">{s.description}</p>
-                  )}
-                  <div className="flex gap-1.5">
+                <div className="px-2 pb-2 space-y-2 border-t border-gray-100 dark:border-gray-800">
+                  <p className="text-[11px] text-gray-500">{s.description}</p>
+                  <div className="flex gap-1">
                     <button
                       onClick={() => runSavedMutation.mutate(s.id)}
-                      className="flex items-center gap-1 rounded bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-700"
+                      className="flex-1 rounded bg-blue-600 text-white px-2 py-1 text-[11px] hover:bg-blue-700"
                     >
-                      <Play size={10} /> Run
-                    </button>
-                    <button
-                      onClick={() => setQueryText(s.query)}
-                      className="flex items-center gap-1 rounded bg-gray-100 dark:bg-gray-800 px-2 py-1 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-200"
-                    >
-                      Edit
+                      Run
                     </button>
                     <button
                       onClick={() => deleteMutation.mutate(s.id)}
-                      className="ml-auto rounded px-1.5 py-1 text-xs text-gray-400 hover:text-red-500 transition-colors"
-                      aria-label="Delete saved query"
+                      className="rounded border border-red-200 text-red-600 px-2 py-1 hover:bg-red-50"
                     >
-                      <Trash2 size={11} />
+                      <Trash2 size={12} />
                     </button>
                   </div>
                 </div>
@@ -277,56 +252,60 @@ export default function QueryPage() {
         </div>
       </div>
 
-      {/* Main area */}
-      <div className="flex flex-1 min-w-0 flex-col overflow-hidden">
-        {/* Editor */}
-        <div className="border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950">
-          <div className="px-4 py-3">
-            <textarea
-              ref={textareaRef}
-              value={queryText}
-              onChange={(e) => setQueryText(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="FROM folder WHERE condition SORT field LIMIT n SELECT columns"
-              rows={3}
-              className="w-full resize-none rounded-lg border border-gray-200 dark:border-gray-700 bg-transparent px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+      <div className="flex-1 min-w-0 flex flex-col bg-gray-50 dark:bg-gray-950">
+        <div className="border-b border-gray-200 dark:border-gray-800 px-6 py-4 bg-white dark:bg-gray-950">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h1 className="text-base font-semibold">Query Builder</h1>
+              <p className="text-xs text-gray-400 mt-0.5">Run SQL-like queries against your note index</p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowSave(true)}
+                className="flex items-center gap-1 rounded px-3 py-1.5 text-sm border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-900"
+              >
+                <Save size={14} /> Save
+              </button>
+              <button
+                onClick={() => runMutation.mutate()}
+                disabled={!queryText.trim() || runMutation.isPending}
+                className="flex items-center gap-1 rounded bg-blue-600 text-white px-3 py-1.5 text-sm hover:bg-blue-700 disabled:opacity-50"
+              >
+                {runMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+                Run
+              </button>
+            </div>
           </div>
-          <div className="flex items-center gap-2 px-4 pb-3">
-            <button
-              onClick={() => runMutation.mutate()}
-              disabled={runMutation.isPending || !queryText.trim()}
-              className="flex items-center gap-1.5 rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50 transition-colors"
-            >
-              {runMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-              Run <span className="text-blue-200 text-xs ml-1">⌘↵</span>
-            </button>
-            <button
-              onClick={() => setShowSave(true)}
-              disabled={!queryText.trim()}
-              className="flex items-center gap-1.5 rounded border border-gray-200 dark:border-gray-700 px-3 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50 transition-colors"
-            >
-              <Save size={14} /> Save
-            </button>
-          </div>
+
+          <textarea
+            ref={textareaRef}
+            value={queryText}
+            onChange={e => setQueryText(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="FROM folder WHERE status = draft SORT modified DESC LIMIT 20"
+            className="w-full min-h-[132px] resize-y rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 p-4 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            spellCheck={false}
+          />
+          <p className="mt-2 text-[11px] text-gray-400">Tip: Press Ctrl/Cmd + Enter to run</p>
         </div>
 
-        {/* Results */}
-        <div className="flex-1 overflow-auto bg-white dark:bg-gray-950 p-4">
+        <div className="flex-1 overflow-auto p-6">
           {error && (
-            <div className="flex items-start gap-2 rounded-lg border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/20 px-4 py-3 text-sm text-red-600 dark:text-red-400 mb-4">
-              <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
-              <span>{error}</span>
+            <div className="mb-4 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-900/10 dark:text-red-400">
+              <AlertCircle size={16} /> Error: {error}
             </div>
           )}
+
+          {!result && !runMutation.isPending && !error && (
+            <div className="h-full flex items-center justify-center text-center text-gray-400">
+              <div>
+                <Database size={40} className="mx-auto mb-3 opacity-40" />
+                <p className="text-sm">Run a query to inspect your notes.</p>
+              </div>
+            </div>
+          )}
+
           {result && <ResultTable result={result} />}
-          {!result && !error && !runMutation.isPending && (
-            <div className="flex flex-col items-center justify-center h-full gap-3 text-gray-400">
-              <Database size={40} className="opacity-20" />
-              <p className="text-sm">Run a query to see results</p>
-              <p className="text-xs opacity-60">Press ⌘↵ or click Run</p>
-            </div>
-          )}
         </div>
       </div>
 

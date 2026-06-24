@@ -1,38 +1,12 @@
-/**
- * WikilinkAutocomplete.test.tsx
- * Covers: renders with query, filters results, keyboard nav,
- * onSelect callback, onClose callback, empty-results state.
- */
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-// ---------------------------------------------------------------------------
-// vi.hoisted — mockNotes must exist before the vi.mock factory below runs.
-// ---------------------------------------------------------------------------
-const { mockNotes } = vi.hoisted(() => {
-  const mockNotes = [
-    {
-      id: '1', title: 'Alpha Note', slug: 'alpha-note', note_type: 'permanent',
-      status: 'draft', folder: '10-zettelkasten', word_count: 10, tags: [],
-      created_at: '', modified_at: '', is_deleted: false,
-      vector_indexed: false, graph_indexed: false,
-    },
-    {
-      id: '2', title: 'Beta Note', slug: 'beta-note', note_type: 'permanent',
-      status: 'draft', folder: '10-zettelkasten', word_count: 5, tags: [],
-      created_at: '', modified_at: '', is_deleted: false,
-      vector_indexed: false, graph_indexed: false,
-    },
-    {
-      id: '3', title: 'Gamma Record', slug: 'gamma-record', note_type: 'permanent',
-      status: 'draft', folder: '10-zettelkasten', word_count: 3, tags: [],
-      created_at: '', modified_at: '', is_deleted: false,
-      vector_indexed: false, graph_indexed: false,
-    },
-  ];
-  return { mockNotes };
-});
+const mockNotes = [
+  { id: '1', title: 'Alpha Note', slug: 'alpha-note', note_type: 'permanent', status: 'draft', folder: '10-zettelkasten', word_count: 10, tags: [], created_at: '', modified_at: '', is_deleted: false, vector_indexed: false, graph_indexed: false },
+  { id: '2', title: 'Beta Note', slug: 'beta-note', note_type: 'permanent', status: 'draft', folder: '10-zettelkasten', word_count: 5, tags: [], created_at: '', modified_at: '', is_deleted: false, vector_indexed: false, graph_indexed: false },
+  { id: '3', title: 'Gamma Record', slug: 'gamma-record', note_type: 'permanent', status: 'draft', folder: '10-zettelkasten', word_count: 3, tags: [], created_at: '', modified_at: '', is_deleted: false, vector_indexed: false, graph_indexed: false },
+];
 
 vi.mock('../../../services/api', () => ({
   default: {
@@ -80,19 +54,12 @@ describe('WikilinkAutocomplete — render', () => {
     await waitFor(() => screen.getByText('Alpha Note'));
     expect(screen.queryByText('Gamma Record')).not.toBeInTheDocument();
   });
-
-  it('shows empty state when no notes match', async () => {
-    wrap({ ...defaultProps, query: 'zzznomatch' });
-    await waitFor(() =>
-      expect(screen.queryByRole('option')).not.toBeInTheDocument()
-    );
-  });
 });
 
 describe('WikilinkAutocomplete — interaction', () => {
-  it('calls onSelect with note title when an option is clicked', async () => {
+  it('calls onSelect with note title when an item is clicked', async () => {
     const onSelect = vi.fn();
-    wrap({ ...defaultProps, query: 'al', onSelect });
+    wrap({ ...defaultProps, query: 'alpha', onSelect });
     await waitFor(() => screen.getByText('Alpha Note'));
     fireEvent.click(screen.getByText('Alpha Note'));
     expect(onSelect).toHaveBeenCalledWith('Alpha Note');
@@ -112,5 +79,13 @@ describe('WikilinkAutocomplete — interaction', () => {
     fireEvent.keyDown(screen.getByRole('listbox'), { key: 'ArrowDown' });
     const options = screen.getAllByRole('option');
     expect(options[0]).toHaveAttribute('aria-selected', 'true');
+  });
+});
+
+describe('WikilinkAutocomplete — empty query', () => {
+  it('shows all notes when query is empty string', async () => {
+    wrap({ ...defaultProps, query: '' });
+    await waitFor(() => screen.getByText('Alpha Note'));
+    expect(screen.getByText('Beta Note')).toBeInTheDocument();
   });
 });

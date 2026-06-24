@@ -2,16 +2,6 @@
  * WikilinkAutocomplete
  * ====================
  * Floating dropdown that appears while typing [[...]] in the note editor.
- *
- * Behaviour:
- *  - Detects when the cursor is inside an open [[  ]] wikilink token.
- *  - Fetches /api/v1/notes/?search=<query> to get matching notes.
- *  - Renders a floating list anchored below the cursor.
- *  - Arrow keys navigate, Enter/Tab inserts, Escape closes.
- *  - Clicking an item inserts the full [[Note Title]] token.
- *
- * The component is kept thin — all cursor/caret detection lives in the
- * position (see useWikilinkDetector hook below the component).
  */
 
 import React, { useEffect, useRef, useState } from 'react';
@@ -23,8 +13,8 @@ interface NoteListItem {
 }
 
 interface WikilinkAutocompleteProps {
-  query: string;           // Text typed after [[
-  anchorRect: DOMRect;     // Bounding rect of [[ token for positioning
+  query: string;
+  anchorRect: DOMRect;
   onSelect: (title: string) => void;
   onClose: () => void;
 }
@@ -35,11 +25,10 @@ export default function WikilinkAutocomplete({
   onSelect,
   onClose,
 }: WikilinkAutocompleteProps) {
-  const [items,       setItems]       = useState<NoteListItem[]>([]);
-  const [activeIndex, setActiveIndex] = useState(0);
+  const [items, setItems] = useState<NoteListItem[]>([]);
+  const [activeIndex, setActiveIndex] = useState(-1);
   const listRef = useRef<HTMLUListElement>(null);
 
-  // Fetch matching notes
   useEffect(() => {
     if (!query && query !== '') { setItems([]); return; }
     let cancelled = false;
@@ -47,27 +36,31 @@ export default function WikilinkAutocomplete({
       .then((res) => {
         if (!cancelled) {
           const notes = (res as { items?: NoteListItem[]; data?: NoteListItem[] } | NoteListItem[]);
-          if (Array.isArray(notes)) setItems(notes);
-          else if (notes.items) setItems(notes.items);
-          else if (notes.data) setItems(notes.data);
+          const rawItems = Array.isArray(notes) ? notes : (notes.items ?? notes.data ?? []);
+          const normalizedQuery = query.trim().toLowerCase();
+          const filtered = normalizedQuery
+            ? rawItems.filter((item) => item.title.toLowerCase().includes(normalizedQuery))
+            : rawItems;
+          setItems(filtered);
+          setActiveIndex(filtered.length > 0 ? 0 : -1);
         }
       })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [query]);
 
-  // Keyboard navigation
   useEffect(() => {
     function handleKey(e: globalThis.KeyboardEvent) {
+      if (items.length === 0) return;
       if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setActiveIndex((i) => Math.min(i + 1, items.length - 1));
+        setActiveIndex((i) => Math.min((i < 0 ? 0 : i + 1), items.length - 1));
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
-        setActiveIndex((i) => Math.max(i - 1, 0));
+        setActiveIndex((i) => Math.max((i <= 0 ? 0 : i - 1), 0));
       } else if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault();
-        if (items[activeIndex]) onSelect(items[activeIndex].title);
+        if (activeIndex >= 0 && items[activeIndex]) onSelect(items[activeIndex].title);
       } else if (e.key === 'Escape') {
         e.preventDefault();
         onClose();
@@ -79,14 +72,29 @@ export default function WikilinkAutocomplete({
 
   if (items.length === 0) return null;
 
-  // Position below anchor
-  const top  = anchorRect.bottom + window.scrollY + 4;
-  const left = anchorRect.left   + window.scrollX;
+  const top = anchorRect.bottom + window.scrollY + 4;
+  const left = anchorRect.left + window.scrollX;
 
   return (
     <ul
       ref={listRef}
       role="listbox"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          setActiveIndex((i) => Math.min((i < 0 ? 0 : i + 1), items.length - 1));
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          setActiveIndex((i) => Math.max((i <= 0 ? 0 : i - 1), 0));
+        } else if (e.key === 'Enter' || e.key === 'Tab') {
+          e.preventDefault();
+          if (activeIndex >= 0 && items[activeIndex]) onSelect(items[activeIndex].title);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          onClose();
+        }
+      }}
       style={{
         position: 'absolute',
         top,
@@ -118,15 +126,6 @@ export default function WikilinkAutocomplete({
   );
 }
 
-/**
- * useWikilinkDetector
- *
- * Detects when the textarea cursor is inside an open [[ token and returns
- * the current query string + bounding rect for the autocomplete dropdown.
- *
- * Usage:
- *   const { wikilinkQuery, insertWikilink } = useWikilinkDetector(textareaRef, value, onChange);
- */
 // eslint-disable-next-line react-refresh/only-export-components
 export function useWikilinkDetector(
   ref: React.RefObject<HTMLTextAreaElement | null>,
@@ -134,7 +133,7 @@ export function useWikilinkDetector(
   onChange: (v: string) => void
 ) {
   const [wikilinkQuery, setWikilinkQuery] = useState<string | null>(null);
-  const [anchorRect,    setAnchorRect]    = useState<DOMRect | null>(null);
+  const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
 
   useEffect(() => {
     const el = ref.current;
@@ -142,12 +141,11 @@ export function useWikilinkDetector(
 
     function detectWikilink() {
       if (!el) return;
-      const pos  = el.selectionStart ?? 0;
+      const pos = el.selectionStart ?? 0;
       const text = el.value.slice(0, pos);
       const match = text.match(/\[\[([^\][]*)$/);
       if (match) {
         setWikilinkQuery(match[1]);
-        // Get caret rect
         const rect = el.getBoundingClientRect();
         setAnchorRect(new DOMRect(rect.left, rect.bottom, 0, 0));
       } else {
@@ -162,24 +160,23 @@ export function useWikilinkDetector(
       el.removeEventListener('keyup', detectWikilink);
       el.removeEventListener('click', detectWikilink);
     };
-  }, [ref]);
+  }, [ref, value]);
 
   function insertWikilink(title: string) {
     const el = ref.current;
     if (!el) return;
-    const pos   = el.selectionStart ?? 0;
-    const text  = el.value;
+    const pos = el.selectionStart ?? 0;
+    const text = el.value;
     const before = text.slice(0, pos);
-    const after  = text.slice(pos);
+    const after = text.slice(pos);
     const openIdx = before.lastIndexOf('[[');
     if (openIdx === -1) return;
     const newValue = before.slice(0, openIdx) + `[[${title}]]` + after;
     onChange(newValue);
     setWikilinkQuery(null);
     setAnchorRect(null);
-    // Move cursor after the inserted wikilink
     requestAnimationFrame(() => {
-      const newPos = openIdx + title.length + 4; // [[  ]] = 4 chars
+      const newPos = openIdx + title.length + 4;
       el.setSelectionRange(newPos, newPos);
       el.focus();
     });
