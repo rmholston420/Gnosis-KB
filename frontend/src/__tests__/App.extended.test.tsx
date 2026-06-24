@@ -9,23 +9,24 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 
-// ---- Hoist mock variables so vi.mock factories can reference them ----------
-const { mockToast } = vi.hoisted(() => {
+// ---- Hoist ALL variables referenced by vi.mock factories ------------------
+// vi.mock() calls are hoisted before any `const`/`let` in the file.
+// Any variable a factory closes over must itself be created via vi.hoisted().
+const { mockToast, captured } = vi.hoisted(() => {
   const mockToast = Object.assign(vi.fn(), {
     success: vi.fn(),
     dismiss: vi.fn(),
   });
-  return { mockToast };
+  // Use a mutable container so the factory can write into it at call-time
+  const captured: { onNeedRefresh?: () => void; onOfflineReady?: () => void } = {};
+  return { mockToast, captured };
 });
 
 // ---- Stub registerSW to capture callbacks ---------------------------------
-let capturedOnNeedRefresh: (() => void) | undefined;
-let capturedOnOfflineReady: (() => void) | undefined;
-
 vi.mock('@/registerSW', () => ({
   registerSW: (opts: { onNeedRefresh?: () => void; onOfflineReady?: () => void }) => {
-    capturedOnNeedRefresh = opts.onNeedRefresh;
-    capturedOnOfflineReady = opts.onOfflineReady;
+    captured.onNeedRefresh  = opts.onNeedRefresh;
+    captured.onOfflineReady = opts.onOfflineReady;
   },
   skipWaiting: vi.fn(),
 }));
@@ -37,7 +38,7 @@ vi.mock('react-hot-toast', () => ({
   toast: mockToast,
 }));
 
-// ---- Stub all page components so lazy imports resolve instantly -----------
+// ---- Stub all page/component imports so lazy resolution is instant --------
 vi.mock('@/pages/LoginPage',      () => ({ default: () => <div>Login</div> }));
 vi.mock('@/pages/NotesPage',      () => ({ default: () => <div>Notes</div> }));
 vi.mock('@/pages/NoteEditorPage', () => ({ default: () => <div>Editor</div> }));
@@ -64,16 +65,16 @@ describe('App — registerSW callbacks (lines 27-41)', () => {
 
   it('onNeedRefresh fires a toast with a Reload now message', async () => {
     await import('@/App');
-    if (capturedOnNeedRefresh) {
-      capturedOnNeedRefresh();
+    if (captured.onNeedRefresh) {
+      captured.onNeedRefresh();
       expect(mockToast).toHaveBeenCalled();
     }
   });
 
   it('onOfflineReady fires a toast.success', async () => {
     await import('@/App');
-    if (capturedOnOfflineReady) {
-      capturedOnOfflineReady();
+    if (captured.onOfflineReady) {
+      captured.onOfflineReady();
       expect(mockToast.success ?? mockToast).toHaveBeenCalled();
     }
   });
