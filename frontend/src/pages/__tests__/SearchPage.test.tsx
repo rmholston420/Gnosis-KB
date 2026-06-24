@@ -2,14 +2,17 @@
  * SearchPage.test.tsx
  * Tests:
  *  - renders search input and three mode tabs
- *  - switching to Semantic tab renders SemanticSearch
- *  - switching to Keyword tab uses keyword results branch
+ *  - switching to Semantic tab renders SemanticSearch (data-testid="semantic-search")
  *  - initial ?q= param pre-fills the input
+ *
+ * Spy on hooks/useSearch (not the raw api module) so the mock reaches
+ * the component without needing a real network or QueryClient plumbing.
  */
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import SearchPage from '../SearchPage';
 import * as searchHooks from '../../hooks/useSearch';
 
@@ -29,13 +32,25 @@ function Wrapper({ initialUrl = '/search' }: { initialUrl?: string }) {
   );
 }
 
+const emptyHookReturn = {
+  data: undefined,
+  isLoading: false,
+  isError: false,
+  error: null,
+  status: 'success' as const,
+  fetchStatus: 'idle' as const,
+} as unknown as ReturnType<typeof searchHooks.useHybridSearch>;
+
 beforeEach(() => {
-  vi.spyOn(searchHooks, 'useHybridSearch').mockReturnValue({
-    data: { items: [], total: 0 }, isLoading: false, isError: false,
-  } as ReturnType<typeof searchHooks.useHybridSearch>);
-  vi.spyOn(searchHooks, 'useKeywordSearch').mockReturnValue({
-    data: { items: [], total: 0 }, isLoading: false, isError: false,
-  } as ReturnType<typeof searchHooks.useKeywordSearch>);
+  vi.spyOn(searchHooks, 'useHybridSearch').mockReturnValue(emptyHookReturn);
+  vi.spyOn(searchHooks, 'useKeywordSearch').mockReturnValue(emptyHookReturn);
+  // SemanticSearch uses useSemanticSearch + useSimilarNotes — stub both
+  vi.spyOn(searchHooks, 'useSemanticSearch').mockReturnValue(emptyHookReturn);
+  vi.spyOn(searchHooks, 'useSimilarNotes').mockReturnValue({
+    data: [],
+    isLoading: false,
+    isError: false,
+  } as unknown as ReturnType<typeof searchHooks.useSimilarNotes>);
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -57,7 +72,7 @@ describe('SearchPage', () => {
   it('switching to Semantic tab renders SemanticSearch component', () => {
     render(<Wrapper />);
     fireEvent.click(screen.getByRole('button', { name: /semantic/i }));
-    // SemanticSearch has a distinctive aria label or test id
+    // SemanticSearch root has data-testid="semantic-search"
     expect(screen.getByTestId('semantic-search')).toBeInTheDocument();
   });
 });

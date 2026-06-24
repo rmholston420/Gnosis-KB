@@ -3,6 +3,7 @@
  */
 import React, { useState } from 'react';
 import { Search, Sparkles } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useSemanticSearch, useSimilarNotes } from '../../hooks/useSearch';
 import { SearchResults } from './SearchResults';
 
@@ -13,16 +14,19 @@ interface SemanticSearchProps {
 
 /**
  * Semantic search UI. When `seedNoteId` is provided it also renders
- * a \"Similar Notes\" section fetched by embedding similarity.
+ * a "Similar Notes" section fetched by embedding similarity.
  */
 export function SemanticSearch({ seedNoteId }: SemanticSearchProps) {
   const [query, setQuery] = useState('');
+  const navigate = useNavigate();
 
   const { data, isLoading, isError } = useSemanticSearch(query);
   const { data: similar = [] } = useSimilarNotes(seedNoteId ?? null, 6);
 
+  const handleResultClick = (noteId: string) => navigate(`/notes/${noteId}`);
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-testid="semantic-search">
       {/* Query input */}
       <div className="relative">
         <Sparkles
@@ -51,6 +55,7 @@ export function SemanticSearch({ seedNoteId }: SemanticSearchProps) {
             isLoading={isLoading}
             isError={isError}
             total={data?.total}
+            onResultClick={handleResultClick}
           />
         </section>
       )}
@@ -65,6 +70,7 @@ export function SemanticSearch({ seedNoteId }: SemanticSearchProps) {
             results={similar}
             isLoading={false}
             isError={false}
+            onResultClick={handleResultClick}
           />
         </section>
       )}

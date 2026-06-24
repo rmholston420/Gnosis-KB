@@ -1,10 +1,13 @@
 /**
  * SearchResults.test.tsx
- * Tests for the SearchResults component.
  *
- * Note: The Highlight sub-component wraps query-matching substrings in <mark>
- * which splits the h3 text across multiple DOM nodes.  We must therefore use
- * getByRole('heading') with a flexible name matcher instead of getByText().
+ * Key constraints:
+ *  - The Highlight sub-component wraps query-matching substrings in <mark>,
+ *    splitting h3 title text AND snippet text across multiple DOM nodes.
+ *  - Use getByRole('heading', { name: /regex/i }) for titles.
+ *  - For snippets, query a substring that begins AFTER any highlighted word
+ *    so the text node is contiguous (e.g. /waves appear during/i when
+ *    query="alpha" highlights "Alpha" at the start of the snippet).
  */
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
@@ -40,9 +43,10 @@ describe('SearchResults', () => {
         />
       </Wrapper>
     );
-    // Title text is split by <mark> — use heading role with name regex
+    // Title split by <mark> — use heading role with accessible name regex
     expect(screen.getByRole('heading', { name: /EEG Alpha Waves/i })).toBeInTheDocument();
-    expect(screen.getByText(/alpha waves appear/i)).toBeInTheDocument();
+    // Snippet: "Alpha" is highlighted so text is split; query text after the mark
+    expect(screen.getByText(/waves appear during/i)).toBeInTheDocument();
   });
 
   it('highlights the query term in the snippet', () => {
@@ -78,7 +82,6 @@ describe('SearchResults', () => {
         />
       </Wrapper>
     );
-    // All three titles present (some may be <mark>-split)
     expect(screen.getByRole('heading', { name: /EEG Alpha Waves/i })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /Theta Rhythm/i })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /Gamma Oscillations/i })).toBeInTheDocument();
@@ -97,8 +100,8 @@ describe('SearchResults', () => {
         />
       </Wrapper>
     );
-    fireEvent.click(screen.getByRole('heading', { name: /EEG Alpha Waves/i }));
-    // onResultClick is called via the parent button's onClick — bubble up
+    // Click the card button (parent of the heading)
+    fireEvent.click(screen.getByRole('heading', { name: /EEG Alpha Waves/i }).closest('button')!);
     expect(onResultClick).toHaveBeenCalledWith('r1');
   });
 
@@ -114,7 +117,7 @@ describe('SearchResults', () => {
         />
       </Wrapper>
     );
-    // Tags are joined as 'neuroscience, brainwaves' in a single span
+    // Tags rendered as joined string in one span: 'neuroscience, brainwaves'
     expect(screen.getByText(/neuroscience/)).toBeInTheDocument();
     expect(screen.getByText(/brainwaves/)).toBeInTheDocument();
   });
@@ -131,7 +134,7 @@ describe('SearchResults', () => {
         />
       </Wrapper>
     );
-    // Score is displayed as '92%' (toFixed(0) * 100)
+    // Score displayed as '92%' (score * 100, toFixed(0))
     expect(screen.getByText(/92/)).toBeInTheDocument();
   });
 
