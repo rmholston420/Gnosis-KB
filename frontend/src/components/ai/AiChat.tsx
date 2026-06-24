@@ -1,14 +1,14 @@
 /**
  * AiChat — Streaming RAG chat panel.
  *
- * Connects to the backend SSE endpoint via EventSource.
- * Token is appended as a query param because EventSource
- * does not support custom request headers.
+ * Uses useAppStore for chatMessages/sessionId/ragMode so tests can
+ * inspect and seed store state directly.
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, Bot, User, Cpu } from 'lucide-react';
+import { Send, Loader2, Bot, User, Cpu, Trash2 } from 'lucide-react';
 import type { ChatMessage } from '../../types';
+import { useAppStore } from '../../store/useAppStore';
 
 type ChatMode = 'hybrid' | 'lightrag' | 'vector' | 'naive';
 
@@ -17,10 +17,10 @@ interface AIChatMessage extends ChatMessage {
 }
 
 export default function AiChat() {
-  const [messages,  setMessages]  = useState<AIChatMessage[]>([]);
-  const [input,     setInput]     = useState('');
-  const [loading,   setLoading]   = useState(false);
-  const [mode,      setMode]      = useState<ChatMode>('hybrid');
+  const { chatMessages, appendChatMessage, updateLastAssistantMessage, clearChat } = useAppStore();
+  const [input,   setInput]   = useState('');
+  const [loading, setLoading] = useState(false);
+  const [mode,    setMode]    = useState<ChatMode>('hybrid');
   const bottomRef  = useRef<HTMLDivElement>(null);
   const esRef      = useRef<EventSource | null>(null);
   const sessionRef = useRef<string>(crypto.randomUUID());
@@ -32,25 +32,19 @@ export default function AiChat() {
     const text = input.trim();
     if (!text || loading) return;
 
-    setMessages((prev) => [...prev, { role: 'user', content: text }]);
+    appendChatMessage({ role: 'user', content: text });
     setInput('');
     setLoading(true);
 
-    // Placeholder for assistant message
-    const assistantIdx = messages.length + 1;
-    setMessages((prev) => [...prev, { role: 'assistant', content: '', isStreaming: true }]);
+    appendChatMessage({ role: 'assistant', content: '' });
 
-    // Close any existing connection
     esRef.current?.close();
 
-    // Open SSE connection
-    const base = import.meta.env.VITE_API_BASE_URL ?? "";
+    const base = import.meta.env.VITE_API_BASE_URL ?? '';
     const url = new URL(`${base}/api/v1/ai/stream/chat`);
-    url.searchParams.set("message", text);
-    url.searchParams.set("mode", mode);
-    url.searchParams.set("session_id", sessionRef.current);
-    // Note: EventSource doesn't support custom headers natively.
-    // The backend must accept the token via query param or cookie.
+    url.searchParams.set('message', text);
+    url.searchParams.set('mode', mode);
+    url.searchParams.set('session_id', sessionRef.current);
 
     const es = new EventSource(url.toString());
     esRef.current = es;
@@ -61,9 +55,6 @@ export default function AiChat() {
       if (data === '[DONE]') {
         es.close();
         setLoading(false);
-        setMessages((prev) =>
-          prev.map((m, i) => i === assistantIdx ? { ...m, isStreaming: false } : m)
-        );
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
         return;
       }
@@ -74,9 +65,7 @@ export default function AiChat() {
         } else if (parsed.token) {
           accumulated += parsed.token;
         }
-        setMessages((prev) =>
-          prev.map((m, i) => i === assistantIdx ? { ...m, content: accumulated } : m)
-        );
+        updateLastAssistantMessage(accumulated);
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
       } catch {
         // ignore non-JSON lines
@@ -86,12 +75,8 @@ export default function AiChat() {
     es.onerror = () => {
       es.close();
       setLoading(false);
-      setMessages((prev) =>
-        prev.map((m, i) =>
-          i === assistantIdx
-            ? { ...m, content: accumulated || '*Connection error — please try again.*', isStreaming: false }
-            : m
-        )
+      updateLastAssistantMessage(
+        accumulated || '*Connection error — please try again.*'
       );
     };
   }
@@ -115,17 +100,30 @@ export default function AiChat() {
             {m}
           </button>
         ))}
+
+        {/* Clear chat button — only shown when there are messages */}
+        {chatMessages.length > 0 && (
+          <button
+            onClick={clearChat}
+            aria-label="Clear chat"
+            title="Clear chat"
+            className="ml-auto flex items-center gap-1 rounded px-2 py-0.5 text-xs text-text-muted hover:bg-bg-elevated transition-colors"
+          >
+            <Trash2 size={12} />
+            Clear
+          </button>
+        )}
       </div>
 
       {/* Message list */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-        {messages.length === 0 && (
+        {chatMessages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full gap-3 text-text-muted">
             <Bot size={40} className="opacity-30" />
             <p className="text-sm">Ask anything about your knowledge base</p>
           </div>
         )}
-        {messages.map((msg, i) => (
+        {(chatMessages as AIChatMessage[]).map((msg, i) => (
           <div key={i} className={`flex gap-3 ${ msg.role === 'user' ? 'justify-end' : 'justify-start' }`}>
             {msg.role === 'assistant' && (
               <div className="flex-shrink-0 w-7 h-7 rounded-full bg-accent-teal/20 flex items-center justify-center">
@@ -173,6 +171,7 @@ export default function AiChat() {
           <button
             onClick={() => void send()}
             disabled={loading || !input.trim()}
+            aria-label="Send"
             className="flex-shrink-0 rounded-lg bg-accent-teal p-2 text-white hover:bg-accent-teal/80 disabled:opacity-50 transition-colors"
           >
             {loading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}

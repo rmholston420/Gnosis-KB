@@ -1,7 +1,10 @@
 /**
  * LightRagNodePanel.test.tsx
  * ==========================
- * Tests for the graph node detail side-panel (LightRAG neighbour info).
+ * Tests for the graph node detail side-panel.
+ *
+ * The panel is driven by a nodeId prop + api.getGraphNode().
+ * We mock the api module so tests control the resolved data.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
@@ -27,7 +30,7 @@ const sampleNodeData = {
   description: 'The teaching of interdependent causation.',
   neighbours: [
     { id: 'node-2', title: 'Emptiness', weight: 0.9 },
-    { id: 'node-3', title: 'Karma', weight: 0.7 },
+    { id: 'node-3', title: 'Karma',     weight: 0.7 },
   ],
   edges: [],
 };

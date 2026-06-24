@@ -2,7 +2,7 @@
  * AiChat.test.tsx
  * ===============
  * Tests for the streaming AI chat panel component.
- * We mock the global fetch so SSE streaming is controlled in tests.
+ * AiChat uses useAppStore for messages so we seed/inspect the store directly.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
@@ -15,23 +15,6 @@ vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
   return { ...actual, useNavigate: () => mockNavigate };
 });
-
-// Stub fetch to return a minimal SSE stream
-function makeFetchStub(chunks: string[]) {
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream({
-    start(controller) {
-      for (const chunk of chunks) {
-        controller.enqueue(encoder.encode(chunk));
-      }
-      controller.close();
-    },
-  });
-  return vi.fn().mockResolvedValue({
-    ok: true,
-    body: stream,
-  });
-}
 
 function renderChat() {
   return render(<MemoryRouter><AiChat /></MemoryRouter>);
@@ -73,12 +56,11 @@ describe('AiChat', () => {
 
   it('shows empty state when no messages', () => {
     renderChat();
-    // No message bubbles present
     expect(screen.queryByRole('article')).not.toBeInTheDocument();
   });
 
   it('shows user message in store after sending', async () => {
-    global.fetch = makeFetchStub([]);
+    // EventSource is not available in jsdom; just verify store mutation
     renderChat();
     const input = screen.getByPlaceholderText(/ask/i);
     fireEvent.change(input, { target: { value: 'What is emptiness?' } });
@@ -89,7 +71,6 @@ describe('AiChat', () => {
   });
 
   it('clears input after sending', async () => {
-    global.fetch = makeFetchStub([]);
     renderChat();
     const input = screen.getByPlaceholderText(/ask/i) as HTMLInputElement;
     fireEvent.change(input, { target: { value: 'Hello' } });
@@ -97,7 +78,8 @@ describe('AiChat', () => {
     await waitFor(() => expect(input.value).toBe(''));
   });
 
-  it('renders Clear button', () => {
+  it('renders Clear button when messages exist', () => {
+    useAppStore.setState({ chatMessages: [{ role: 'user', content: 'hi' }] });
     renderChat();
     expect(screen.getByRole('button', { name: /clear/i })).toBeInTheDocument();
   });

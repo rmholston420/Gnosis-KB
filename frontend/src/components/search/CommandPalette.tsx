@@ -101,14 +101,9 @@ interface CommandPaletteProps {
 /**
  * CommandPalette — Global search and navigation overlay.
  *
- * Mount this once in your root layout. It manages its own open/closed state
- * and registers the Cmd+K keyboard shortcut.
- *
- * @example
- *   <MainLayout>
- *     <CommandPalette />
- *     {children}
- *   </MainLayout>
+ * Can be imported as either a named or default import:
+ *   import CommandPalette from './CommandPalette';
+ *   import { CommandPalette } from './CommandPalette';
  */
 export function CommandPalette({ onClose }: CommandPaletteProps = {}) {
   const [open, setOpen] = useState(false);
@@ -156,7 +151,7 @@ export function CommandPalette({ onClose }: CommandPaletteProps = {}) {
       id: "new-note",
       label: "New Note in Inbox",
       icon: <Plus size={16} />,
-      action: () => { close(); createQuickNote(navigate); },
+      action: () => { close(); void createQuickNote(navigate); },
       group: "actions",
     },
     {
@@ -239,9 +234,9 @@ export function CommandPalette({ onClose }: CommandPaletteProps = {}) {
               </Command.Empty>
             )}
 
-            {/* Action items */}
+            {/* Actions group */}
             {results.some((r) => r.group === "actions") && (
-              <Command.Group heading="Actions">
+              <Command.Group heading="Actions" className="command-palette-group">
                 {results
                   .filter((r): r is ActionItem => r.group === "actions")
                   .map((item) => (
@@ -252,15 +247,15 @@ export function CommandPalette({ onClose }: CommandPaletteProps = {}) {
                       className="command-palette-item"
                     >
                       <span className="command-palette-item-icon">{item.icon}</span>
-                      {item.label}
+                      <span className="command-palette-item-label">{item.label}</span>
                     </Command.Item>
                   ))}
               </Command.Group>
             )}
 
-            {/* Note search results */}
+            {/* Notes group */}
             {results.some((r) => r.group === "notes") && (
-              <Command.Group heading="Notes">
+              <Command.Group heading="Notes" className="command-palette-group">
                 {results
                   .filter((r): r is NoteItem => r.group === "notes")
                   .map((item) => (
@@ -273,11 +268,9 @@ export function CommandPalette({ onClose }: CommandPaletteProps = {}) {
                       }}
                       className="command-palette-item"
                     >
-                      <span className="command-palette-item-icon">
-                        <FileText size={16} />
-                      </span>
-                      <span className="command-palette-item-title">{item.title}</span>
-                      <span className="command-palette-item-folder">{item.folder}</span>
+                      <span className="command-palette-item-icon"><FileText size={16} /></span>
+                      <span className="command-palette-item-label">{item.title}</span>
+                      <span className="command-palette-item-meta">{item.folder}</span>
                     </Command.Item>
                   ))}
               </Command.Group>
@@ -288,3 +281,6 @@ export function CommandPalette({ onClose }: CommandPaletteProps = {}) {
     </div>
   );
 }
+
+/** Allow both default and named imports. */
+export default CommandPalette;

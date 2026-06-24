@@ -1,61 +1,61 @@
 /**
  * LightRagNodePanel
  * =================
- * Slide-in right-side panel shown when a node in the LightRAG Knowledge Graph
- * is clicked.  Displays:
- *   - Entity name and description
- *   - Relation list (subject → predicate → object) for edges incident to this node
- *   - Links to source notes that contributed the entity (if available)
+ * Slide-in right-side panel shown when a graph node is selected.
+ * Fetches full node data by nodeId via api.getGraphNode().
  *
  * Props
  * -----
- *   entity: LightRagEntity | null  — the clicked entity (null = panel hidden)
- *   relations: LightRagRelation[]  — all relations from the graph data
- *   notes: NoteListItem[]          — all notes (used to resolve source_note_ids)
- *   onClose: () => void
- *   onNavigateToNote: (noteId: string) => void
+ *   nodeId   — ID of the node to fetch and display
+ *   onClose  — called when user dismisses the panel
  */
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import api from '../../services/api';
 import './LightRagNodePanel.css';
 
-export interface LightRagEntity {
+export interface GraphNeighbour {
   id: string;
-  label: string;
-  description?: string;
-  cluster?: number;
-  source_note_ids?: string[];
-}
-
-export interface LightRagRelation {
-  source: string;
-  target: string;
-  label?: string;
+  title: string;
   weight?: number;
 }
 
-export interface NoteListItem {
+export interface GraphNodeData {
   id: string;
   title: string;
-  folder?: string;
+  description?: string;
+  neighbours?: GraphNeighbour[];
+  edges?: unknown[];
 }
 
 interface Props {
-  entity: LightRagEntity | null;
-  relations: LightRagRelation[];
-  notes: NoteListItem[];
+  nodeId: string;
   onClose: () => void;
-  onNavigateToNote: (noteId: string) => void;
 }
 
-export function LightRagNodePanel({
-  entity,
-  relations,
-  notes,
-  onClose,
-  onNavigateToNote,
-}: Props) {
+export function LightRagNodePanel({ nodeId, onClose }: Props) {
+  const navigate = useNavigate();
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const [node,    setNode]    = useState<GraphNodeData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error,   setError]   = useState<string | null>(null);
+
+  // Fetch node data whenever nodeId changes
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    setNode(null);
+    (api as unknown as { getGraphNode: (id: string) => Promise<GraphNodeData> })
+      .getGraphNode(nodeId)
+      .then((data) => {
+        setNode(data);
+      })
+      .catch((err: Error) => {
+        setError(err.message ?? 'Failed to load node');
+      })
+      .finally(() => setLoading(false));
+  }, [nodeId]);
 
   // Close on Escape
   useEffect(() => {
@@ -66,34 +66,21 @@ export function LightRagNodePanel({
     return () => window.removeEventListener('keydown', handleKey);
   }, [onClose]);
 
-  // Focus panel for a11y when opened
+  // Focus panel for a11y
   useEffect(() => {
-    if (entity && panelRef.current) {
-      panelRef.current.focus();
-    }
-  }, [entity]);
-
-  if (!entity) return null;
-
-  const incidentRelations = relations.filter(
-    (r) => r.source === entity.id || r.target === entity.id
-  );
-
-  const sourceNotes = (entity.source_note_ids ?? []).flatMap((nid) => {
-    const n = notes.find((note) => note.id === nid);
-    return n ? [n] : [];
-  });
+    if (!loading && panelRef.current) panelRef.current.focus();
+  }, [loading]);
 
   return (
     <div
-      className={`lrn-panel ${entity ? 'lrn-panel--open' : ''}`}
+      className="lrn-panel lrn-panel--open"
       ref={panelRef}
       tabIndex={-1}
       role="complementary"
-      aria-label={`Entity panel: ${entity.label}`}
+      aria-label={node ? `Entity panel: ${node.title}` : 'Entity panel'}
     >
       <div className="lrn-header">
-        <h2 className="lrn-title">{entity.label}</h2>
+        <h2 className="lrn-title">{node?.title ?? (loading ? 'Loading…' : 'Node')}</h2>
         <button
           className="lrn-close"
           onClick={onClose}
@@ -103,54 +90,40 @@ export function LightRagNodePanel({
         </button>
       </div>
 
-      {entity.description && (
-        <section className="lrn-section">
-          <h3 className="lrn-section-title">Description</h3>
-          <p className="lrn-description">{entity.description}</p>
-        </section>
+      {loading && (
+        <div className="lrn-loading">Loading…</div>
       )}
 
-      {incidentRelations.length > 0 && (
-        <section className="lrn-section">
-          <h3 className="lrn-section-title">Relations ({incidentRelations.length})</h3>
-          <ul className="lrn-relations" role="list">
-            {incidentRelations.map((r, i) => (
-              <li key={i} className="lrn-relation">
-                <span className="lrn-rel-src">{r.source === entity.id ? entity.label : r.source}</span>
-                <span className="lrn-rel-pred">{r.label ?? '→'}</span>
-                <span className="lrn-rel-tgt">{r.target === entity.id ? entity.label : r.target}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
+      {error && (
+        <div className="lrn-error">Error: {error}</div>
       )}
 
-      {sourceNotes.length > 0 && (
-        <section className="lrn-section">
-          <h3 className="lrn-section-title">Source Notes</h3>
-          <ul className="lrn-source-notes" role="list">
-            {sourceNotes.map((note) => (
-              <li key={note.id}>
-                <button
-                  className="lrn-note-link"
-                  onClick={() => onNavigateToNote(note.id)}
-                >
-                  {note.title}
-                  {note.folder && (
-                    <span className="lrn-note-folder">{note.folder}</span>
-                  )}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+      {node && !loading && (
+        <>
+          {node.description && (
+            <section className="lrn-section">
+              <p className="lrn-description">{node.description}</p>
+            </section>
+          )}
 
-      {incidentRelations.length === 0 && !entity.description && (
-        <div className="lrn-empty">
-          <p>No additional information stored for this entity yet.</p>
-          <p className="lrn-empty-hint">Ingest more notes to enrich the graph.</p>
-        </div>
+          {(node.neighbours ?? []).length > 0 && (
+            <section className="lrn-section">
+              <h3 className="lrn-section-heading">Neighbours</h3>
+              <ul className="lrn-neighbours">
+                {(node.neighbours ?? []).map((nb) => (
+                  <li key={nb.id}>
+                    <button
+                      className="lrn-neighbour-btn"
+                      onClick={() => navigate(`/graph?node=${nb.id}`)}
+                    >
+                      {nb.title}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+        </>
       )}
     </div>
   );
