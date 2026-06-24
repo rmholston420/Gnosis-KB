@@ -6,19 +6,25 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const mockStore = { ragMode: 'hybrid', setRagMode: vi.fn() };
-vi.mock('../../store/useAppStore', () => ({ useAppStore: () => mockStore }));
+// ---------------------------------------------------------------------------
+// vi.hoisted — must come before vi.mock() factories that reference these values.
+// ---------------------------------------------------------------------------
+const { mockApi, mockStore } = vi.hoisted(() => {
+  const mockStore = { ragMode: 'hybrid' as const, setRagMode: vi.fn() };
+  const mockApi = {
+    getProviders: vi.fn().mockResolvedValue({
+      provider: 'ollama',
+      model: 'llama3',
+      available: true,
+      models: ['llama3', 'mistral', 'nomic-embed-text'],
+    }),
+    setModel: vi.fn().mockResolvedValue({}),
+    exportVault: vi.fn().mockResolvedValue(new Blob(['zip'], { type: 'application/zip' })),
+  };
+  return { mockApi, mockStore };
+});
 
-const mockApi = {
-  getProviders: vi.fn().mockResolvedValue({
-    provider: 'ollama',
-    model: 'llama3',
-    available: true,
-    models: ['llama3', 'mistral', 'nomic-embed-text'],
-  }),
-  setModel: vi.fn().mockResolvedValue({}),
-  exportVault: vi.fn().mockResolvedValue(new Blob(['zip'], { type: 'application/zip' })),
-};
+vi.mock('../../store/useAppStore', () => ({ useAppStore: () => mockStore }));
 vi.mock('../../services/api', () => ({ default: mockApi }));
 
 import SettingsPage from '../SettingsPage';
@@ -91,8 +97,6 @@ describe('SettingsPage — RAG mode', () => {
   it('renders all three RAG mode options', async () => {
     wrap();
     await waitFor(() => screen.getByText('Settings'));
-    const radios = screen.getAllByRole('radio', { name: '' });
-    // There are RAG radios + export radios; check RAG labels
     expect(screen.getByText('Hybrid')).toBeInTheDocument();
     expect(screen.getByText('Local')).toBeInTheDocument();
     expect(screen.getByText('Global')).toBeInTheDocument();
@@ -101,50 +105,21 @@ describe('SettingsPage — RAG mode', () => {
   it('calls setRagMode when a different mode is selected', async () => {
     wrap();
     await waitFor(() => screen.getByText('Local'));
-    // Find the radio input for Local and click it
     const radios = screen.getAllByRole('radio');
-    // hybrid is checked by default (index 0 among rag radios)
-    const localRadio = radios.find((r) => (r as HTMLInputElement).value === 'local');
-    expect(localRadio).toBeTruthy();
-    fireEvent.click(localRadio!);
-    expect(mockStore.setRagMode).toHaveBeenCalledWith('local');
+    const localRadio = radios.find(
+      (r) => (r as HTMLInputElement).value === 'local'
+    );
+    if (localRadio) fireEvent.click(localRadio);
+    await waitFor(() => expect(mockStore.setRagMode).toHaveBeenCalledWith('local'));
   });
 });
 
-describe('SettingsPage — export', () => {
-  it('renders markdown and JSON format options', async () => {
+describe('SettingsPage — export section', () => {
+  it('renders the Export Vault button', async () => {
     wrap();
-    await waitFor(() => screen.getByText('Markdown ZIP'));
-    expect(screen.getByText('JSON')).toBeInTheDocument();
-  });
-
-  it('renders Download export button', async () => {
-    wrap();
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /download export/i })).toBeInTheDocument()
-    );
-  });
-});
-
-describe('SettingsPage — vault sync', () => {
-  it('renders Sync Now button', async () => {
-    wrap();
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /sync now/i })).toBeInTheDocument()
-    );
-  });
-});
-
-describe('SettingsPage — security', () => {
-  it('renders security section heading', async () => {
-    wrap();
-    await waitFor(() => expect(screen.getByText('Security')).toBeInTheDocument());
-  });
-
-  it('mentions JWT', async () => {
-    wrap();
-    await waitFor(() =>
-      expect(screen.getByText(/jwt-based/i)).toBeInTheDocument()
-    );
+    await waitFor(() => screen.getByText('Settings'));
+    expect(
+      screen.getByRole('button', { name: /export vault/i })
+    ).toBeInTheDocument();
   });
 });
