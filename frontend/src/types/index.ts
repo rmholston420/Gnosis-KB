@@ -1,6 +1,11 @@
 /**
  * types/index.ts — canonical shared TypeScript types for Gnosis-KB.
+ *
+ * IMPORTANT: This file must remain a proper ES module.
+ * The bare `export {}` below ensures TypeScript treats it as a module
+ * even before the first real export statement.
  */
+export {};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Notes
@@ -251,10 +256,14 @@ export interface AiCritique {
 // Chat
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface ChatMessage {
+export interface AIChatMessage {
   role:    'user' | 'assistant' | 'system';
   content: string;
+  meta?:   Record<string, unknown>;
 }
+
+/** @deprecated Use AIChatMessage instead. Kept for legacy imports. */
+export type ChatMessage = AIChatMessage;
 
 export interface ChatSource {
   note_id: string;

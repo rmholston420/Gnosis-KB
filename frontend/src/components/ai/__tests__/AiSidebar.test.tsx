@@ -14,11 +14,13 @@ import { MemoryRouter } from 'react-router-dom';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import * as aiApi from '../../../api/ai';
 import { AiSidebar } from '../AiSidebar';
-import type { LinkSuggestion } from '../../../types';
+import type { LinkSuggestion, LinkSuggestResult, SummarizeResult } from '../../../api/ai';
 
-const linkFixture: LinkSuggestion[] = [
-  { target_note_id: 'n1', target_title: 'Emptiness', score: 0.95, reason: 'Related concept' },
-];
+const linkFixture: LinkSuggestResult = {
+  suggestions: [
+    { target_note_id: 'n1', target_title: 'Emptiness', score: 0.95, reason: 'Related concept' },
+  ],
+};
 
 function Wrapper({ children }: { children: React.ReactNode }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -30,7 +32,7 @@ function Wrapper({ children }: { children: React.ReactNode }) {
 }
 
 describe('AiSidebar', () => {
-  beforeEach(() => vi.restoreAllMocks());
+  beforeEach(() => { vi.restoreAllMocks(); });
 
   it('renders the empty guard when noteId is null', () => {
     render(
@@ -54,7 +56,7 @@ describe('AiSidebar', () => {
   });
 
   it('accepts a link suggestion and calls onInsertLink', async () => {
-    vi.spyOn(aiApi, 'suggestLinks').mockResolvedValue(linkFixture);
+    vi.spyOn(aiApi.aiApi, 'suggestLinks').mockResolvedValue(linkFixture);
     const onInsertLink = vi.fn();
     render(
       <Wrapper>
@@ -66,11 +68,12 @@ describe('AiSidebar', () => {
     // Wait for the suggestion to appear after the query resolves
     await waitFor(() => screen.getByText('Emptiness'));
     fireEvent.click(screen.getByRole('button', { name: /insert/i }));
-    expect(onInsertLink).toHaveBeenCalledWith(linkFixture[0]);
+    expect(onInsertLink).toHaveBeenCalledWith(linkFixture.suggestions[0]);
   });
 
   it('generate summary button fires summarize mutation', async () => {
-    const spy = vi.spyOn(aiApi, 'summarizeNote').mockResolvedValue({ summary: 'A summary.' });
+    const mockResult: SummarizeResult = { summary: 'A summary.' };
+    const spy = vi.spyOn(aiApi.aiApi, 'summarizeNote').mockResolvedValue(mockResult);
     render(
       <Wrapper>
         <AiSidebar noteId="note-456" onInsertLink={() => {}} onInsertTag={() => {}} />

@@ -1,6 +1,6 @@
 /**
  * BacklinksPanel.test.tsx
- * Spy on `getBacklinks` (the real export from api/notes).
+ * Spy on `getBacklinks` (the real named export from api/notes).
  *
  * getBacklinks returns BacklinksResponse: { backlinks: Note[], count: number }
  * The mock must match that envelope shape.
@@ -53,7 +53,7 @@ function Wrapper({ children }: { children: React.ReactNode }) {
 }
 
 describe('BacklinksPanel', () => {
-  beforeEach(() => vi.restoreAllMocks());
+  beforeEach(() => { vi.restoreAllMocks(); });
 
   it('shows empty state when noteId is null', () => {
     render(<Wrapper><BacklinksPanel noteId={null} /></Wrapper>);

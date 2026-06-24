@@ -21,7 +21,8 @@ export function SemanticSearch({ seedNoteId }: SemanticSearchProps) {
   const navigate = useNavigate();
 
   const { data, isLoading, isError } = useSemanticSearch(query);
-  const { data: similar = [] } = useSimilarNotes(seedNoteId ?? null, 6);
+  // useSimilarNotes only accepts a single noteId argument
+  const { data: similar = [] } = useSimilarNotes(seedNoteId ?? null);
 
   const handleResultClick = (noteId: string) => navigate(`/notes/${noteId}`);
 

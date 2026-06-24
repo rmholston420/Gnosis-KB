@@ -34,6 +34,7 @@ export function useSemanticSearch(query: string){ return useSearch(query, 'seman
 
 // ── Similar notes ─────────────────────────────────────────────────────────────
 
+/** Fetch notes similar to a given note by embedding similarity. */
 export function useSimilarNotes(noteId: string | null | undefined) {
   return useQuery({
     queryKey: [SEARCH_KEY, 'similar', noteId],

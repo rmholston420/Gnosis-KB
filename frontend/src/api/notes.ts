@@ -64,6 +64,10 @@ export const notesApi = {
     req<{ status: string }>(`/api/notes/${id}/ingest`, { method: 'POST' }),
   getBacklinks: (id: string) =>
     req<{ backlinks: Backlink[]; count: number }>(`/api/notes/${id}/backlinks`),
+  getDailyNote: (dateStr?: string) => {
+    const path = dateStr ? `/api/notes/daily?date=${dateStr}` : '/api/notes/daily';
+    return req<Note>(path);
+  },
   listTags:    () => req<TagRow[]>('/api/tags'),
   listFolders: () => req<string[]>('/api/folders'),
   listTemplates: () => req<NoteTemplate[]>('/api/templates'),
@@ -72,10 +76,12 @@ export const notesApi = {
 
 export default notesApi;
 
-// ── Standalone named exports (used by NoteEditorPage destructured imports) ───
+// ── Standalone named exports (used by pages and test spies) ──────────────────
 
-export const getNote      = notesApi.getNote;
-export const createNote   = notesApi.createNote;
-export const updateNote   = notesApi.updateNote;
-export const listNotes    = notesApi.listNotes;
-export const deleteNote   = notesApi.deleteNote;
+export const getNote          = notesApi.getNote;
+export const createNote       = notesApi.createNote;
+export const updateNote       = notesApi.updateNote;
+export const listNotes        = notesApi.listNotes;
+export const deleteNote       = notesApi.deleteNote;
+export const getBacklinks     = notesApi.getBacklinks;
+export const getDailyNote     = notesApi.getDailyNote;

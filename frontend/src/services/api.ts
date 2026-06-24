@@ -29,8 +29,13 @@ function authHeaders(): Record<string, string> {
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
   try {
-    const vaultPath = _activeVaultPath ?? useVaultStore.getState().activeVaultPath;
-    if (vaultPath) headers['X-Vault-Path'] = vaultPath;
+    // VaultState uses activeVaultOwnerId (not activeVaultPath).
+    // We derive an owner-id header instead of a path header here.
+    const ownerId = useVaultStore.getState().activeVaultOwnerId;
+    if (_activeVaultPath) headers['X-Vault-Path'] = _activeVaultPath;
+    if (ownerId !== null && ownerId !== undefined) {
+      headers['X-Vault-Owner-Id'] = String(ownerId);
+    }
   } catch {
     // useVaultStore unavailable outside React tree — skip
   }

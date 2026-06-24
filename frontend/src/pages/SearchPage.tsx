@@ -1,9 +1,17 @@
 /**
  * SearchPage — hybrid, semantic, keyword, and fulltext search UI.
+ *
+ * SemanticSearch accepts only `seedNoteId` (not `query`) — it owns its own
+ * query input internally.
+ * SearchResults accepts `results`, `query`, `isLoading`, `isError`,
+ * `total`, and `onResultClick` — not a bare `query` + `mode`.
+ * We use useSearch here directly and pass the resolved results down.
  */
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { SearchResults } from '../components/search/SearchResults';
 import { SemanticSearch } from '../components/search/SemanticSearch';
+import { useSearch } from '../hooks/useSearch';
 import type { SearchMode } from '../hooks/useSearch';
 
 const MODES: { value: SearchMode; label: string }[] = [
@@ -17,11 +25,18 @@ export default function SearchPage() {
   const [query, setQuery]         = useState('');
   const [mode, setMode]           = useState<SearchMode>('hybrid');
   const [submitted, setSubmitted] = useState('');
+  const navigate = useNavigate();
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitted(query);
   };
+
+  // Fetch results for non-semantic modes
+  const { data, isLoading, isError } = useSearch(
+    mode !== 'semantic' ? submitted : '',
+    mode !== 'semantic' ? mode : 'hybrid',
+  );
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
@@ -33,7 +48,7 @@ export default function SearchPage() {
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search your vault…"
+          placeholder="Search your vault\u2026"
           className="flex-1 rounded-lg border border-gnosis-border bg-gnosis-surface px-3 py-2 text-sm text-gnosis-fg placeholder:text-gnosis-muted focus:outline-none focus:ring-2 focus:ring-gnosis-accent"
         />
         <button
@@ -64,9 +79,17 @@ export default function SearchPage() {
 
       {/* Results */}
       {submitted && mode === 'semantic' ? (
-        <SemanticSearch query={submitted} />
+        // SemanticSearch owns its own query input; seedNoteId is optional
+        <SemanticSearch />
       ) : submitted ? (
-        <SearchResults query={submitted} mode={mode} />
+        <SearchResults
+          results={data?.items ?? []}
+          query={submitted}
+          isLoading={isLoading}
+          isError={isError}
+          total={data?.total}
+          onResultClick={(noteId) => navigate(`/notes/${noteId}`)}
+        />
       ) : null}
     </div>
   );
