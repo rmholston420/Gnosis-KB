@@ -1,28 +1,20 @@
 /**
  * AiSidebar — collapsible AI tools panel shown alongside the note editor.
  * Provides: note summary, link suggestions, tag suggestions, and Zettelkasten critique.
- *
- * Data-unwrapping notes
- * ---------------------
- *  useLinkSuggestions → { data: LinkSuggestResult }  shape: { suggestions: LinkSuggestion[] }
- *  useTagSuggestions  → { data: TagSuggestResult }   shape: { suggestions: TagSuggestion[] }
- *  useNoteSummary     → { data: SummarizeResult }    shape: { summary: string }
- *  useNoteCritique    → { data: CritiqueResult }     shape: { critique: AiCritique }
  */
 import React, { useState } from 'react';
+import { useMutation } from '@tanstack/react-query';
 import { Sparkles, Link2, Tag, MessageSquare, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
-import { useNoteSummary, useLinkSuggestions, useTagSuggestions, useNoteCritique } from '../../hooks/useAI';
+import { useLinkSuggestions, useTagSuggestions } from '../../hooks/useAI';
+import { aiApi } from '../../api/ai';
 import type { LinkSuggestion, TagSuggestion, AiCritique } from '../../types';
 
 interface AiSidebarProps {
   noteId: string | null;
-  /** Called when user accepts a link suggestion — parent inserts the wikilink. */
   onInsertLink?: (suggestion: LinkSuggestion) => void;
-  /** Called when user accepts a tag suggestion. */
-  onInsertTag?:  (tag: string) => void;
+  onInsertTag?: (tag: string) => void;
 }
 
-/** Collapsible section wrapper. */
 function Section({
   title, icon, children, defaultOpen = false,
 }: {
@@ -48,18 +40,19 @@ function Section({
   );
 }
 
-/** Summary section. */
 function SummarySection({ noteId }: { noteId: string }) {
-  const { mutate, data: result, isPending } = useNoteSummary(noteId);
-  // result shape: SummarizeResult = { summary: string }
+  const { mutate, data: result, isPending } = useMutation({
+    mutationFn: () => aiApi.summarizeNote(noteId),
+  });
   const summary = result?.summary;
+
   return (
     <Section title="AI Summary" icon={<Sparkles size={12} />}>
       {summary ? (
         <p className="text-xs text-gnosis-fg leading-relaxed">{summary}</p>
       ) : (
         <button
-          onClick={() => mutate(undefined)}
+          onClick={() => mutate()}
           disabled={isPending}
           className="text-xs text-gnosis-accent hover:underline flex items-center gap-1"
         >
@@ -71,13 +64,12 @@ function SummarySection({ noteId }: { noteId: string }) {
   );
 }
 
-/** Link suggestions section. */
 function LinkSection({
   noteId, onInsertLink,
 }: { noteId: string; onInsertLink?: (s: LinkSuggestion) => void }) {
   const { data: result, isLoading } = useLinkSuggestions(noteId);
-  // result shape: LinkSuggestResult = { suggestions: LinkSuggestion[] }
   const suggestions = result?.suggestions ?? [];
+
   return (
     <Section title="Suggested Links" icon={<Link2 size={12} />}>
       {isLoading ? (
@@ -108,13 +100,12 @@ function LinkSection({
   );
 }
 
-/** Tag suggestions section. */
 function TagSection({
   noteId, onInsertTag,
 }: { noteId: string; onInsertTag?: (tag: string) => void }) {
   const { data: result, isLoading } = useTagSuggestions(noteId);
-  // result shape: TagSuggestResult = { suggestions: TagSuggestion[] }
   const suggestions: TagSuggestion[] = result?.suggestions ?? [];
+
   return (
     <Section title="Suggested Tags" icon={<Tag size={12} />}>
       {isLoading ? (
@@ -138,18 +129,19 @@ function TagSection({
   );
 }
 
-/** Zettelkasten critique section. */
 function CritiqueSection({ noteId }: { noteId: string }) {
-  const { mutate, data: result, isPending } = useNoteCritique(noteId);
-  // result shape: CritiqueResult = { critique: AiCritique }
+  const { mutate, data: result, isPending } = useMutation({
+    mutationFn: () => aiApi.critiqueNote(noteId),
+  });
   const critique = result?.critique;
+
   return (
     <Section title="ZK Critique" icon={<MessageSquare size={12} />}>
       {critique ? (
-        <CritiqueDisplay critique={critique} />
+        <CritiqueDisplay critique={critique as AiCritique} />
       ) : (
         <button
-          onClick={() => mutate(undefined)}
+          onClick={() => mutate()}
           disabled={isPending}
           className="text-xs text-gnosis-accent hover:underline flex items-center gap-1"
         >
@@ -163,18 +155,19 @@ function CritiqueSection({ noteId }: { noteId: string }) {
 
 function CritiqueDisplay({ critique }: { critique: AiCritique }) {
   const items: Array<{ label: string; score: number; feedback: string }> = [
-    { label: 'Atomicity',          score: critique.atomicity_score     ?? 0, feedback: critique.atomicity_feedback     ?? '' },
-    { label: 'Connectivity',       score: critique.connectivity_score  ?? 0, feedback: critique.connectivity_feedback  ?? '' },
-    { label: 'Self-containedness', score: critique.standalone_score    ?? 0, feedback: critique.standalone_feedback    ?? '' },
-    { label: 'Insight density',    score: critique.insight_score       ?? 0, feedback: critique.insight_feedback       ?? '' },
+    { label: 'Atomicity', score: critique.atomicity_score ?? 0, feedback: critique.atomicity_feedback ?? '' },
+    { label: 'Connectivity', score: critique.connectivity_score ?? 0, feedback: critique.connectivity_feedback ?? '' },
+    { label: 'Self-containedness', score: critique.standalone_score ?? 0, feedback: critique.standalone_feedback ?? '' },
+    { label: 'Insight density', score: critique.insight_score ?? 0, feedback: critique.insight_feedback ?? '' },
   ];
+
   return (
     <ul className="space-y-2">
       {items.map(({ label, score, feedback }) => (
         <li key={label}>
           <div className="flex items-center justify-between mb-0.5">
             <span className="text-xs font-medium text-gnosis-fg">{label}</span>
-            <span className={`text-xs font-bold ${ score >= 4 ? 'text-green-400' : score >= 2 ? 'text-yellow-400' : 'text-red-400' }`}>
+            <span className={`text-xs font-bold ${score >= 4 ? 'text-green-400' : score >= 2 ? 'text-yellow-400' : 'text-red-400'}`}>
               {score}/5
             </span>
           </div>
@@ -185,9 +178,6 @@ function CritiqueDisplay({ critique }: { critique: AiCritique }) {
   );
 }
 
-/**
- * AiSidebar renders collapsible AI tool sections for the active note.
- */
 export function AiSidebar({ noteId, onInsertLink, onInsertTag }: AiSidebarProps) {
   if (!noteId) {
     return (
@@ -204,8 +194,8 @@ export function AiSidebar({ noteId, onInsertLink, onInsertTag }: AiSidebarProps)
         <span className="text-xs font-semibold text-gnosis-fg">AI Tools</span>
       </div>
       <SummarySection noteId={noteId} />
-      <LinkSection    noteId={noteId} onInsertLink={onInsertLink} />
-      <TagSection     noteId={noteId} onInsertTag={onInsertTag} />
+      <LinkSection noteId={noteId} onInsertLink={onInsertLink} />
+      <TagSection noteId={noteId} onInsertTag={onInsertTag} />
       <CritiqueSection noteId={noteId} />
     </div>
   );
