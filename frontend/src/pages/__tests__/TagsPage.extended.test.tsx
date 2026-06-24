@@ -110,13 +110,16 @@ describe('TagsPage', () => {
     mockListTags.mockResolvedValue(TAGS);
     renderPage();
     await waitFor(() => screen.getByText('buddhism'));
-    const sortBtn = screen.getByRole('button', { name: /Sort/i }) ??
-      screen.queryAllByRole('button').find((b) =>
-        b.title?.includes('Sort') ||
-        b.textContent?.match(/A.Z|By count/)
+    // The button's accessible name is its text content — 'A\u2013Z' or 'By count'.
+    // title="Sort alphabetically" is the discriminator when text toggles.
+    const sortBtn =
+      screen.queryByRole('button', { name: /A.Z/i }) ??
+      screen.queryByRole('button', { name: /By count/i }) ??
+      screen.queryAllByRole('button').find(
+        (b) => b.getAttribute('title')?.toLowerCase().includes('sort')
       );
     expect(sortBtn).toBeTruthy();
-    if (sortBtn) fireEvent.click(sortBtn);
+    if (sortBtn) fireEvent.click(sortBtn as Element);
   });
 
   it('accepts Record<string,number> response format', async () => {
