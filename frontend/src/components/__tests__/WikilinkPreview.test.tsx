@@ -1,9 +1,14 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 
 import WikilinkPreview from '@/components/WikilinkPreview';
 import type { NoteListItem } from '@/types';
+
+vi.mock('dompurify', () => ({
+  default: { sanitize: (html: string) => html },
+}));
 
 function makeNote(overrides: Partial<NoteListItem> = {}): NoteListItem {
   return {
@@ -26,8 +31,21 @@ describe('WikilinkPreview', () => {
     vi.clearAllMocks();
   });
 
-  it('renders title', () => {
-    render(<WikilinkPreview note={makeNote()} />);
-    expect(screen.getByText('Test Note')).toBeTruthy();
+  it('renders body text', () => {
+    render(
+      <MemoryRouter>
+        <WikilinkPreview body="Hello world" notes={[makeNote()]} />
+      </MemoryRouter>
+    );
+    expect(screen.getByText(/Hello world/)).toBeTruthy();
+  });
+
+  it('renders with empty notes array', () => {
+    const { container } = render(
+      <MemoryRouter>
+        <WikilinkPreview body="Some text" notes={[]} />
+      </MemoryRouter>
+    );
+    expect(container).toBeTruthy();
   });
 });

@@ -10,7 +10,7 @@ describe('TagInput.autocomplete', () => {
   });
 
   it('renders input', () => {
-    render(<TagInput value={[]} onChange={vi.fn()} />);
+    render(<TagInput tags={[]} onChange={vi.fn()} />);
     expect(screen.getByRole('textbox')).toBeTruthy();
   });
 });

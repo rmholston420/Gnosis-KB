@@ -8,11 +8,11 @@ describe('WikilinkAutocomplete hook', () => {
     vi.clearAllMocks();
   });
 
-  it('exposes anchorRect', () => {
-    const { result } = renderHook(() => useWikilinkDetector());
-    const { wikilinkQuery, anchorRect, insertWikilink } = result.current;
-    expect(wikilinkQuery).toBeNull();
-    expect(anchorRect).toBeNull();
-    expect(typeof insertWikilink).toBe('function');
+  it('exposes wikilinkQuery and anchorRect as null initially', () => {
+    const textarea = document.createElement('textarea');
+    const ref = { current: textarea } as React.RefObject<HTMLTextAreaElement>;
+    const { result } = renderHook(() => useWikilinkDetector(ref, '', vi.fn()));
+    expect(result.current.wikilinkQuery).toBeNull();
+    expect(result.current.anchorRect).toBeNull();
   });
 });

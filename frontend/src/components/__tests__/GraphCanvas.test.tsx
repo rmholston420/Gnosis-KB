@@ -57,16 +57,16 @@ describe('GraphCanvas', () => {
 
   it('passes empty elements for empty data', () => {
     renderCanvas(emptyData);
-    const firstCall = mockCytoscape.mock.calls[0];
+    const firstCall = (mockCytoscape.mock.calls as unknown[][])[0];
     expect(firstCall).toBeTruthy();
-    const opts = firstCall?.[0] as unknown as { elements: unknown[] };
+    const opts = (firstCall?.[0] ?? {}) as { elements: unknown[] };
     expect(opts.elements).toHaveLength(0);
   });
 
   it('maps edge id as source-target', () => {
     renderCanvas(sampleData);
-    const firstCall = mockCytoscape.mock.calls[0];
-    const opts = firstCall?.[0] as unknown as { elements: Array<{ data: { id: string; source?: string } }> };
+    const firstCall = (mockCytoscape.mock.calls as unknown[][])[0];
+    const opts = (firstCall?.[0] ?? {}) as { elements: Array<{ data: { id: string; source?: string } }> };
     const edge = opts.elements.find((e) => e.data.source === 'n1');
     expect(edge?.data.id).toBe('n1-n2');
   });

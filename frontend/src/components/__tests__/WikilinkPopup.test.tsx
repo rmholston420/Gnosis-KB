@@ -1,8 +1,9 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect } from 'vitest';
 
-import WikilinkPopup from '@/components/WikilinkPopup';
+import WikilinkPopup, { type PopupState } from '@/components/WikilinkPopup';
 import type { NoteListItem } from '@/types';
 
 function makeNote(overrides: Partial<NoteListItem & { body?: string }> = {}): NoteListItem & { body?: string } {
@@ -24,7 +25,21 @@ function makeNote(overrides: Partial<NoteListItem & { body?: string }> = {}): No
 
 describe('WikilinkPopup', () => {
   it('renders note title', () => {
-    render(<WikilinkPopup note={makeNote()} position={{ x: 10, y: 10 }} />);
+    const state: PopupState = { note: makeNote(), anchorRect: new DOMRect(10, 10, 0, 0) };
+    render(
+      <MemoryRouter>
+        <WikilinkPopup state={state} onClose={() => {}} />
+      </MemoryRouter>
+    );
     expect(screen.getByText('Test Note')).toBeTruthy();
+  });
+
+  it('renders nothing when state is null', () => {
+    const { container } = render(
+      <MemoryRouter>
+        <WikilinkPopup state={null} onClose={() => {}} />
+      </MemoryRouter>
+    );
+    expect(container.firstChild).toBeNull();
   });
 });
