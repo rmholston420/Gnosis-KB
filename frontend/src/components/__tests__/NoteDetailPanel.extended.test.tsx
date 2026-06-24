@@ -33,6 +33,10 @@ vi.mock('react-markdown', () => ({
 
 vi.mock('remark-gfm', () => ({ default: () => {} }));
 
+// Static import — vi.mock() calls above are hoisted by Vitest so mocks are
+// already in place when this module is resolved.
+import NoteDetailPanel from '@/components/NoteDetailPanel';
+
 const NOTE = {
   id: 'note-99',
   title: 'Test Note Title',
@@ -54,7 +58,6 @@ const NOTE = {
 function renderPanel(overrides: Partial<typeof NOTE> = {}, onWikilinkClick?: (t: string) => void) {
   const note = { ...NOTE, ...overrides };
   const onClose = vi.fn();
-  const { default: NoteDetailPanel } = require('@/components/NoteDetailPanel');
   return {
     onClose,
     ...render(

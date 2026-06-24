@@ -112,6 +112,10 @@ vi.mock('@/components/editor/WikilinkAutocomplete', () => ({
   }),
 }));
 
+// Static import — vi.mock() calls above are hoisted by Vitest so mocks are
+// already in place when this module is resolved.
+import NoteEditorPage from '@/pages/NoteEditorPage';
+
 const NOTE = {
   id: 'note-1',
   title: 'Existing Note',
@@ -138,7 +142,6 @@ function makeQC() {
 
 function renderNewNote() {
   mockCreateNote.mockResolvedValue({ ...NOTE, id: 'note-new' });
-  const { default: NoteEditorPage } = require('@/pages/NoteEditorPage');
   return render(
     <QueryClientProvider client={makeQC()}>
       <MemoryRouter initialEntries={['/notes/new']}>
@@ -157,7 +160,6 @@ function renderNewNote() {
 function renderEditNote(id = 'note-1') {
   mockGetNote.mockResolvedValue(NOTE);
   mockUpdateNote.mockResolvedValue(NOTE);
-  const { default: NoteEditorPage } = require('@/pages/NoteEditorPage');
   return render(
     <QueryClientProvider client={makeQC()}>
       <MemoryRouter initialEntries={[`/notes/${id}`]}>
@@ -215,7 +217,6 @@ describe('NoteEditorPage — edit note flow', () => {
     mockGetNote.mockImplementation(
       () => new Promise((r) => setTimeout(() => r(NOTE), 300))
     );
-    const { default: NoteEditorPage } = require('@/pages/NoteEditorPage');
     render(
       <QueryClientProvider client={makeQC()}>
         <MemoryRouter initialEntries={['/notes/note-1']}>

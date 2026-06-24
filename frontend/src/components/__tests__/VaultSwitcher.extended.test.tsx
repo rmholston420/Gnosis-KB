@@ -7,6 +7,8 @@
  * - ActiveVaultBanner rendered/hidden/reset (333-356)
  *
  * NOTE: the store action is `switchVault(ownerId, label)` not setActiveVault.
+ * NOTE: VaultContextBanner is a named export from VaultSwitcher — rendered
+ *       alongside VaultSwitcher in the test tree so role=status is present.
  */
 import React from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
@@ -19,7 +21,7 @@ vi.mock('../../services/vaultApi', () => ({
 }));
 
 import { fetchMyVaultGrants } from '../../services/vaultApi';
-import VaultSwitcher from '../VaultSwitcher';
+import VaultSwitcher, { VaultContextBanner } from '../VaultSwitcher';
 import { useVaultStore } from '../../store/useVaultStore';
 
 const GRANTS = [
@@ -34,10 +36,20 @@ beforeEach(() => {
 });
 afterEach(() => { vi.clearAllMocks(); });
 
+/**
+ * Renders both VaultSwitcher AND VaultContextBanner in the same tree.
+ * The banner is normally rendered by App.tsx outside VaultSwitcher, so we
+ * replicate that structure here so role="status" is present in the DOM.
+ */
 async function renderSwitcher() {
   let result!: ReturnType<typeof render>;
   await act(async () => {
-    result = render(<MemoryRouter><VaultSwitcher /></MemoryRouter>);
+    result = render(
+      <MemoryRouter>
+        <VaultContextBanner />
+        <VaultSwitcher />
+      </MemoryRouter>
+    );
   });
   return result;
 }
@@ -50,7 +62,7 @@ describe('VaultSwitcher — fetchGrants on mount (lines 163-169)', () => {
 
   it('renders vault entries after fetch', async () => {
     await renderSwitcher();
-    const trigger = screen.getByRole('button');
+    const trigger = screen.getAllByRole('button')[0];
     fireEvent.click(trigger);
     await waitFor(() => expect(screen.getByText("Alice's Vault")).toBeInTheDocument());
   });
@@ -59,7 +71,7 @@ describe('VaultSwitcher — fetchGrants on mount (lines 163-169)', () => {
 describe('VaultSwitcher — outside click closes dropdown (lines 178-182)', () => {
   it('closes dropdown when clicking outside', async () => {
     await renderSwitcher();
-    fireEvent.click(screen.getByRole('button'));
+    fireEvent.click(screen.getAllByRole('button')[0]);
     await waitFor(() => expect(screen.getByText("Alice's Vault")).toBeInTheDocument());
     fireEvent.mouseDown(document.body);
     await waitFor(() => expect(screen.queryByText("Alice's Vault")).toBeNull());
@@ -69,7 +81,7 @@ describe('VaultSwitcher — outside click closes dropdown (lines 178-182)', () =
 describe('VaultSwitcher — Escape key closes dropdown (lines 265-267)', () => {
   it('closes dropdown on Escape', async () => {
     await renderSwitcher();
-    fireEvent.click(screen.getByRole('button'));
+    fireEvent.click(screen.getAllByRole('button')[0]);
     await waitFor(() => expect(screen.getByText("Alice's Vault")).toBeInTheDocument());
     fireEvent.keyDown(document, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByText("Alice's Vault")).toBeNull());
@@ -78,7 +90,6 @@ describe('VaultSwitcher — Escape key closes dropdown (lines 265-267)', () => {
 
 describe('VaultSwitcher — ActiveVaultBanner (lines 333-356)', () => {
   it('renders banner when viewing a shared vault', async () => {
-    // The store action is switchVault(ownerId, label), not setActiveVault
     await act(async () => {
       useVaultStore.getState().switchVault(9, "Alice's Vault");
     });
