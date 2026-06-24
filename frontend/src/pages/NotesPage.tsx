@@ -1,70 +1,58 @@
-import { useEffect, useState } from 'react';
+import { useCallback } from 'react';
 import { Plus, Folder } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '../store/useAppStore';
-import NoteEditor from '../components/NoteEditor';
-import api from '../services/api';
-import type { Note, NoteListResponse } from '../types';
+import { useNotesList, useCreateNote } from '../hooks/useNotes';
+import type { Note } from '../types';
 
 export default function NotesPage() {
   const { activeFolder, activeNoteId, setActiveNoteId } = useAppStore();
-  const [notes, setNotes] = useState<Note[]>([]);
-  const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
 
-  useEffect(() => {
-    setLoading(true);
-    const params: Record<string, string | number> = { page_size: 200 };
-    if (activeFolder) params.folder = activeFolder;
-    api
-      .listNotes(params)
-      .then((data) => {
-        const resp = data as unknown as NoteListResponse;
-        // listNotes returns { items, total, ... } — extract items
-        setNotes(resp.items as unknown as Note[]);
-      })
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, [activeFolder]);
+  const params = activeFolder ? { folder: activeFolder } : {};
+  const { data, isLoading } = useNotesList(params);
 
-  const activeNote = notes.find((n) => n.id === activeNoteId) ?? null;
+  // useNotesList returns Note[] directly (no envelope)
+  const notes: Note[] = Array.isArray(data)
+    ? data
+    : Array.isArray((data as unknown as { items: Note[] })?.items)
+      ? (data as unknown as { items: Note[] }).items
+      : [];
 
-  async function handleNewNote() {
+  const createMutation = useCreateNote();
+
+  const handleNewNote = useCallback(async () => {
     const folder = activeFolder ?? '00-inbox';
-    const created = (await api.createNote({
+    const created = await createMutation.mutateAsync({
       title: 'Untitled',
-      body: '',
+      body:  '',
       folder,
-    })) as Note;
-    setNotes((prev) => [created, ...prev]);
+    });
     setActiveNoteId(created.id);
-  }
-
-  // onSave signature matches NoteEditor: (body: string, title?: string) => Promise<void>
-  async function handleSave(body: string, title?: string) {
-    if (!activeNoteId) return;
-    const updated = (await api.updateNote(activeNoteId, { body, title })) as Note;
-    setNotes((prev) => prev.map((n) => (n.id === updated.id ? updated : n)));
-  }
+    navigate(`/notes/${created.id}`);
+  }, [activeFolder, createMutation, setActiveNoteId, navigate]);
 
   return (
     <div className="flex h-full overflow-hidden">
-      {/* Note list */}
+      {/* Note list sidebar */}
       <aside className="w-64 flex-shrink-0 border-r border-border flex flex-col bg-bg-secondary">
         <div className="h-10 flex items-center justify-between px-3 border-b border-border flex-shrink-0">
-          <span className="text-xs font-semibold text-text-muted uppercase tracking-wider flex items-center gap-1.5">
+          <h1 className="text-xs font-semibold text-text-muted uppercase tracking-wider flex items-center gap-1.5">
             <Folder size={12} />
             {activeFolder ?? 'All Notes'}
-          </span>
+          </h1>
           <button
-            onClick={handleNewNote}
+            onClick={() => void handleNewNote()}
             className="p-1 rounded hover:bg-bg-tertiary text-text-secondary hover:text-text-primary transition-colors"
             title="New note"
+            aria-label="New note"
           >
             <Plus size={14} />
           </button>
         </div>
 
         <div className="flex-1 overflow-y-auto no-scrollbar">
-          {loading ? (
+          {isLoading ? (
             <div className="px-3 py-4 space-y-2">
               {[...Array(6)].map((_, i) => (
                 <div key={i} className="skeleton skeleton-text" />
@@ -78,10 +66,13 @@ export default function NotesPage() {
           ) : (
             notes.map((note) => (
               <button
-                key={note.id}
-                onClick={() => setActiveNoteId(note.id)}
+                key={note.id ?? note.note_id}
+                onClick={() => {
+                  setActiveNoteId(note.id ?? note.note_id);
+                  navigate(`/notes/${note.id ?? note.note_id}`);
+                }}
                 className={`w-full text-left px-3 py-2.5 border-b border-border transition-colors ${
-                  activeNoteId === note.id
+                  activeNoteId === (note.id ?? note.note_id)
                     ? 'bg-bg-elevated text-text-primary'
                     : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary'
                 }`}
@@ -96,16 +87,12 @@ export default function NotesPage() {
         </div>
       </aside>
 
-      {/* Editor */}
+      {/* Editor area placeholder */}
       <div className="flex-1 overflow-hidden">
-        {activeNote ? (
-          <NoteEditor note={activeNote} onSave={handleSave} />
-        ) : (
-          <div className="flex flex-col items-center justify-center h-full text-text-muted gap-3">
-            <BookOpenIcon />
-            <p className="text-sm">Select a note or create a new one</p>
-          </div>
-        )}
+        <div className="flex flex-col items-center justify-center h-full text-text-muted gap-3">
+          <BookOpenIcon />
+          <p className="text-sm">Select a note or create a new one</p>
+        </div>
       </div>
     </div>
   );

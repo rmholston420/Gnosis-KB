@@ -5,31 +5,36 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { createElement } from 'react';
 import { makeNote } from '../../test/factories';
 
+// NoteEditorPage now uses useNote / useUpdateNote / useNotes hooks
 vi.mock('../../hooks/useNotes', () => ({
   useNote:       vi.fn(() => ({ data: makeNote({ title: 'Editor Test Note' }), isLoading: false })),
-  useUpdateNote: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useUpdateNote: vi.fn(() => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false })),
+  useNotes:      vi.fn(() => ({ data: [], isLoading: false })),
   useCreateNote: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
   useDeleteNote: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
 }));
-vi.mock('../../store/editorStore', () => ({
-  useEditorStore: vi.fn(() => ({
-    title: 'Editor Test Note', body: '# Test', mode: 'edit',
-    pendingChanges: false,
-    setTitle: vi.fn(), setBody: vi.fn(), setMode: vi.fn(), reset: vi.fn(),
-  })),
+
+// Mock the template gallery so it doesn't block render for edit-mode tests
+vi.mock('../../components/notes/NoteTemplateGallery', () => ({
+  NoteTemplateGallery: ({ onClose }: { onClose: () => void }) => (
+    createElement('div', { 'data-testid': 'template-gallery' },
+      createElement('button', { onClick: onClose }, 'Close')
+    )
+  ),
 }));
 
 import NoteEditorPage from '../NoteEditorPage';
 
+// Route uses :id — matches what NoteEditorPage reads via useParams
 function wrap(noteId = 'note-001') {
   const qc = new QueryClient();
   return render(
     createElement(
       QueryClientProvider, { client: qc },
       createElement(
-        MemoryRouter, { initialEntries: [`/notes/${noteId}/edit`] },
+        MemoryRouter, { initialEntries: [`/notes/${noteId}`] },
         createElement(Routes, null,
-          createElement(Route, { path: '/notes/:noteId/edit', element: createElement(NoteEditorPage) })
+          createElement(Route, { path: '/notes/:id', element: createElement(NoteEditorPage) })
         )
       )
     )

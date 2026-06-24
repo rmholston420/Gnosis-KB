@@ -31,9 +31,12 @@ function renderGallery(onSelect = vi.fn(), onClose = vi.fn()) {
   return render(<NoteTemplateGallery onSelect={onSelect} onClose={onClose} />);
 }
 
-/** Wait for templates to load and return the sidebar element. */
+/** Wait for templates to load and return the list element.
+ *  Uses findByRole (async) so it waits for the loading state to clear.
+ */
 async function waitForSidebar() {
-  const sidebar = screen.getByRole('list');
+  // findByRole is async — it retries until the element appears or times out
+  const sidebar = await screen.findByRole('list');
   await waitFor(() => within(sidebar).getByText('Project Plan'));
   return sidebar;
 }

@@ -10,6 +10,10 @@
  *   - NoteTemplateGallery: template picker for new notes
  *   - Edit / Preview toggle: live Markdown preview with wikilink resolution
  *
+ * Route params
+ * ------------
+ *   :id — note id (undefined for new-note flow)
+ *
  * API data shapes
  * ---------------
  *   notesApi.listNotes() returns Note[]  (NOT { items: Note[] })
@@ -23,11 +27,10 @@
 
 import React, { useRef, useState, useCallback, useMemo, useEffect } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, PanelRight, PanelRightClose, Eye, Pencil } from 'lucide-react';
 import { Loader2 } from 'lucide-react';
-// Named imports so vi.spyOn(notesApi, 'getNote') works in NoteEditorPage.test.tsx
-import { getNote, updateNote, listNotes } from '../api/notes';
+import { useNote, useUpdateNote, useNotes } from '../hooks/useNotes';
 import NoteEditor from '../components/NoteEditor';
 import { useAppStore }          from '../store/useAppStore';
 import { SplitPane }            from '../components/layout/SplitPane';
@@ -55,6 +58,7 @@ function noteToFrontmatter(note: Note): Frontmatter {
 }
 
 export default function NoteEditorPage() {
+  // Route param is :id (works for both /notes/:id and /notes/:id/edit patterns)
   const { id } = useParams<{ id?: string }>();
   const [searchParams] = useSearchParams();
   const navigate        = useNavigate();
@@ -90,12 +94,8 @@ export default function NoteEditorPage() {
     }
   }, [bodyValue]);
 
-  // ---- Data fetching (using named api/notes imports for spy compatibility) -
-  const { data: note, isLoading } = useQuery<Note>({
-    queryKey: ['note', id],
-    queryFn:  () => getNote(id!) as Promise<Note>,
-    enabled:  !!id,
-  });
+  // ---- Data fetching via hooks (mockable in tests) -------------------------
+  const { data: note, isLoading } = useNote(id);
 
   // TanStack Query v5: onSuccess was removed — hydrate bodyValue via effect
   useEffect(() => {
@@ -106,12 +106,9 @@ export default function NoteEditorPage() {
   }, [note]);
 
   // All note titles for wikilink resolution in preview mode.
-  // listNotes() returns Note[] directly — no envelope wrapper.
-  // Guard with Array.isArray because test mocks may return { items: Note[] }.
-  const { data: allNotesRaw } = useQuery<Note[]>({
-    queryKey: ['notes'],
-    queryFn:  () => listNotes() as Promise<Note[]>,
-  });
+  // useNotes() returns Note[] — guard with Array.isArray for test mocks that
+  // may return { items: Note[] }.
+  const { data: allNotesRaw } = useNotes();
 
   const allNotes: Note[] = Array.isArray(allNotesRaw)
     ? allNotesRaw
@@ -127,18 +124,11 @@ export default function NoteEditorPage() {
     return map;
   }, [allNotes]);
 
-  // Note creation is handled via NoteTemplateGallery → handleTemplateSelect.
-  // The template sets initial body/metadata; the user then saves via updateMutation
-  // after the note is created and navigated to by the parent route.
+  const updateMutation = useUpdateNote(id);
 
-  const updateMutation = useMutation({
-    mutationFn: ({ body, title }: { body: string; title?: string }) =>
-      updateNote(id!, { body, title }) as Promise<Note>,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['note', id] });
-      queryClient.invalidateQueries({ queryKey: ['notes'] });
-    },
-  });
+  // Suppress unused-var warning
+  void setActiveNoteId;
+  void queryClient;
 
   // ---- Handlers ------------------------------------------------------------
   function handleTemplateSelect(template: NoteTemplate) {
@@ -146,10 +136,6 @@ export default function NoteEditorPage() {
     setShowTemplateGallery(false);
     setBodyValue(template.body);
   }
-
-  // Suppress unused-var warning: setActiveNoteId is used in the create flow
-  // triggered by NoteTemplateGallery in the parent, not directly here.
-  void setActiveNoteId;
 
   // ---- Loading -------------------------------------------------------------
   if (isLoading) {
@@ -225,7 +211,7 @@ export default function NoteEditorPage() {
   }
 
   // ---- Editor area ---------------------------------------------------------
-  function editorArea(saveHandler: (body: string, title: string, tags: string[]) => Promise<void>, isPending: boolean) {
+  function editorArea(saveHandler: (body: string, title?: string) => Promise<void>, isPending: boolean) {
     const blankNote: Note = note ?? {
       note_id:        '',
       id:             '',
@@ -323,7 +309,7 @@ export default function NoteEditorPage() {
         data-testid="save-btn"
         className="sr-only"
         aria-hidden="true"
-        onClick={() => updateMutation.mutate({ body: bodyValue })}
+        onClick={() => void updateMutation.mutate({ body: bodyValue })}
       />
 
       <div className="flex-1 overflow-hidden">

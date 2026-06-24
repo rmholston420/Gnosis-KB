@@ -105,10 +105,10 @@ export function NoteTemplateGallery({ onSelect, onClose }: Props) {
             className="template-gallery-close"
             onClick={onClose}
             aria-label="Close template gallery"
-          >×</button>
+          >\xD7</button>
         </div>
 
-        {loading && <p className="template-gallery-loading">Loading templates…</p>}
+        {loading && <p className="template-gallery-loading">Loading templates\u2026</p>}
         {error   && <p className="template-gallery-error">{error}</p>}
 
         {!loading && !error && (

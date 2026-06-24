@@ -3,31 +3,40 @@ import { render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { createElement } from 'react';
-import { makeListItem } from '../../test/factories';
+import { makeNote } from '../../test/factories';
 
+// Mock the hooks module — useNotesList is what NotesPage now uses
 vi.mock('../../hooks/useNotes', () => ({
   useNotesList: vi.fn(() => ({
-    data: { items: [makeListItem({ title: 'My First Note' })], total: 1, pages: 1 },
+    data: [makeNote({ title: 'My First Note' })],
     isLoading: false,
     isError:   false,
+  })),
+  useCreateNote: vi.fn(() => ({
+    mutateAsync: vi.fn(),
+    isPending:   false,
   })),
 }));
 
 import NotesPage from '../NotesPage';
 
-function wrap(ui: React.ReactNode) {
+function wrap(ui: React.ReactNode = createElement(NotesPage)) {
   const qc = new QueryClient();
-  return render(createElement(QueryClientProvider, { client: qc }, createElement(MemoryRouter, null, ui)));
+  return render(
+    createElement(QueryClientProvider, { client: qc },
+      createElement(MemoryRouter, null, ui)
+    )
+  );
 }
 
 describe('NotesPage', () => {
   it('renders page heading', () => {
-    wrap(<NotesPage />);
+    wrap();
     expect(screen.getByRole('heading', { name: /notes/i })).toBeInTheDocument();
   });
 
   it('renders note list items', () => {
-    wrap(<NotesPage />);
+    wrap();
     expect(screen.getByText('My First Note')).toBeInTheDocument();
   });
 });
