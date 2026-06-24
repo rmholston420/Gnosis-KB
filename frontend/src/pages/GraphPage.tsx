@@ -2,22 +2,22 @@
  * GraphPage.tsx
  * Tab-based knowledge-graph page using TanStack Query.
  *
- * Tab 1 — Wikilinks:          react-force-graph-2d visualisation
+ * Tab 1 — Wikilinks:          GraphView2D + GraphControls + NodeDetailOverlay
  * Tab 2 — LightRAG Knowledge: entity list + lightrag graph health check
- *
- * NOTE: tab buttons have NO role="tab" — tests query them via
- * getByRole('button', { name: /wikilinks/i }). An explicit role="tab"
- * would override the implicit button role and break those queries.
  */
 
-import React, { useState, useCallback, lazy, Suspense } from 'react';
+import React, { useRef, useCallback, useState, lazy, Suspense } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import type { ForceGraphMethods } from 'react-force-graph-2d';
 import type { GraphData, GraphNode } from '../types';
 import api from '../services/api';
 import type { GraphEntitySummary } from '../services/api';
+import { GraphView2D, type ForceNode } from '../components/graph/GraphView2D';
+import { GraphControls } from '../components/graph/GraphControls';
+import { NodeDetailOverlay } from '../components/graph/NodeDetailOverlay';
+import { useGraphStore } from '../store/graphStore';
+import { toForceGraphData, nodeColor, nodeVal, clusterColor } from '../lib/graphUtils';
 import './GraphPage.css';
-
-const ForceGraph2D = lazy(() => import('react-force-graph-2d'));
 
 type Tab = 'wikilinks' | 'lightrag';
 
@@ -28,14 +28,20 @@ interface LightRagData {
 
 export default function GraphPage() {
   const queryClient = useQueryClient();
+  const graphRef    = useRef<ForceGraphMethods>(null);
 
   const [activeTab,    setActiveTab]    = useState<Tab>('wikilinks');
-  const [nodeFilter,   setNodeFilter]   = useState('');
   const [entityFilter, setEntityFilter] = useState('');
-  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [syncing,      setSyncing]      = useState(false);
 
-  // ── Wikilinks graph ────────────────────────────────────────────────────
+  // Graph view state from Zustand store
+  const {
+    selectedNodeId, selectNode,
+    clusterMode, neighborhoodMode,
+    highlightQuery, showLabels,
+  } = useGraphStore();
+
+  // ── Wikilinks graph ───────────────────────────────────────────────────
   const {
     data: graphData,
     isLoading: graphLoading,
@@ -43,43 +49,67 @@ export default function GraphPage() {
     error: graphError,
   } = useQuery<GraphData>({
     queryKey: ['graph'],
-    queryFn: () => api.getFullGraph() as Promise<GraphData>,
+    queryFn:  () => api.getFullGraph() as Promise<GraphData>,
     retry: false,
   });
 
-  // ── LightRAG: graph health check (/graph/lightrag) ─────────────────────
-  // This query is the canary: if the lightrag backend is unavailable the
-  // endpoint returns non-2xx and request() throws, surfacing lrGraphIsError.
-  const {
-    isLoading: lrGraphLoading,
-    isError:   lrGraphIsError,
-    error:     lrGraphError,
-  } = useQuery({
+  // ── LightRAG graph health ─────────────────────────────────────────────
+  const { isLoading: lrGraphLoading, isError: lrGraphIsError, error: lrGraphError } = useQuery({
     queryKey: ['lightrag-graph'],
-    queryFn: () => api.getLightRagGraph(),
-    enabled: activeTab === 'lightrag',
+    queryFn:  () => api.getLightRagGraph(),
+    enabled:  activeTab === 'lightrag',
     retry: false,
   });
 
-  // ── LightRAG: entity list (/graph/entities) ────────────────────────────
-  const {
-    data: lrData,
-    isLoading: lrEntitiesLoading,
-    isError:   lrEntitiesIsError,
-    error:     lrEntitiesError,
-  } = useQuery<LightRagData>({
-    queryKey: ['graph-entities'],
-    queryFn: () => api.getGraphEntities() as Promise<LightRagData>,
-    enabled: activeTab === 'lightrag',
-    retry: false,
-  });
+  const { data: lrData, isLoading: lrEntitiesLoading, isError: lrEntitiesIsError, error: lrEntitiesError } =
+    useQuery<LightRagData>({
+      queryKey: ['graph-entities'],
+      queryFn:  () => api.getGraphEntities() as Promise<LightRagData>,
+      enabled:  activeTab === 'lightrag',
+      retry: false,
+    });
 
-  // Merged LightRAG loading / error state
   const lrLoading = lrGraphLoading || lrEntitiesLoading;
   const lrIsError = lrGraphIsError || lrEntitiesIsError;
   const lrError   = lrGraphError   ?? lrEntitiesError;
 
-  // ── Handlers ───────────────────────────────────────────────────────────
+  // ── Derived graph data ──────────────────────────────────────────────────
+  const allNodes  = graphData?.nodes ?? [];
+  const nodeCount = allNodes.length;
+  const edgeCount = graphData?.edges?.length ?? 0;
+
+  // Build force-graph data from the new graphUtils helper
+  const forceData = graphData ? toForceGraphData(graphData) : { nodes: [], links: [] };
+
+  // Apply highlight query
+  const highlightIds = React.useMemo(() => {
+    const q = highlightQuery.trim().toLowerCase();
+    if (!q) return new Set<string>();
+    return new Set(
+      forceData.nodes
+        .filter((n) => (n as ForceNode).title?.toLowerCase().includes(q))
+        .map((n) => n.id),
+    );
+  }, [forceData, highlightQuery]);
+
+  // Resolve the selected GraphNode for the overlay
+  const selectedNode = React.useMemo(
+    () => selectedNodeId
+      ? (allNodes.find((n) => (n.note_id ?? n.id) === selectedNodeId) ?? null)
+      : null,
+    [allNodes, selectedNodeId],
+  ) as GraphNode | null;
+
+  // LightRAG entities
+  const allEntities = lrData?.entities ?? [];
+  const filteredEntities = entityFilter.trim()
+    ? allEntities.filter((e) =>
+        e.id?.toLowerCase().includes(entityFilter.toLowerCase()) ||
+        e.label?.toLowerCase().includes(entityFilter.toLowerCase()),
+      )
+    : allEntities;
+
+  // ── Handlers ─────────────────────────────────────────────────────
   const handleRefresh = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ['graph'] });
     if (activeTab === 'lightrag') {
@@ -100,37 +130,24 @@ export default function GraphPage() {
     }
   }, [queryClient]);
 
-  // ── Derived ────────────────────────────────────────────────────────────
-  const allNodes  = graphData?.nodes ?? [];
-  const nodeCount = allNodes.length;
-  const edgeCount = graphData?.edges?.length ?? 0;
+  const handleNodeClick = useCallback((node: ForceNode) => {
+    selectNode(node.id);
+    // Zoom to node
+    graphRef.current?.centerAt(node.x ?? 0, node.y ?? 0, 600);
+    graphRef.current?.zoom(2.5, 600);
+  }, [selectNode]);
 
-  const filteredNodes = nodeFilter.trim()
-    ? allNodes.filter((n) => n.title?.toLowerCase().includes(nodeFilter.toLowerCase()))
-    : allNodes;
+  const handleZoomIn  = () => graphRef.current?.zoom((graphRef.current as unknown as { zoom: () => number }).zoom?.() * 1.3 ?? 1.5, 200);
+  const handleZoomOut = () => graphRef.current?.zoom((graphRef.current as unknown as { zoom: () => number }).zoom?.() / 1.3 ?? 0.8, 200);
+  const handleZoomFit = () => graphRef.current?.zoomToFit(400, 40);
 
-  const allEntities = lrData?.entities ?? [];
-  const filteredEntities = entityFilter.trim()
-    ? allEntities.filter((e) =>
-        e.id?.toLowerCase().includes(entityFilter.toLowerCase()) ||
-        e.label?.toLowerCase().includes(entityFilter.toLowerCase())
-      )
-    : allEntities;
-
-  const forceGraphData = {
-    nodes: filteredNodes.map((n) => ({ id: n.id, name: n.title, type: n.note_type })),
-    links: (graphData?.edges ?? []).map((e) => ({ source: e.source, target: e.target })),
-  };
-
-  // ── Render ─────────────────────────────────────────────────────────────
+  // ── Render ───────────────────────────────────────────────────────
   return (
     <div className="graph-page">
-
-      {/* Header — always in DOM, never behind a loading gate */}
+      {/* Header */}
       <div className="graph-page__header">
         <h1 className="graph-page__title">Knowledge Graph</h1>
 
-        {/* Tab buttons — no role="tab"; tests query by role="button" */}
         <div className="graph-page__tabs">
           <button
             aria-selected={activeTab === 'wikilinks'}
@@ -149,16 +166,6 @@ export default function GraphPage() {
         </div>
 
         <div className="graph-page__toolbar" role="toolbar" aria-label="Graph controls">
-          {activeTab === 'wikilinks' && (
-            <input
-              className="graph-page__search"
-              type="search"
-              placeholder="Filter nodes\u2026"
-              value={nodeFilter}
-              onChange={(e) => setNodeFilter(e.target.value)}
-              aria-label="Filter nodes"
-            />
-          )}
           {activeTab === 'lightrag' && (
             <input
               className="graph-page__search"
@@ -169,19 +176,15 @@ export default function GraphPage() {
               aria-label="Filter entities"
             />
           )}
-          <button
-            className="graph-page__refresh-btn"
-            onClick={handleRefresh}
-            aria-label="Refresh"
-          >
+          <button className="graph-page__refresh-btn" onClick={handleRefresh} aria-label="Refresh">
             Refresh
           </button>
         </div>
       </div>
 
-      {/* ── Wikilinks tab content ── */}
+      {/* ── Wikilinks tab ── */}
       {activeTab === 'wikilinks' && (
-        <div className="graph-page__wikilinks">
+        <div className="graph-page__wikilinks relative">
           {graphLoading && (
             <div className="graph-page__loading">
               <span className="graph-page__spinner" aria-label="Loading graph" />
@@ -212,34 +215,39 @@ export default function GraphPage() {
                 <span className="graph-page__node-badge">{nodeCount} nodes</span>
                 <span className="graph-page__edge-badge">{edgeCount} edges</span>
               </div>
+
+              {/* Floating controls overlay */}
+              <GraphControls
+                onZoomIn={handleZoomIn}
+                onZoomOut={handleZoomOut}
+                onZoomToFit={handleZoomFit}
+                onCenterGraph={() => graphRef.current?.zoomToFit(400, 40)}
+              />
+
+              {/* Graph canvas */}
               <Suspense fallback={<div className="graph-page__canvas-loading">Loading graph\u2026</div>}>
-                <ForceGraph2D
-                  graphData={forceGraphData}
-                  nodeLabel="name"
-                  onNodeClick={(node) => {
-                    const n = allNodes.find((x) => x.id === (node as { id: string }).id);
-                    if (n) setSelectedNode(n);
-                  }}
+                <GraphView2D
+                  ref={graphRef}
+                  nodes={forceData.nodes as ForceNode[]}
+                  links={forceData.links as import('../components/graph/GraphView2D').ForceLink[]}
+                  highlightIds={highlightIds}
+                  clusterMode={clusterMode}
+                  showLabels={showLabels}
+                  onNodeClick={handleNodeClick}
                 />
               </Suspense>
+
+              {/* Node detail overlay */}
+              <NodeDetailOverlay
+                node={selectedNode}
+                onClose={() => selectNode(null)}
+              />
             </>
-          )}
-          {selectedNode && (
-            <div className="graph-page__side-panel">
-              <button
-                className="graph-page__side-panel-close"
-                onClick={() => setSelectedNode(null)}
-                aria-label="Close note panel"
-              >
-                \u00d7
-              </button>
-              <div className="graph-page__side-panel-title">{selectedNode.title}</div>
-            </div>
           )}
         </div>
       )}
 
-      {/* ── LightRAG Knowledge tab content ── */}
+      {/* ── LightRAG Knowledge tab ── */}
       {activeTab === 'lightrag' && (
         <div className="graph-page__lightrag">
           {lrLoading && (
