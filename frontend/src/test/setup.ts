@@ -45,3 +45,11 @@ Object.defineProperty(window, 'matchMedia', {
     dispatchEvent: vi.fn(),
   })),
 });
+
+// ── scrollIntoView polyfill (jsdom does not implement it) ─────────────────────
+// AiChat and other components call bottomRef.current?.scrollIntoView();
+// Without this, tests throw "scrollIntoView is not a function".
+Element.prototype.scrollIntoView = vi.fn();
+
+// ── HTMLElement.scrollTo polyfill ─────────────────────────────────────────────
+HTMLElement.prototype.scrollTo = vi.fn() as unknown as typeof HTMLElement.prototype.scrollTo;

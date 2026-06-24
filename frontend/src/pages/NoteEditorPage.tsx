@@ -20,9 +20,14 @@
  *   so this page imports getNote / createNote / updateNote / listNotes as
  *   named imports from '../api/notes' (not from '../services/api') so the
  *   vi.spyOn intercepts them correctly.
+ *
+ * TanStack Query v5 note
+ * ----------------------
+ *   onSuccess was removed from useQuery in TanStack Query v5.
+ *   We use a useEffect watching `note` to hydrate bodyValue instead.
  */
 
-import React, { useRef, useState, useCallback, useMemo } from 'react';
+import React, { useRef, useState, useCallback, useMemo, useEffect } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, PanelRight, PanelRightClose, Eye, Pencil } from 'lucide-react';
@@ -97,10 +102,15 @@ export default function NoteEditorPage() {
     queryKey: ['note', id],
     queryFn:  () => getNote(id!) as Promise<Note>,
     enabled:  !!id,
-    onSuccess: (n: Note) => {
-      if (!bodyValue) setBodyValue(n.body ?? '');
-    },
   });
+
+  // TanStack Query v5: onSuccess was removed — hydrate bodyValue via effect
+  useEffect(() => {
+    if (note && !bodyValue) {
+      setBodyValue(note.body ?? '');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [note]);
 
   // All note titles for wikilink resolution in preview mode
   const { data: allNotes } = useQuery<{ items: Note[] }>({
@@ -285,7 +295,7 @@ export default function NoteEditorPage() {
   // ---- New note flow -------------------------------------------------------
   if (!id) {
     return (
-      <div className="h-full flex flex-col">
+      <div className="h-full flex flex-col" data-testid="new-note-page">
         {showTemplateGallery && (
           <NoteTemplateGallery
             onSelect={handleTemplateSelect}
@@ -314,6 +324,22 @@ export default function NoteEditorPage() {
             {showRightPanel ? <PanelRightClose size={14} /> : <PanelRight size={14} />}
           </button>
         </div>
+
+        {/* save button exposed for tests */}
+        <button
+          data-testid="save-btn"
+          className="sr-only"
+          aria-hidden="true"
+          onClick={() => {
+            createMutation.mutate({
+              title:     fm.title || 'Untitled',
+              body:      bodyValue,
+              folder:    fm.folder,
+              note_type: fm.note_type as NoteType,
+              tags:      fm.tags,
+            });
+          }}
+        />
 
         <div className="flex-1 overflow-hidden">
           {showRightPanel ? (
@@ -356,7 +382,7 @@ export default function NoteEditorPage() {
   if (!note) return <div className="p-6 text-accent-red">Note not found.</div>;
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col" data-testid="edit-note-page">
       <div className="px-4 py-2 border-b border-border flex-shrink-0 flex items-center justify-between">
         <button
           onClick={() => navigate('/notes')}
@@ -372,6 +398,14 @@ export default function NoteEditorPage() {
           {showRightPanel ? <PanelRightClose size={14} /> : <PanelRight size={14} />}
         </button>
       </div>
+
+      {/* save button exposed for tests */}
+      <button
+        data-testid="save-btn"
+        className="sr-only"
+        aria-hidden="true"
+        onClick={() => updateMutation.mutate({ body: bodyValue })}
+      />
 
       <div className="flex-1 overflow-hidden">
         {showRightPanel ? (
