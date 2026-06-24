@@ -74,7 +74,7 @@ export default function NoteEditorPage() {
   // ---- Wikilink autocomplete ----------------------------------------------
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [bodyValue, setBodyValue] = useState('');
-  const { wikilinkQuery, insertWikilink } = useWikilinkDetector(textareaRef, bodyValue, setBodyValue);
+  const { wikilinkQuery, anchorRect, insertWikilink } = useWikilinkDetector(textareaRef, bodyValue, setBodyValue);
 
   // ---- Frontmatter local state (new note) ----------------------------------
   const [fmOverride, setFmOverride] = useState<Partial<Frontmatter>>({});
@@ -222,7 +222,7 @@ export default function NoteEditorPage() {
   }
 
   // ---- Editor area ---------------------------------------------------------
-  function editorArea(saveHandler: (body: string, title?: string) => Promise<void>, isPending: boolean) {
+  function editorArea(saveHandler: (body: string, title: string, tags: string[]) => Promise<void>, isPending: boolean) {
     const blankNote: Note = note ?? {
       note_id:        '',
       id:             '',
@@ -260,8 +260,7 @@ export default function NoteEditorPage() {
           {previewMode ? (
             <div className="h-full overflow-y-auto px-4 py-3">
               <MarkdownPreview
-                body={bodyValue}
-                notes={allNotes ?? []}
+                content={bodyValue}
                 titleToId={titleToId}
               />
             </div>
@@ -269,19 +268,19 @@ export default function NoteEditorPage() {
             <NoteEditor
               note={blankNote}
               onSave={saveHandler}
-              isPending={isPending}
+              isLoading={isPending}
+              onBodyChange={setBodyValue}
               textareaRef={textareaRef}
-              value={bodyValue}
-              onChange={setBodyValue}
             />
           )}
 
           {/* Wikilink autocomplete */}
-          {wikilinkQuery && (
+          {wikilinkQuery && anchorRect && (
             <WikilinkAutocomplete
               query={wikilinkQuery}
+              anchorRect={anchorRect}
               onSelect={(title) => insertWikilink(title)}
-              onDismiss={() => {}}
+              onClose={() => {}}
             />
           )}
         </div>
