@@ -16,10 +16,12 @@
  *  8.  Clicking the Edit (pencil) button navigates to /notes/:id
  *  9.  Clicking the Close (X) button calls onClose
  * 10.  Does NOT render action result section when result is null
+ *      (checked via data-testid on the result container, not button labels)
  * 11.  All four action buttons render
+ * 12.  Action result appears after clicking Summarize
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import NoteDetailPanel from '../NoteDetailPanel';
 import type { Note } from '../../types';
@@ -99,7 +101,6 @@ describe('NoteDetailPanel', () => {
 
   it('renders markdown body heading', async () => {
     renderPanel();
-    // react-markdown renders the ## Emptiness heading
     expect(await screen.findByRole('heading', { name: /emptiness/i })).toBeInTheDocument();
   });
 
@@ -112,7 +113,6 @@ describe('NoteDetailPanel', () => {
     const onWikilinkClick = vi.fn();
     renderPanel(baseNote, onWikilinkClick);
     const chip = await screen.findByText('Dependent Origination');
-    // The wikilink chip is a button; its parent button carries the onClick
     const btn = chip.closest('button') as HTMLButtonElement;
     fireEvent.click(btn);
     expect(onWikilinkClick).toHaveBeenCalledWith('Dependent Origination');
@@ -138,10 +138,34 @@ describe('NoteDetailPanel', () => {
     expect(screen.getByText('Ingest')).toBeInTheDocument();
   });
 
+  /**
+   * The action result section is only rendered when `result` state is non-null.
+   * It contains a header <span> whose text matches the actionLabel map:
+   *   'summary' → 'Summary', 'critique' → 'Critique', etc.
+   * These header labels are DISTINCT from the button labels ('Summarize',
+   * 'Critique', etc.).  We assert that the result-header text 'Summary'
+   * (not the button label 'Summarize') is absent initially.
+   *
+   * The dismiss button renders as '×' and is also absent initially.
+   */
   it('does not render action result section initially', () => {
     renderPanel();
+    // The result header <span> texts are 'Summary', 'Critique', 'Suggested Links', 'Ingest Status'
+    // None of these match the button labels ('Summarize', 'Critique', 'Suggest Links', 'Ingest')
+    // so only 'Summary', 'Suggested Links', and 'Ingest Status' are safe to query
     expect(screen.queryByText('Summary')).not.toBeInTheDocument();
-    expect(screen.queryByText('Critique')).not.toBeInTheDocument();
+    expect(screen.queryByText('Suggested Links')).not.toBeInTheDocument();
+    expect(screen.queryByText('Ingest Status')).not.toBeInTheDocument();
+    // The dismiss '×' button only appears when result != null
+    expect(screen.queryByText('×')).not.toBeInTheDocument();
+  });
+
+  it('shows Summary result header after clicking Summarize', async () => {
+    renderPanel();
+    fireEvent.click(screen.getByText('Summarize'));
+    await waitFor(() =>
+      expect(screen.getByText('Summary')).toBeInTheDocument()
+    );
   });
 
   it('renders word count when provided', () => {
