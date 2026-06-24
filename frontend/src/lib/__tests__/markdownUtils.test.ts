@@ -1,43 +1,76 @@
-import { describe, it, expect } from 'vitest';
-import { parseWikilinks, extractTags, buildSlug } from '../markdownUtils';
+/// <reference types="vitest/globals" />
+import {
+  extractWikilinks,
+  parseWikilinks,
+  extractTags,
+  buildSlug,
+  parseFrontmatter,
+  stripMarkdown,
+  resolveWikilinks,
+} from '../markdownUtils';
 
-describe('parseWikilinks', () => {
-  it('extracts bare wikilinks', () => {
-    expect(parseWikilinks('See [[Zettelkasten]] and [[Atomic Notes]]')).toEqual([
-      { target: 'Zettelkasten', alias: null, raw: '[[Zettelkasten]]' },
-      { target: 'Atomic Notes',  alias: null, raw: '[[Atomic Notes]]' },
-    ]);
+describe('markdownUtils', () => {
+  describe('extractWikilinks / parseWikilinks alias', () => {
+    it('extracts simple wikilinks', () => {
+      const links = extractWikilinks('See [[Alpha]] and [[Beta|B]]');
+      expect(links).toHaveLength(2);
+      expect(links[0].title).toBe('Alpha');
+      expect(links[1].alias).toBe('B');
+    });
+    it('alias returns identical result', () => {
+      expect(parseWikilinks('[[Foo]]')).toEqual(extractWikilinks('[[Foo]]'));
+    });
   });
 
-  it('extracts aliased wikilinks', () => {
-    const result = parseWikilinks('See [[Zettelkasten|ZK Method]]');
-    expect(result[0].target).toBe('Zettelkasten');
-    expect(result[0].alias).toBe('ZK Method');
+  describe('extractTags', () => {
+    it('returns unique hashtag-style tags', () => {
+      const tags = extractTags('A note about #buddhism and #meditation. Also #buddhism again.');
+      expect(tags).toContain('buddhism');
+      expect(tags).toContain('meditation');
+      expect(tags.filter((t) => t === 'buddhism')).toHaveLength(1);
+    });
   });
 
-  it('returns empty array when no wikilinks', () => {
-    expect(parseWikilinks('No links here.')).toEqual([]);
-  });
-});
-
-describe('extractTags', () => {
-  it('extracts hashtags from body', () => {
-    const tags = extractTags('A note about #zettelkasten and #buddhism.');
-    expect(tags).toContain('zettelkasten');
-    expect(tags).toContain('buddhism');
+  describe('buildSlug', () => {
+    it('lowercases and replaces spaces with hyphens', () => {
+      expect(buildSlug('The Four Noble Truths')).toBe('the-four-noble-truths');
+    });
+    it('removes special characters', () => {
+      expect(buildSlug('Hello, World!')).toBe('hello-world');
+    });
   });
 
-  it('returns empty array when no tags', () => {
-    expect(extractTags('No tags here.')).toEqual([]);
+  describe('parseFrontmatter', () => {
+    it('extracts YAML frontmatter', () => {
+      const md = '---\ntitle: Test\ntags: [a, b]\n---\nBody text';
+      const { frontmatter, body } = parseFrontmatter(md);
+      expect(frontmatter.title).toBe('Test');
+      expect(body.trim()).toBe('Body text');
+    });
+    it('returns empty frontmatter when none present', () => {
+      const { frontmatter, body } = parseFrontmatter('Just a body');
+      expect(Object.keys(frontmatter)).toHaveLength(0);
+      expect(body).toBe('Just a body');
+    });
   });
-});
 
-describe('buildSlug', () => {
-  it('lowercases and hyphenates', () => {
-    expect(buildSlug('Zettelkasten Method')).toBe('zettelkasten-method');
+  describe('stripMarkdown', () => {
+    it('removes headings', () => {
+      expect(stripMarkdown('# Hello')).toBe('Hello');
+    });
+    it('removes bold/italic markers', () => {
+      expect(stripMarkdown('**bold** and _italic_')).not.toContain('**');
+    });
   });
 
-  it('strips special characters', () => {
-    expect(buildSlug('Hello, World!')).toBe('hello-world');
+  describe('resolveWikilinks', () => {
+    it('converts known wikilinks to markdown links', () => {
+      const result = resolveWikilinks('See [[Alpha]]', { Alpha: 'abc123' });
+      expect(result).toContain('/notes/abc123');
+    });
+    it('wraps unknown wikilinks in unresolved span', () => {
+      const result = resolveWikilinks('See [[Unknown]]', {});
+      expect(result).toContain('wikilink-unresolved');
+    });
   });
 });

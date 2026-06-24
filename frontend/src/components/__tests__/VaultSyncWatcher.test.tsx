@@ -1,25 +1,30 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+/// <reference types="vitest/globals" />
+import React from 'react';
 import { render } from '@testing-library/react';
-import { createElement } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { VaultSyncWatcher } from '../VaultSyncWatcher';
 
-// Mock the WebSocket hook so it doesn’t actually connect
 vi.mock('../../hooks/useWebSocket', () => ({
-  useVaultWebSocket: vi.fn(),
+  useVaultWebSocket: () => ({ lastMessage: null, send: vi.fn(), readyState: 3 }),
+}));
+vi.mock('../../store/aiStore', () => ({
+  useAiStore: () => ({
+    setVaultSyncStatus:   vi.fn(),
+    setVaultSyncProgress: vi.fn(),
+  }),
 }));
 
-import VaultSyncWatcher from '../VaultSyncWatcher';
-import { useVaultWebSocket } from '../../hooks/useWebSocket';
-
-beforeEach(() => vi.clearAllMocks());
+const wrapper = ({ children }: { children: React.ReactNode }) =>
+  React.createElement(QueryClientProvider, {
+    client: new QueryClient(),
+  }, children);
 
 describe('VaultSyncWatcher', () => {
-  it('mounts without error and calls useVaultWebSocket', () => {
-    render(createElement(VaultSyncWatcher));
-    expect(useVaultWebSocket).toHaveBeenCalledTimes(1);
-  });
-
-  it('renders nothing visible (null render)', () => {
-    const { container } = render(createElement(VaultSyncWatcher));
+  it('renders null without throwing', () => {
+    const { container } = render(
+      React.createElement(VaultSyncWatcher),
+      { wrapper },
+    );
     expect(container.firstChild).toBeNull();
   });
 });

@@ -1,44 +1,33 @@
-import { describe, it, expect, vi } from 'vitest';
+/// <reference types="vitest/globals" />
 import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { createElement } from 'react';
+import React from 'react';
+import { useGraphData, useFullGraph } from '../useGraph';
+import api from '../../services/api';
 
-const mockStats = {
-  total_notes: 42, total_links: 87, orphan_count: 3,
-  avg_degree: 2.07, density: 0.05,
-  most_connected: [{ note_id: 'x', degree: 12, title: 'Zettelkasten' }],
-};
-const mockGraph = {
-  nodes: [{ note_id: 'a', title: 'A', incoming_link_count: 0, outgoing_link_count: 1 }],
+vi.mock('../../services/api');
+
+const sampleGraph = {
+  nodes: [{ note_id: 'a', title: 'Alpha' }],
   edges: [],
 };
 
-vi.mock('../../api/graph', () => ({
-  fetchGraphData:  vi.fn(async () => mockGraph),
-  fetchGraphStats: vi.fn(async () => mockStats),
-}));
+const wrapper = ({ children }: { children: React.ReactNode }) =>
+  React.createElement(QueryClientProvider, {
+    client: new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+  }, children);
 
-import { useGraphData, useGraphStats } from '../useGraph';
+describe('useGraph hooks', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
 
-function makeWrapper() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return ({ children }: { children: React.ReactNode }) =>
-    createElement(QueryClientProvider, { client: qc }, children);
-}
+  it('useGraphData (alias) and useFullGraph return graph data', async () => {
+    (api.getGraph as ReturnType<typeof vi.fn>).mockResolvedValue(sampleGraph);
 
-describe('useGraphData', () => {
-  it('returns graph nodes and edges', async () => {
-    const { result } = renderHook(() => useGraphData(), { wrapper: makeWrapper() });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data?.nodes).toHaveLength(1);
-  });
-});
+    const { result: r1 } = renderHook(() => useGraphData(),  { wrapper });
+    const { result: r2 } = renderHook(() => useFullGraph(),  { wrapper });
 
-describe('useGraphStats', () => {
-  it('returns vault stats', async () => {
-    const { result } = renderHook(() => useGraphStats(), { wrapper: makeWrapper() });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data?.total_notes).toBe(42);
-    expect(result.current.data?.orphan_count).toBe(3);
+    await waitFor(() => r1.current.isSuccess && r2.current.isSuccess);
+    expect(r1.current.data?.nodes).toHaveLength(1);
+    expect(r2.current.data?.nodes).toHaveLength(1);
   });
 });

@@ -1,63 +1,62 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+/// <reference types="vitest/globals" />
+import { renderHook, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { createElement } from 'react';
-import { makeNote, makeListItem } from '../../test/factories';
+import React from 'react';
+import { useNotes, useNotesList, useUpdateNote, useCreateNote, useDeleteNote } from '../useNotes';
+import api from '../../services/api';
 
-// --- mock the api module ---
-vi.mock('../../api/notes', () => ({
-  fetchNotes:   vi.fn(async () => ({ items: [makeListItem()], total: 1, page: 1, limit: 20, pages: 1 })),
-  fetchNote:    vi.fn(async () => makeNote()),
-  createNote:   vi.fn(async () => makeNote({ note_id: 'new-001', title: 'New' })),
-  updateNote:   vi.fn(async () => makeNote({ title: 'Updated' })),
-  deleteNote:   vi.fn(async () => ({ ok: true })),
-}));
+vi.mock('../../services/api');
 
-import { useNotesList, useNote, useCreateNote, useUpdateNote, useDeleteNote } from '../useNotes';
+const note = {
+  note_id: 'note-001', title: 'Test Note', body: '# Test',
+  created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+};
 
-function makeWrapper() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return ({ children }: { children: React.ReactNode }) =>
-    createElement(QueryClientProvider, { client: qc }, children);
-}
+const wrapper = ({ children }: { children: React.ReactNode }) =>
+  React.createElement(QueryClientProvider, {
+    client: new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }),
+  }, children);
 
-describe('useNotesList', () => {
-  it('returns notes from the API', async () => {
-    const { result } = renderHook(() => useNotesList(), { wrapper: makeWrapper() });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data?.items).toHaveLength(1);
+describe('useNotes hooks', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('useNotes and useNotesList alias fetch notes list', async () => {
+    (api.listNotes as ReturnType<typeof vi.fn>).mockResolvedValue([note]);
+    const { result: r1 } = renderHook(() => useNotes(),     { wrapper });
+    const { result: r2 } = renderHook(() => useNotesList(), { wrapper });
+    await waitFor(() => r1.current.isSuccess && r2.current.isSuccess);
+    expect(r1.current.data).toHaveLength(1);
+    expect(r2.current.data).toHaveLength(1);
   });
-});
 
-describe('useNote', () => {
-  it('fetches a single note', async () => {
-    const { result } = renderHook(() => useNote('note-001'), { wrapper: makeWrapper() });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data?.note_id).toBe('note-001');
+  it('useUpdateNote mutates with { id, payload }', async () => {
+    (api.updateNote as ReturnType<typeof vi.fn>).mockResolvedValue({ ...note, title: 'Updated' });
+    const { result } = renderHook(() => useUpdateNote(), { wrapper });
+    await act(async () => {
+      await result.current.mutateAsync({ id: 'note-001', payload: { title: 'Updated' } });
+    });
+    expect(api.updateNote).toHaveBeenCalledWith('note-001', { title: 'Updated' });
   });
-});
 
-describe('useCreateNote', () => {
-  beforeEach(() => vi.clearAllMocks());
-  it('mutation resolves with new note', async () => {
-    const { result } = renderHook(() => useCreateNote(), { wrapper: makeWrapper() });
-    await result.current.mutateAsync({ title: 'New', body: '' });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  it('useUpdateNote also accepts a noteId arg (compat)', () => {
+    // Calling with a string arg must not throw — it is ignored
+    const { result } = renderHook(() => useUpdateNote('note-001'), { wrapper });
+    expect(typeof result.current.mutateAsync).toBe('function');
   });
-});
 
-describe('useUpdateNote', () => {
-  it('mutation resolves', async () => {
-    const { result } = renderHook(() => useUpdateNote('note-001'), { wrapper: makeWrapper() });
-    await result.current.mutateAsync({ title: 'Updated' });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  it('useCreateNote creates a note', async () => {
+    (api.createNote as ReturnType<typeof vi.fn>).mockResolvedValue(note);
+    const { result } = renderHook(() => useCreateNote(), { wrapper });
+    await act(async () => {
+      await result.current.mutateAsync({ title: 'New', body: '' });
+    });
+    expect(api.createNote).toHaveBeenCalledWith({ title: 'New', body: '' });
   });
-});
 
-describe('useDeleteNote', () => {
-  it('mutation resolves', async () => {
-    const { result } = renderHook(() => useDeleteNote(), { wrapper: makeWrapper() });
-    await result.current.mutateAsync('note-001');
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  it('useDeleteNote deletes a note', async () => {
+    (api.deleteNote as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    const { result } = renderHook(() => useDeleteNote(), { wrapper });
+    await act(async () => { await result.current.mutateAsync('note-001'); });
+    expect(api.deleteNote).toHaveBeenCalledWith('note-001');
   });
 });

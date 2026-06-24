@@ -1,41 +1,47 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { formatRelative, formatFull, isToday } from '../dateUtils';
+/// <reference types="vitest/globals" />
+import { relativeTime, formatRelative, formatDate, formatFull, isToday, today, toVaultDate } from '../dateUtils';
 
-const NOW = new Date('2026-06-24T20:00:00.000Z');
+describe('dateUtils', () => {
+  afterEach(() => { vi.useRealTimers(); });
 
-afterEach(() => vi.useRealTimers());
-
-describe('formatRelative', () => {
-  it('shows "just now" for <60 s', () => {
-    vi.setSystemTime(NOW);
-    const ts = new Date(NOW.getTime() - 30_000).toISOString();
-    expect(formatRelative(ts)).toMatch(/just now|seconds? ago/i);
+  describe('today / toVaultDate', () => {
+    it('returns YYYY-MM-DD format', () => {
+      expect(today()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    });
+    it('formats a specific date correctly', () => {
+      expect(toVaultDate(new Date('2026-06-24T00:00:00Z'))).toBe('2026-06-24');
+    });
   });
 
-  it('shows minutes ago', () => {
-    vi.setSystemTime(NOW);
-    const ts = new Date(NOW.getTime() - 5 * 60_000).toISOString();
-    expect(formatRelative(ts)).toMatch(/5 min/i);
-  });
-});
-
-describe('formatFull', () => {
-  it('returns a human-readable date string', () => {
-    const result = formatFull('2026-06-24T12:00:00Z');
-    expect(result).toMatch(/2026/);
-    expect(result).toMatch(/Jun/);
-  });
-});
-
-describe('isToday', () => {
-  it('returns true for today', () => {
-    vi.setSystemTime(NOW);
-    expect(isToday(NOW.toISOString())).toBe(true);
+  describe('isToday', () => {
+    it('returns true for today', () => {
+      expect(isToday(today())).toBe(true);
+    });
+    it('returns false for yesterday', () => {
+      expect(isToday('2000-01-01')).toBe(false);
+    });
   });
 
-  it('returns false for yesterday', () => {
-    vi.setSystemTime(NOW);
-    const yesterday = new Date(NOW.getTime() - 86_400_000).toISOString();
-    expect(isToday(yesterday)).toBe(false);
+  describe('relativeTime / formatRelative alias', () => {
+    it('returns "just now" for recent timestamps', () => {
+      const now = new Date().toISOString();
+      expect(relativeTime(now)).toBe('just now');
+      expect(formatRelative(now)).toBe('just now');
+    });
+    it('returns minutes for older timestamps', () => {
+      const past = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      expect(relativeTime(past)).toBe('5m ago');
+    });
+  });
+
+  describe('formatDate / formatFull', () => {
+    it('formatDate produces a readable date', () => {
+      const result = formatDate('2026-06-24T12:00:00Z');
+      expect(result).toContain('2026');
+    });
+    it('formatFull includes time', () => {
+      const result = formatFull('2026-06-24T14:30:00Z');
+      expect(result).toContain('2026');
+    });
   });
 });

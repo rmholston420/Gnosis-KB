@@ -1,40 +1,50 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { act, renderHook } from '@testing-library/react';
+/// <reference types="vitest/globals" />
 import { useAppStore } from '../useAppStore';
 
-beforeEach(() => {
-  // Reset store to initial state between tests
-  useAppStore.setState({ isAuthenticated: false, user: null });
+const reset = () => useAppStore.setState({
+  isAuthenticated: false,
+  user: null,
+  sidebarOpen: true,
+  sidebarCollapsed: false,
+  chatMessages: [],
+  sessionId: null,
 });
 
-describe('useAppStore — auth slice', () => {
+describe('useAppStore', () => {
+  beforeEach(() => { reset(); });
+
   it('starts unauthenticated', () => {
-    const { result } = renderHook(() => useAppStore());
-    expect(result.current.isAuthenticated).toBe(false);
-    expect(result.current.user).toBeNull();
+    expect(useAppStore.getState().isAuthenticated).toBe(false);
+    expect(useAppStore.getState().user).toBeNull();
   });
 
-  it('setUser marks authenticated', () => {
-    const { result } = renderHook(() => useAppStore());
-    act(() => result.current.setUser({ username: 'rinpoche', email: 'r@gnosis.kb' }));
-    expect(result.current.isAuthenticated).toBe(true);
-    expect(result.current.user?.username).toBe('rinpoche');
+  it('setUser authenticates the session', () => {
+    useAppStore.getState().setUser({ username: 'rinpoche', email: 'r@gnosis.local' });
+    expect(useAppStore.getState().isAuthenticated).toBe(true);
+    expect(useAppStore.getState().user?.username).toBe('rinpoche');
   });
 
-  it('logout clears user', () => {
-    const { result } = renderHook(() => useAppStore());
-    act(() => result.current.setUser({ username: 'rinpoche', email: 'r@gnosis.kb' }));
-    act(() => result.current.logout());
-    expect(result.current.isAuthenticated).toBe(false);
-    expect(result.current.user).toBeNull();
+  it('logout clears auth state', () => {
+    useAppStore.getState().setUser({ username: 'rinpoche', email: 'r@gnosis.local' });
+    useAppStore.getState().logout();
+    expect(useAppStore.getState().isAuthenticated).toBe(false);
+    expect(useAppStore.getState().user).toBeNull();
   });
-});
 
-describe('useAppStore — sidebar slice', () => {
-  it('toggles sidebar', () => {
-    const { result } = renderHook(() => useAppStore());
-    const initial = result.current.sidebarOpen;
-    act(() => result.current.toggleSidebar());
-    expect(result.current.sidebarOpen).toBe(!initial);
+  it('toggleSidebar flips sidebarOpen', () => {
+    const before = useAppStore.getState().sidebarOpen;
+    useAppStore.getState().toggleSidebar();
+    expect(useAppStore.getState().sidebarOpen).toBe(!before);
+  });
+
+  it('appendChatMessage adds to chatMessages', () => {
+    useAppStore.getState().appendChatMessage({ role: 'user', content: 'hello' });
+    expect(useAppStore.getState().chatMessages).toHaveLength(1);
+  });
+
+  it('clearChat empties chatMessages', () => {
+    useAppStore.getState().appendChatMessage({ role: 'user', content: 'hello' });
+    useAppStore.getState().clearChat();
+    expect(useAppStore.getState().chatMessages).toHaveLength(0);
   });
 });
