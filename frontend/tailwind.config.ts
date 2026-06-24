@@ -1,5 +1,15 @@
 import type { Config } from 'tailwindcss';
 
+/**
+ * Wrap a CSS variable reference so Tailwind can inject the alpha channel.
+ * e.g. withAlpha('--gnosis-accent') → 'rgb(var(--gnosis-accent-rgb) / <alpha-value>)'
+ * Since we're using hex CSS vars, we use the simpler form and rely on
+ * `color-mix` for opacity — just reference the var directly.
+ */
+function v(varName: string) {
+  return `var(${varName})`;
+}
+
 const config: Config = {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   darkMode: ['attribute', 'data-theme'],
@@ -8,21 +18,21 @@ const config: Config = {
       colors: {
         // ---- Legacy bg/text/accent scale (kept for compatibility) ----
         bg: {
-          primary:   '#0d1117',
-          secondary: '#161b22',
-          tertiary:  '#21262d',
-          elevated:  '#2d333b',
+          primary:   'var(--color-bg)',
+          secondary: 'var(--color-surface)',
+          tertiary:  'var(--color-surface-2)',
+          elevated:  'var(--color-surface-dynamic)',
         },
         border: {
-          DEFAULT: '#30363d',
-          subtle:  '#21262d',
-          muted:   '#484f58',
+          DEFAULT: 'var(--color-border)',
+          subtle:  'var(--color-divider)',
+          muted:   'var(--color-text-faint)',
         },
         text: {
-          primary:   '#e6edf3',
-          secondary: '#8b949e',
-          muted:     '#6e7681',
-          link:      '#58a6ff',
+          primary:   'var(--color-text)',
+          secondary: 'var(--color-text-muted)',
+          muted:     'var(--color-text-faint)',
+          link:      'var(--color-primary)',
         },
         accent: {
           blue:   '#1f6feb',
@@ -42,28 +52,28 @@ const config: Config = {
           project:   '#e3b341',
         },
 
-        // ---- gnosis-* semantic tokens (used by new components) ----
-        // These are aliased to the legacy palette for consistency.
+        // ---- gnosis-* semantic tokens — now CSS variable–backed so they
+        //      respond to the data-theme light/dark toggle. ----
         gnosis: {
-          bg:       '#0d1117',   // page background
-          surface:  '#161b22',   // card / panel background
-          border:   '#30363d',   // divider lines
-          hover:    '#2d333b',   // hover state background
-          fg:       '#e6edf3',   // primary text
-          muted:    '#8b949e',   // secondary/muted text
-          accent:   '#4f98a3',   // primary accent (teal)
-          'accent-2':'#1f6feb',  // secondary accent (blue)
-          error:    '#da3633',
-          success:  '#238636',
+          bg:         v('--gnosis-bg'),
+          surface:    v('--gnosis-surface'),
+          border:     v('--gnosis-border'),
+          hover:      v('--gnosis-hover'),
+          fg:         v('--gnosis-fg'),
+          muted:      v('--gnosis-muted'),
+          accent:     v('--gnosis-accent'),
+          'accent-2': v('--gnosis-accent-2'),
+          error:      v('--gnosis-error'),
+          success:    v('--gnosis-success'),
         },
       },
       fontFamily: {
-        sans:  ['Inter',           'system-ui', 'sans-serif'],
-        mono:  ['JetBrains Mono',  'Fira Code', 'monospace'],
-        serif: ['Crimson Pro',     'Georgia',   'serif'],
+        sans:  ['Inter',          'system-ui', 'sans-serif'],
+        mono:  ['JetBrains Mono', 'Fira Code', 'monospace'],
+        serif: ['Crimson Pro',    'Georgia',   'serif'],
       },
       spacing: {
-        sidebar:    '260px',
+        sidebar:      '260px',
         'sidebar-sm': '48px',
       },
       borderRadius: {
@@ -72,11 +82,17 @@ const config: Config = {
         lg:      '8px',
         xl:      '12px',
       },
+      boxShadow: {
+        sm: 'var(--shadow-sm)',
+        md: 'var(--shadow-md)',
+        lg: 'var(--shadow-lg)',
+      },
       animation: {
         'fade-in':   'fadeIn  0.15s ease-out',
         'slide-in':  'slideIn 0.2s  ease-out',
         'spin-slow': 'spin 2s linear infinite',
         'pulse':     'pulse 2s cubic-bezier(0.4,0,0.6,1) infinite',
+        'shimmer':   'shimmer 1.5s ease-in-out infinite',
       },
       keyframes: {
         fadeIn: {
@@ -86,6 +102,10 @@ const config: Config = {
         slideIn: {
           '0%':   { transform: 'translateX(-10px)', opacity: '0' },
           '100%': { transform: 'translateX(0)',     opacity: '1' },
+        },
+        shimmer: {
+          '0%':   { backgroundPosition: '-200% 0' },
+          '100%': { backgroundPosition: '200% 0' },
         },
       },
     },
