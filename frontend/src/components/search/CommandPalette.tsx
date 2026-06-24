@@ -3,6 +3,7 @@
  *
  * Features:
  *   - Opens on Cmd+K (Mac) or Ctrl+K (Windows/Linux) from anywhere in the app
+ *   - Closes on Escape key
  *   - Fuzzy note search via Fuse.js over a cached note list
  *   - Built-in navigation actions: New Note, Go to Graph, Go to Search, Go to Settings
  *   - Keyboard navigation: Arrow keys, Enter to execute, Escape to dismiss
@@ -127,17 +128,31 @@ export function CommandPalette({ onClose }: CommandPaletteProps = {}) {
     }
   }, [open, notes.length]);
 
-  /** Register Cmd+K / Ctrl+K global shortcut. */
+  /** Register Cmd+K / Ctrl+K global shortcut and Escape to close. */
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
         setOpen((prev) => !prev);
+        return;
+      }
+      if (e.key === "Escape") {
+        setOpen((prev) => {
+          if (prev) {
+            // Reset query and notify parent when closing via Escape
+            setQuery("");
+            onClose?.();
+            return false;
+          }
+          return prev;
+        });
       }
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, []);
+  // onClose is stable (passed from parent), safe to include
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onClose]);
 
   const close = useCallback(() => {
     setOpen(false);

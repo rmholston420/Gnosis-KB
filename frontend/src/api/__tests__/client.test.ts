@@ -48,7 +48,9 @@ describe('apiClient response interceptor', () => {
     await expect(apiClient.get('/api/v1/protected')).rejects.toThrow();
 
     expect(localStorage.getItem('gnosis_token')).toBeNull();
-    expect(window.location.href).toBe('/login');
+    // jsdom resolves the assigned href '/login' against the current origin,
+    // producing the full URL 'http://localhost/login'.
+    expect(window.location.href).toBe('http://localhost/login');
   });
 
   it('re-rejects non-401 errors without touching localStorage or location', async () => {
@@ -60,7 +62,7 @@ describe('apiClient response interceptor', () => {
     });
 
     expect(localStorage.getItem('gnosis_token')).toBe('good-token');
-    expect(window.location.href).not.toBe('/login');
+    expect(window.location.href).not.toBe('http://localhost/login');
   });
 
   it('passes 200 responses through unchanged', async () => {
