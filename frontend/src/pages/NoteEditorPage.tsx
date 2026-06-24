@@ -9,6 +9,14 @@
  *   - WikilinkAutocomplete: floating autocomplete when user types [[
  *   - NoteTemplateGallery: template picker for new notes
  *   - Edit / Preview toggle: live Markdown preview with wikilink resolution
+ *
+ * Test surface notes:
+ *   - data-testid="note-editor" on the root wrapper div (both new-note and
+ *     edit paths) so getByTestId('note-editor') resolves after note loads.
+ *   - Edit button  has aria-label="Edit"    so getByRole('button',{name:/edit/i}).
+ *   - Preview button has aria-label="Preview" so getByRole('button',{name:/preview/i}).
+ *   - NoteTemplateGallery renders role="dialog" with close button
+ *     aria-label="Close template gallery" (already correct in the component).
  */
 
 import React, { useRef, useState, useCallback, useMemo } from 'react';
@@ -85,7 +93,6 @@ export default function NoteEditorPage() {
     queryFn:  () => api.getNote(id!) as Promise<Note>,
     enabled:  !!id,
     onSuccess: (n: Note) => {
-      // Initialise editor content from server on first load
       if (!bodyValue) setBodyValue(n.body ?? '');
     },
   });
@@ -171,6 +178,38 @@ export default function NoteEditorPage() {
     </div>
   );
 
+  // ---- Edit/Preview toggle toolbar (shared between both flows) -------------
+  function EditPreviewToolbar() {
+    return (
+      <div className="flex-shrink-0 px-3 py-1.5 border-b border-border flex items-center gap-1">
+        <button
+          onClick={() => setPreviewMode(false)}
+          aria-label="Edit"
+          aria-pressed={!previewMode}
+          className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+            !previewMode
+              ? 'bg-bg-elevated text-text-primary'
+              : 'text-text-muted hover:text-text-primary'
+          }`}
+        >
+          <Pencil size={11} /> Edit
+        </button>
+        <button
+          onClick={() => setPreviewMode(true)}
+          aria-label="Preview"
+          aria-pressed={previewMode}
+          className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+            previewMode
+              ? 'bg-bg-elevated text-text-primary'
+              : 'text-text-muted hover:text-text-primary'
+          }`}
+        >
+          <Eye size={11} /> Preview
+        </button>
+      </div>
+    );
+  }
+
   // ---- Editor area (shared between new + edit flows) ----------------------
   function editorArea(saveHandler: (body: string, title?: string) => Promise<void>, isPending: boolean) {
     const blankNote: Note = note ?? {
@@ -202,31 +241,7 @@ export default function NoteEditorPage() {
           />
         </div>
 
-        {/* Edit / Preview toggle toolbar */}
-        <div className="flex-shrink-0 px-3 py-1.5 border-b border-border flex items-center gap-1">
-          <button
-            onClick={() => setPreviewMode(false)}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-              !previewMode
-                ? 'bg-bg-elevated text-text-primary'
-                : 'text-text-muted hover:text-text-primary'
-            }`}
-            aria-pressed={!previewMode}
-          >
-            <Pencil size={11} /> Edit
-          </button>
-          <button
-            onClick={() => setPreviewMode(true)}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-              previewMode
-                ? 'bg-bg-elevated text-text-primary'
-                : 'text-text-muted hover:text-text-primary'
-            }`}
-            aria-pressed={previewMode}
-          >
-            <Eye size={11} /> Preview
-          </button>
-        </div>
+        <EditPreviewToolbar />
 
         {/* Editor or Preview */}
         <div className="flex-1 overflow-hidden relative">
@@ -265,7 +280,7 @@ export default function NoteEditorPage() {
   // ---- New note flow -------------------------------------------------------
   if (!id) {
     return (
-      <>
+      <div data-testid="note-editor" className="h-full flex flex-col">
         {showTemplateGallery && (
           <NoteTemplateGallery
             onSelect={handleTemplateSelect}
@@ -273,49 +288,32 @@ export default function NoteEditorPage() {
           />
         )}
 
-        <div className="h-full flex flex-col">
-          <div className="px-4 py-2 border-b border-border flex-shrink-0 flex items-center justify-between">
-            <button
-              onClick={() => navigate(-1)}
-              className="flex items-center gap-1 text-xs text-text-muted hover:text-text-primary"
-            >
-              <ArrowLeft size={13} /> Back
-            </button>
-            {chosenTemplate && (
-              <span className="text-xs text-text-muted">
-                Template: <strong>{chosenTemplate.name}</strong>
-                <button className="ml-2 underline" onClick={() => setShowTemplateGallery(true)}>change</button>
-              </span>
-            )}
-            <button
-              onClick={() => setShowRightPanel(!showRightPanel)}
-              className="p-1 text-text-muted hover:text-text-primary transition-colors"
-              aria-label={showRightPanel ? 'Hide sidebar' : 'Show sidebar'}
-            >
-              {showRightPanel ? <PanelRightClose size={14} /> : <PanelRight size={14} />}
-            </button>
-          </div>
+        <div className="px-4 py-2 border-b border-border flex-shrink-0 flex items-center justify-between">
+          <button
+            onClick={() => navigate(-1)}
+            className="flex items-center gap-1 text-xs text-text-muted hover:text-text-primary"
+          >
+            <ArrowLeft size={13} /> Back
+          </button>
+          {chosenTemplate && (
+            <span className="text-xs text-text-muted">
+              Template: <strong>{chosenTemplate.name}</strong>
+              <button className="ml-2 underline" onClick={() => setShowTemplateGallery(true)}>change</button>
+            </span>
+          )}
+          <button
+            onClick={() => setShowRightPanel(!showRightPanel)}
+            className="p-1 text-text-muted hover:text-text-primary transition-colors"
+            aria-label={showRightPanel ? 'Hide sidebar' : 'Show sidebar'}
+          >
+            {showRightPanel ? <PanelRightClose size={14} /> : <PanelRight size={14} />}
+          </button>
+        </div>
 
-          <div className="flex-1 overflow-hidden">
-            {showRightPanel ? (
-              <SplitPane
-                left={editorArea(
-                  async (body, title) => {
-                    await createMutation.mutateAsync({
-                      title: title || fm.title || 'Untitled',
-                      body,
-                      folder:    fm.folder,
-                      note_type: fm.note_type as NoteType,
-                      tags:      fm.tags,
-                    });
-                  },
-                  createMutation.isPending,
-                )}
-                right={rightPanel}
-                defaultSplit={0.62}
-              />
-            ) : (
-              editorArea(
+        <div className="flex-1 overflow-hidden">
+          {showRightPanel ? (
+            <SplitPane
+              left={editorArea(
                 async (body, title) => {
                   await createMutation.mutateAsync({
                     title: title || fm.title || 'Untitled',
@@ -326,11 +324,26 @@ export default function NoteEditorPage() {
                   });
                 },
                 createMutation.isPending,
-              )
-            )}
-          </div>
+              )}
+              right={rightPanel}
+              defaultSplit={0.62}
+            />
+          ) : (
+            editorArea(
+              async (body, title) => {
+                await createMutation.mutateAsync({
+                  title: title || fm.title || 'Untitled',
+                  body,
+                  folder:    fm.folder,
+                  note_type: fm.note_type as NoteType,
+                  tags:      fm.tags,
+                });
+              },
+              createMutation.isPending,
+            )
+          )}
         </div>
-      </>
+      </div>
     );
   }
 
@@ -338,7 +351,7 @@ export default function NoteEditorPage() {
   if (!note) return <div className="p-6 text-accent-red">Note not found.</div>;
 
   return (
-    <div className="h-full flex flex-col">
+    <div data-testid="note-editor" className="h-full flex flex-col">
       <div className="px-4 py-2 border-b border-border flex-shrink-0 flex items-center justify-between">
         <button
           onClick={() => navigate('/notes')}

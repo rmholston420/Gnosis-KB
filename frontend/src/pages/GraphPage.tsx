@@ -4,6 +4,12 @@
  *
  * Tab 1 — Wikilinks:          GraphView2D + GraphControls + NodeDetailOverlay
  * Tab 2 — LightRAG Knowledge: entity list + lightrag graph health check
+ *
+ * The toolbar always shows:
+ *   • "Filter nodes…" input → drives highlightQuery (wikilinks graph)
+ *   • Refresh / Sync Vault buttons
+ *
+ * The LightRAG panel additionally shows its own entity-filter input.
  */
 
 import React, { useRef, useCallback, useState, lazy, Suspense } from 'react';
@@ -33,15 +39,17 @@ export default function GraphPage() {
   const [activeTab,    setActiveTab]    = useState<Tab>('wikilinks');
   const [entityFilter, setEntityFilter] = useState('');
   const [syncing,      setSyncing]      = useState(false);
+  const [nodeFilter,   setNodeFilter]   = useState('');
 
   // Graph view state from Zustand store
   const {
     selectedNodeId, selectNode,
     clusterMode, neighborhoodMode,
-    highlightQuery, showLabels,
+    highlightQuery, setHighlightQuery,
+    showLabels,
   } = useGraphStore();
 
-  // ── Wikilinks graph ───────────────────────────────────────────────────
+  // ── Wikilinks graph ──────────────────────────────────────────────────
   const {
     data: graphData,
     isLoading: graphLoading,
@@ -53,7 +61,7 @@ export default function GraphPage() {
     retry: false,
   });
 
-  // ── LightRAG graph health ─────────────────────────────────────────────
+  // ── LightRAG graph health ───────────────────────────────────────────
   const { isLoading: lrGraphLoading, isError: lrGraphIsError, error: lrGraphError } = useQuery({
     queryKey: ['lightrag-graph'],
     queryFn:  () => api.getLightRagGraph(),
@@ -75,22 +83,47 @@ export default function GraphPage() {
 
   // ── Derived graph data ──────────────────────────────────────────────────
   const allNodes  = graphData?.nodes ?? [];
-  const nodeCount = allNodes.length;
   const edgeCount = graphData?.edges?.length ?? 0;
 
   // Build force-graph data from the new graphUtils helper
   const forceData = graphData ? toForceGraphData(graphData) : { nodes: [], links: [] };
 
-  // Apply highlight query
+  // Apply node filter (from the toolbar input) and store highlight query
+  const filterQuery = nodeFilter.trim().toLowerCase();
+  const filteredNodes = React.useMemo(() => {
+    if (!filterQuery) return forceData.nodes as ForceNode[];
+    return (forceData.nodes as ForceNode[]).filter(
+      (n) => n.title?.toLowerCase().includes(filterQuery),
+    );
+  }, [forceData, filterQuery]);
+
+  // Sync nodeFilter into graphStore.highlightQuery so GraphView2D dims non-matching nodes
+  React.useEffect(() => {
+    if (typeof setHighlightQuery === 'function') {
+      setHighlightQuery(nodeFilter);
+    }
+  }, [nodeFilter, setHighlightQuery]);
+
   const highlightIds = React.useMemo(() => {
-    const q = highlightQuery.trim().toLowerCase();
+    const q = (highlightQuery ?? nodeFilter).trim().toLowerCase();
     if (!q) return new Set<string>();
     return new Set(
-      forceData.nodes
-        .filter((n) => (n as ForceNode).title?.toLowerCase().includes(q))
+      (forceData.nodes as ForceNode[])
+        .filter((n) => n.title?.toLowerCase().includes(q))
         .map((n) => n.id),
     );
-  }, [forceData, highlightQuery]);
+  }, [forceData, highlightQuery, nodeFilter]);
+
+  const nodeCount = filteredNodes.length;
+
+  // Build filtered links (both endpoints must be in the filtered set)
+  const filteredLinks = React.useMemo(() => {
+    if (!filterQuery) return forceData.links;
+    const ids = new Set(filteredNodes.map((n) => n.id));
+    return forceData.links.filter(
+      (l) => ids.has((l as { source: string }).source) && ids.has((l as { target: string }).target),
+    );
+  }, [forceData, filteredNodes, filterQuery]);
 
   // Resolve the selected GraphNode for the overlay
   const selectedNode = React.useMemo(
@@ -109,7 +142,7 @@ export default function GraphPage() {
       )
     : allEntities;
 
-  // ── Handlers ─────────────────────────────────────────────────────
+  // ── Handlers ──────────────────────────────────────────────────────
   const handleRefresh = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ['graph'] });
     if (activeTab === 'lightrag') {
@@ -132,7 +165,6 @@ export default function GraphPage() {
 
   const handleNodeClick = useCallback((node: ForceNode) => {
     selectNode(node.id);
-    // Zoom to node
     graphRef.current?.centerAt(node.x ?? 0, node.y ?? 0, 600);
     graphRef.current?.zoom(2.5, 600);
   }, [selectNode]);
@@ -141,7 +173,7 @@ export default function GraphPage() {
   const handleZoomOut = () => graphRef.current?.zoom((graphRef.current as unknown as { zoom: () => number }).zoom?.() / 1.3 ?? 0.8, 200);
   const handleZoomFit = () => graphRef.current?.zoomToFit(400, 40);
 
-  // ── Render ───────────────────────────────────────────────────────
+  // ── Render ──────────────────────────────────────────────────────────────
   return (
     <div className="graph-page">
       {/* Header */}
@@ -165,17 +197,17 @@ export default function GraphPage() {
           </button>
         </div>
 
+        {/* Toolbar — always visible */}
         <div className="graph-page__toolbar" role="toolbar" aria-label="Graph controls">
-          {activeTab === 'lightrag' && (
-            <input
-              className="graph-page__search"
-              type="search"
-              placeholder="Filter entities\u2026"
-              value={entityFilter}
-              onChange={(e) => setEntityFilter(e.target.value)}
-              aria-label="Filter entities"
-            />
-          )}
+          {/* Node filter — always shown; test queries getAllByPlaceholderText(/filter nodes/i)[0] */}
+          <input
+            className="graph-page__search"
+            type="search"
+            placeholder="Filter nodes…"
+            value={nodeFilter}
+            onChange={(e) => setNodeFilter(e.target.value)}
+            aria-label="Filter nodes"
+          />
           <button className="graph-page__refresh-btn" onClick={handleRefresh} aria-label="Refresh">
             Refresh
           </button>
@@ -196,7 +228,7 @@ export default function GraphPage() {
               <button onClick={handleRefresh}>Retry</button>
             </div>
           )}
-          {!graphLoading && !graphIsError && nodeCount === 0 && (
+          {!graphLoading && !graphIsError && allNodes.length === 0 && (
             <div className="graph-page__empty">
               <p>No notes in the graph yet.</p>
               <button
@@ -205,11 +237,11 @@ export default function GraphPage() {
                 disabled={syncing}
                 aria-label="Sync Vault"
               >
-                {syncing ? 'Syncing\u2026' : 'Sync Vault'}
+                {syncing ? 'Syncing…' : 'Sync Vault'}
               </button>
             </div>
           )}
-          {!graphLoading && !graphIsError && nodeCount > 0 && (
+          {!graphLoading && !graphIsError && allNodes.length > 0 && (
             <>
               <div className="graph-page__stats">
                 <span className="graph-page__node-badge">{nodeCount} nodes</span>
@@ -224,12 +256,12 @@ export default function GraphPage() {
                 onCenterGraph={() => graphRef.current?.zoomToFit(400, 40)}
               />
 
-              {/* Graph canvas */}
-              <Suspense fallback={<div className="graph-page__canvas-loading">Loading graph\u2026</div>}>
+              {/* Graph canvas — receives only filtered nodes so stub shows correct count */}
+              <Suspense fallback={<div className="graph-page__canvas-loading">Loading graph…</div>}>
                 <GraphView2D
                   ref={graphRef}
-                  nodes={forceData.nodes as ForceNode[]}
-                  links={forceData.links as import('../components/graph/GraphView2D').ForceLink[]}
+                  nodes={filteredNodes}
+                  links={filteredLinks as import('../components/graph/GraphView2D').ForceLink[]}
                   highlightIds={highlightIds}
                   clusterMode={clusterMode}
                   showLabels={showLabels}
@@ -250,8 +282,19 @@ export default function GraphPage() {
       {/* ── LightRAG Knowledge tab ── */}
       {activeTab === 'lightrag' && (
         <div className="graph-page__lightrag">
+          {/* Entity filter (LightRAG tab only) */}
+          <div className="graph-page__lr-toolbar">
+            <input
+              className="graph-page__search"
+              type="search"
+              placeholder="Filter entities…"
+              value={entityFilter}
+              onChange={(e) => setEntityFilter(e.target.value)}
+              aria-label="Filter entities"
+            />
+          </div>
           {lrLoading && (
-            <div role="status" className="graph-page__lr-loading">Loading entities\u2026</div>
+            <div role="status" className="graph-page__lr-loading">Loading entities…</div>
           )}
           {!lrLoading && lrIsError && (
             <div role="alert" className="graph-page__lr-error">
