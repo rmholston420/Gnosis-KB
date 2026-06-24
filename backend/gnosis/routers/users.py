@@ -1,15 +1,15 @@
 """
-Users Router — /api/v1/users
+Users Router -- /api/v1/users
 
 Endpoints:
-  GET  /me                     — Current user profile + vault info
-  PATCH /me                    — Update vault slug, display name, vault_path
-  GET  /me/vaults              — Vaults shared with the current user
-  POST /me/vaults/invite       — Grant another user access to own vault
-  DELETE /me/vaults/{grant_id} — Revoke a share grant
-  PATCH /me/vaults/{grant_id}  — Change permission level on a grant
-  GET  /                       — List all users (superuser only)
-  POST /                       — Create a new user (superuser only)
+  GET  /me                     -- Current user profile + vault info
+  PATCH /me                    -- Update vault slug, display name, vault_path
+  GET  /me/vaults              -- Vaults shared with the current user
+  POST /me/vaults/invite       -- Grant another user access to own vault
+  DELETE /me/vaults/{grant_id} -- Revoke a share grant
+  PATCH /me/vaults/{grant_id}  -- Change permission level on a grant
+  GET  /                       -- List all users (superuser only)
+  POST /                       -- Create a new user (superuser only)
 """
 
 from __future__ import annotations
@@ -63,18 +63,30 @@ class UpdateMeRequest(BaseModel):
 
 class InviteRequest(BaseModel):
     member_email: EmailStr = Field(description="Email of the user to invite")
-    role: str = Field(
+    permission: str = Field(
         default="viewer",
-        description="'viewer' or 'editor'",
+        description="'read' / 'viewer' or 'write' / 'editor'",
     )
+
+    @property
+    def role(self) -> str:
+        """Normalize permission aliases to canonical role names."""
+        _map = {"read": "viewer", "write": "editor", "viewer": "viewer", "editor": "editor"}
+        return _map.get(self.permission, self.permission)
 
 
 class UpdateGrantRequest(BaseModel):
-    role: str = Field(description="'viewer' or 'editor'")
+    permission: str = Field(description="'read' / 'write' / 'viewer' / 'editor'")
+
+    @property
+    def role(self) -> str:
+        """Normalize permission aliases to canonical role names."""
+        _map = {"read": "viewer", "write": "editor", "viewer": "viewer", "editor": "editor"}
+        return _map.get(self.permission, self.permission)
 
 
 class SharedVaultGrant(BaseModel):
-    id: str
+    id: int | str
     vault_id: str
     owner_id: int
     owner_email: str
@@ -194,7 +206,7 @@ async def update_me(
 
 
 # ---------------------------------------------------------------------------
-# GET /users/me/vaults  — grants current user has received
+# GET /users/me/vaults  -- grants current user has received
 # ---------------------------------------------------------------------------
 
 
@@ -302,14 +314,14 @@ async def invite_to_vault(
 
 
 # ---------------------------------------------------------------------------
-# PATCH /users/me/vaults/{grant_id}  — change role
+# PATCH /users/me/vaults/{grant_id}  -- change role
 # ---------------------------------------------------------------------------
 
 
 @router.patch(
     "/me/vaults/{grant_id}",
     response_model=SharedVaultGrant,
-    summary="Update role on a share grant",
+    summary="Change permission level on a share grant",
 )
 async def update_grant(
     grant_id: str,
@@ -354,7 +366,7 @@ async def update_grant(
 
 
 # ---------------------------------------------------------------------------
-# DELETE /users/me/vaults/{grant_id}  — revoke
+# DELETE /users/me/vaults/{grant_id}  -- revoke
 # ---------------------------------------------------------------------------
 
 
@@ -389,7 +401,7 @@ async def revoke_grant(
 
 
 # ---------------------------------------------------------------------------
-# GET /users/  — superuser only
+# GET /users/  -- superuser only
 # ---------------------------------------------------------------------------
 
 
@@ -412,7 +424,7 @@ async def list_users(
 
 
 # ---------------------------------------------------------------------------
-# POST /users/  — superuser only
+# POST /users/  -- superuser only
 # ---------------------------------------------------------------------------
 
 
