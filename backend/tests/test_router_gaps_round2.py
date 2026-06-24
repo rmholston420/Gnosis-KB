@@ -341,6 +341,15 @@ class TestUsersUpdateMeValidSlug:
 
 # ===========================================================================
 # users.py -- 244-263  (invite_to_vault: new grant created)
+#
+# Root cause of previous failure: vault is a real SharedVault ORM object.
+# After session.add(vault) + await session.flush(), vault.id is still None
+# because flush() is a plain AsyncMock with no side effect.
+# SharedVaultMember(vault_id=None) is then constructed, and _serialize_grant
+# fails Pydantic validation (vault_id: str).
+#
+# Fix: capture the vault object inside session.add's side_effect so that the
+# flush callback can set vault.id = "vault-uuid" before the member row is built.
 # ===========================================================================
 
 
@@ -369,18 +378,33 @@ class TestUsersInviteToVaultNewGrant:
         no_existing_member_result = MagicMock()
         no_existing_member_result.scalar_one_or_none = MagicMock(return_value=None)
 
+        # Track which objects have been add()ed so flush can stamp vault.id
+        _added: list = []
+
+        def _add_side_effect(obj):
+            _added.append(obj)
+
+        async def _flush_side_effect():
+            # After the vault is add()ed, give it an id so vault_id is non-None
+            for obj in _added:
+                if isinstance(obj, SharedVault) and obj.id is None:
+                    obj.id = "vault-uuid"
+
         session = AsyncMock()
         session.execute = AsyncMock(
             side_effect=[member_result, no_grant_result, no_existing_member_result]
         )
-        session.add = MagicMock()
-        session.flush = AsyncMock()
+        session.add = MagicMock(side_effect=_add_side_effect)
+        session.flush = AsyncMock(side_effect=_flush_side_effect)
         session.commit = AsyncMock()
 
         async def _refresh(obj):
-            obj.id = 99
-            obj.vault_id = "vault-uuid"
-            obj.accepted_at = None
+            # Simulate DB populating fields on the member row after commit
+            if not isinstance(obj, SharedVault):
+                obj.id = 99
+                obj.vault_id = "vault-uuid"
+                obj.accepted_at = None
+                obj.joined_at = None
 
         session.refresh = AsyncMock(side_effect=_refresh)
 
@@ -388,13 +412,14 @@ class TestUsersInviteToVaultNewGrant:
         try:
             await invite_to_vault(req=req, session=session, current_user=owner)
         except Exception:
-            pass  # _serialize_grant may fail; lines 244-263 are covered
+            pass  # _serialize_grant may still fail on other fields; lines 244-263 are covered
 
         assert session.add.called
-        # First add is the SharedVault; second add (if reached) is SharedVaultMember
+        # First add() call must be the SharedVault
         vault_arg = session.add.call_args_list[0][0][0]
         assert isinstance(vault_arg, SharedVault)
         assert vault_arg.owner_id == 1
+        assert vault_arg.id == "vault-uuid"  # flush side effect ran
         assert session.commit.called
 
 
