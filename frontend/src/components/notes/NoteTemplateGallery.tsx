@@ -117,11 +117,10 @@ export function NoteTemplateGallery({ onSelect, onClose }: Props) {
 
         {!loading && !error && (
           <div className="template-gallery-body">
-            {/* Sidebar: template list */}
-            <ul className="template-gallery-list" role="listbox" aria-label="Templates">
+            {/* Sidebar: template list — plain <ul> so role="list" is implicit */}
+            <ul className="template-gallery-list" aria-label="Templates">
               {templates.map((t) => (
                 <li key={t.id}
-                  role="option"
                   aria-selected={t.id === activeId}
                   className={`template-gallery-list-item${ t.id === activeId ? ' active' : '' }`}
                   onClick={() => setActiveId(t.id)}
@@ -156,9 +155,9 @@ export function NoteTemplateGallery({ onSelect, onClose }: Props) {
           </div>
         )}
 
-        {/* Blank note fallback */}
-        {!loading && !error && (
-          <div className="template-gallery-footer">
+        {/* Footer: Start blank + Cancel */}
+        <div className="template-gallery-footer">
+          {!loading && !error && (
             <button
               className="template-gallery-blank-btn"
               onClick={() => onSelect({
@@ -173,8 +172,14 @@ export function NoteTemplateGallery({ onSelect, onClose }: Props) {
             >
               Start blank
             </button>
-          </div>
-        )}
+          )}
+          <button
+            className="template-gallery-cancel-btn"
+            onClick={onClose}
+          >
+            Cancel
+          </button>
+        </div>
       </div>
     </div>
   );

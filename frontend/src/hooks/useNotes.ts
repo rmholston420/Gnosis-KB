@@ -9,7 +9,7 @@
  * When called with a string arg, the mutation payload is NoteUpdate directly.
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { notesApi } from '../api/notes';
+import { notesApi, getBacklinks } from '../api/notes';
 import type { ListNotesParams } from '../api/notes';
 import type { Note, NoteCreate, NoteUpdate } from '../types';
 
@@ -94,10 +94,15 @@ export function useDeleteNote() {
 
 // ── Backlinks ─────────────────────────────────────────────────────────────────
 
+/**
+ * useBacklinks calls the standalone getBacklinks named export so that
+ * vi.spyOn(notesApi, 'getBacklinks') AND
+ * vi.spyOn module-level getBacklinks both work in tests.
+ */
 export function useBacklinks(id?: string | null) {
   return useQuery({
     queryKey: [BACKLINK_KEY, id],
-    queryFn:  () => notesApi.getBacklinks(id!),
+    queryFn:  () => getBacklinks(id!),
     enabled:  Boolean(id),
   });
 }

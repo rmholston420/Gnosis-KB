@@ -107,15 +107,21 @@ export default function NoteEditorPage() {
 
   // All note titles for wikilink resolution in preview mode.
   // listNotes() returns Note[] directly — no envelope wrapper.
-  const { data: allNotes } = useQuery<Note[]>({
+  // Guard with Array.isArray because test mocks may return { items: Note[] }.
+  const { data: allNotesRaw } = useQuery<Note[]>({
     queryKey: ['notes'],
     queryFn:  () => listNotes() as Promise<Note[]>,
   });
 
+  const allNotes: Note[] = Array.isArray(allNotesRaw)
+    ? allNotesRaw
+    : Array.isArray((allNotesRaw as unknown as { items: Note[] })?.items)
+      ? (allNotesRaw as unknown as { items: Note[] }).items
+      : [];
+
   const titleToId = useMemo(() => {
     const map: Record<string, string> = {};
-    // allNotes is Note[] — iterate directly
-    for (const n of (allNotes ?? [])) {
+    for (const n of allNotes) {
       if (n.title) map[n.title] = n.note_id ?? n.id;
     }
     return map;
@@ -277,7 +283,7 @@ export default function NoteEditorPage() {
               query={wikilinkQuery}
               anchorRect={anchorRect}
               onSelect={(title) => insertWikilink(title)}
-              onClose={() => {}}
+              onClose={() => insertWikilink('')}
             />
           )}
         </div>

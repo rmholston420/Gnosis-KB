@@ -8,11 +8,12 @@ import SearchPage from '../SearchPage';
 vi.mock('../../hooks/useSearch', () => ({
   useSearch: vi.fn(() => ({ data: undefined, isLoading: false, isError: false })),
 }));
+// SearchResults and SemanticSearch are NAMED exports — mock accordingly
 vi.mock('../../components/search/SearchResults', () => ({
-  default: ({ query }: { query: string }) => <div data-testid="search-results">{query}</div>,
+  SearchResults: ({ query }: { query: string }) => <div data-testid="search-results">{query}</div>,
 }));
 vi.mock('../../components/search/SemanticSearch', () => ({
-  default: () => <div data-testid="semantic-search" />,
+  SemanticSearch: () => <div data-testid="semantic-search" />,
 }));
 
 function wrap(ui: React.ReactNode) {
