@@ -1,61 +1,67 @@
-/// <reference types="vitest/globals" />
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { apiGet, apiPost, apiPut, apiDelete } from '../client';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import axios from 'axios';
+import MockAdapter from 'axios-mock-adapter';
 
-// Mock global fetch
-const mockFetch = vi.fn();
-global.fetch = mockFetch as unknown as typeof fetch;
+import { apiClient } from '@/api/client';
 
-function makeResponse(data: unknown, status = 200) {
-  return {
-    ok:     status >= 200 && status < 300,
-    status,
-    json:   () => Promise.resolve(data),
-    text:   () => Promise.resolve(JSON.stringify(data)),
-  } as unknown as Response;
-}
+let mock: MockAdapter;
 
-describe('API client helpers', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+beforeEach(() => {
+  mock = new MockAdapter(apiClient);
+  localStorage.clear();
+});
 
-  it('apiGet calls fetch with GET', async () => {
-    mockFetch.mockResolvedValue(makeResponse({ ok: true }));
-    await apiGet('/notes/');
-    expect(mockFetch).toHaveBeenCalledWith(
-      expect.stringContaining('/notes/'),
-      expect.objectContaining({ method: 'GET' }),
-    );
+afterEach(() => {
+  mock.restore();
+});
+
+describe('apiClient request interceptor', () => {
+  it('attaches Bearer token when gnosis_token is in localStorage', async () => {
+    localStorage.setItem('gnosis_token', 'my-secret-token');
+    mock.onGet('/api/v1/test').reply((config) => [
+      200,
+      {},
+      config.headers,
+    ]);
+
+    const resp = await apiClient.get('/api/v1/test');
+    expect(resp.config.headers?.['Authorization']).toBe('Bearer my-secret-token');
   });
 
-  it('apiPost calls fetch with POST and JSON body', async () => {
-    mockFetch.mockResolvedValue(makeResponse({ note_id: '123' }));
-    await apiPost('/notes/', { title: 'Hello' });
-    expect(mockFetch).toHaveBeenCalledWith(
-      expect.stringContaining('/notes/'),
-      expect.objectContaining({ method: 'POST' }),
-    );
+  it('omits Authorization header when no token is stored', async () => {
+    mock.onGet('/api/v1/test').reply(200, {});
+
+    const resp = await apiClient.get('/api/v1/test');
+    expect(resp.config.headers?.['Authorization']).toBeUndefined();
+  });
+});
+
+describe('apiClient response interceptor', () => {
+  it('removes token and redirects to /login on 401', async () => {
+    localStorage.setItem('gnosis_token', 'stale-token');
+    mock.onGet('/api/v1/protected').reply(401, { detail: 'Not authenticated' });
+
+    await expect(apiClient.get('/api/v1/protected')).rejects.toMatchObject({
+      response: { status: 401 },
+    });
+    expect(localStorage.getItem('gnosis_token')).toBeNull();
   });
 
-  it('apiPut calls fetch with PUT', async () => {
-    mockFetch.mockResolvedValue(makeResponse({ note_id: '123' }));
-    await apiPut('/notes/123', { title: 'Updated' });
-    expect(mockFetch).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ method: 'PUT' }),
-    );
+  it('re-rejects non-401 errors without touching localStorage', async () => {
+    localStorage.setItem('gnosis_token', 'good-token');
+    mock.onGet('/api/v1/broken').reply(500, { detail: 'Server error' });
+
+    await expect(apiClient.get('/api/v1/broken')).rejects.toMatchObject({
+      response: { status: 500 },
+    });
+    expect(localStorage.getItem('gnosis_token')).toBe('good-token');
   });
 
-  it('apiDelete calls fetch with DELETE', async () => {
-    mockFetch.mockResolvedValue({ ok: true, status: 204, json: vi.fn(), text: vi.fn() } as unknown as Response);
-    await apiDelete('/notes/123');
-    expect(mockFetch).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ method: 'DELETE' }),
-    );
-  });
+  it('passes 200 responses through unchanged', async () => {
+    mock.onGet('/api/v1/notes').reply(200, [{ id: 'abc' }]);
 
-  it('throws on non-2xx responses', async () => {
-    mockFetch.mockResolvedValue(makeResponse({ detail: 'Not found' }, 404));
-    await expect(apiGet('/notes/missing')).rejects.toThrow();
+    const resp = await apiClient.get('/api/v1/notes');
+    expect(resp.status).toBe(200);
+    expect(resp.data).toEqual([{ id: 'abc' }]);
   });
 });

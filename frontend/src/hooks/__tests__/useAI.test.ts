@@ -1,54 +1,53 @@
-/// <reference types="vitest/globals" />
-import { renderHook, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { renderHook, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import React from 'react';
-import { useAIChat, useCritiqueNote, useNoteSummary } from '../useAI';
+import { createElement } from 'react';
 
-const mockCritiqueNote  = vi.fn();
-const mockSummarizeNote = vi.fn();
-const mockStreamQuery   = vi.fn();
-
-vi.mock('../../services/api', () => ({
-  default: {
-    critiqueNote:  (...a: unknown[]) => mockCritiqueNote(...a),
-    summarizeNote: (...a: unknown[]) => mockSummarizeNote(...a),
-    streamQuery:   (...a: unknown[]) => mockStreamQuery(...a),
-  },
+vi.mock('../../api/ai', () => ({
+  chatQuery:       vi.fn(async () => ({ answer: 'The Dharma is clear.', sources: ['note-001'], mode: 'hybrid' })),
+  getLinkSuggestions: vi.fn(async () => [
+    { target_note_id: 'note-002', target_title: 'Dependent Origination', reason: 'Related concept', score: 0.91 },
+  ]),
+  critiqueNote:    vi.fn(async () => ({
+    note_id: 'note-001', atomicity_score: 8, atomicity_feedback: 'Good.',
+    connectivity_score: 7, connectivity_feedback: 'Add more links.',
+    standalone_score: 9, standalone_feedback: 'Clear.',
+    insight_score: 8, insight_feedback: 'Insightful.', overall_feedback: 'Strong note.',
+  })),
 }));
 
-const wrapper = ({ children }: { children: React.ReactNode }) =>
-  React.createElement(
-    QueryClientProvider,
-    { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) },
-    children,
-  );
+import { useAIChat, useLinkSuggestions, useCritiqueNote } from '../useAI';
 
-describe('useAI hooks', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+function makeWrapper() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return ({ children }: { children: React.ReactNode }) =>
+    createElement(QueryClientProvider, { client: qc }, children);
+}
 
-  it('useAIChat is a mutation hook', () => {
-    mockStreamQuery.mockReturnValue({ addEventListener: vi.fn(), close: vi.fn() });
-    const { result } = renderHook(() => useAIChat(), { wrapper });
-    expect(typeof result.current.mutateAsync).toBe('function');
-  });
-
-  it('useCritiqueNote / alias fetches critique', async () => {
-    mockCritiqueNote.mockResolvedValue({
-      critique: 'Needs more citations',
-      suggestions: [],
+describe('useAIChat', () => {
+  it('mutation resolves with answer', async () => {
+    const { result } = renderHook(() => useAIChat(), { wrapper: makeWrapper() });
+    await act(async () => {
+      await result.current.mutateAsync({ query: 'What is sunyata?', mode: 'hybrid' });
     });
-    const { result } = renderHook(() => useCritiqueNote('note-001'), { wrapper });
-    await waitFor(() => result.current.isSuccess);
-    expect(result.current.data?.critique).toBe('Needs more citations');
+    expect(result.current.data?.answer).toBe('The Dharma is clear.');
   });
+});
 
-  it('useNoteSummary fetches summary', async () => {
-    mockSummarizeNote.mockResolvedValue({
-      summary: 'A short note about impermanence.',
-      keywords: ['impermanence'],
+describe('useLinkSuggestions', () => {
+  it('returns suggestions for a note', async () => {
+    const { result } = renderHook(() => useLinkSuggestions('note-001'), { wrapper: makeWrapper() });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.[0].target_title).toBe('Dependent Origination');
+  });
+});
+
+describe('useCritiqueNote', () => {
+  it('mutation resolves with critique', async () => {
+    const { result } = renderHook(() => useCritiqueNote(), { wrapper: makeWrapper() });
+    await act(async () => {
+      await result.current.mutateAsync('note-001');
     });
-    const { result } = renderHook(() => useNoteSummary('note-002'), { wrapper });
-    await waitFor(() => result.current.isSuccess);
-    expect(result.current.data?.summary).toContain('impermanence');
+    expect(result.current.data?.overall_feedback).toBe('Strong note.');
   });
 });
