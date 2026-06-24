@@ -2,7 +2,6 @@
  * GraphPage.extended.test.tsx
  * Covers node info panel, onNodeClick/onNodeHover, Sync Vault empty state,
  * LightRAG tab switch, entity sidebar search, entity row click (handleLrNodeClick).
- * Uncovered lines: 298-309, 315-317, 427-430, 441-471, 586-592
  */
 import React from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
@@ -10,17 +9,29 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
+// ---------------------------------------------------------------------------
+// vi.hoisted() — declare ALL mock variables here so they exist before
+// vi.mock() factories are executed (factories are hoisted before const/let).
+// ---------------------------------------------------------------------------
+const {
+  mockNavigate,
+  mockGetFullGraph,
+  mockGetGraphEntities,
+  mockSyncVault,
+  mockApiClient,
+} = vi.hoisted(() => ({
+  mockNavigate:         vi.fn(),
+  mockGetFullGraph:     vi.fn(),
+  mockGetGraphEntities: vi.fn(),
+  mockSyncVault:        vi.fn(),
+  mockApiClient:        { get: vi.fn() },
+}));
+
 // ---- Mocks ----------------------------------------------------------------
-const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async (orig) => {
   const actual = await orig<typeof import('react-router-dom')>();
   return { ...actual, useNavigate: () => mockNavigate };
 });
-
-const mockGetFullGraph      = vi.fn();
-const mockGetGraphEntities  = vi.fn();
-const mockSyncVault         = vi.fn();
-const mockApiClient         = { get: vi.fn() };
 
 vi.mock('@/services/api', () => ({
   default: {
@@ -31,7 +42,7 @@ vi.mock('@/services/api', () => ({
   },
 }));
 
-// ForceGraph2D is a heavy canvas dep — stub it out and expose callbacks
+// ForceGraph2D — stub and expose callbacks for tests
 vi.mock('react-force-graph-2d', () => ({
   default: vi.fn(({ onNodeClick, onNodeHover }: any) => {
     React.useEffect(() => {
@@ -52,7 +63,7 @@ vi.mock('@/components/graph/LightRagNodePanel', () => ({
     ),
 }));
 
-// Static import — must come AFTER all vi.mock() declarations so hoisting works
+// Static import — after all vi.mock() so mocks are active when module loads
 import GraphPage from '@/pages/GraphPage';
 
 // ---------------------------------------------------------------------------
