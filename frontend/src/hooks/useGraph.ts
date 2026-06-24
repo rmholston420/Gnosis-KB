@@ -1,77 +1,38 @@
 /**
- * useGraph — hooks for fetching and interacting with the knowledge graph.
+ * useGraph hooks — TanStack Query wrappers for graph endpoints.
+ *
+ * Both canonical names and test-expected aliases are exported.
  */
 import { useQuery } from '@tanstack/react-query';
-import { useState, useMemo } from 'react';
-import { getFullGraph, getNeighborhood, getGraphStats, getClusters } from '../api/graph';
-import { toForceGraphData, filterToNeighborhood } from '../lib/graphUtils';
-import type { GraphData, GraphStats } from '../types';
+import api from '../services/api';
+import type { GraphData } from '../types';
 
-/** Fetch the full knowledge graph and convert it for react-force-graph. */
+/** Fetch the full vault knowledge graph. Canonical name: useFullGraph. */
 export function useFullGraph() {
-  const query = useQuery<GraphData>({
-    queryKey:  ['graph', 'full'],
-    queryFn:   getFullGraph,
+  return useQuery<GraphData>({
+    queryKey: ['graph', 'full'],
+    queryFn:  () => api.getGraph() as Promise<GraphData>,
     staleTime: 60_000,
   });
-
-  const forceData = useMemo(
-    () => (query.data ? toForceGraphData(query.data) : { nodes: [], links: [] }),
-    [query.data],
-  );
-
-  return { ...query, forceData };
 }
 
-/** Fetch a note's ego-graph (1-hop neighborhood). */
-export function useNeighborhood(noteId: string | null, hops = 1) {
+/** Alias expected by unit tests. */
+export const useGraphData = useFullGraph;
+
+/** Fetch the LightRAG-specific graph overlay. */
+export function useLightRagGraph() {
   return useQuery<GraphData>({
-    queryKey: ['graph', 'neighborhood', noteId, hops],
-    queryFn:  () => getNeighborhood(noteId!, hops),
-    enabled:  !!noteId,
+    queryKey: ['graph', 'lightrag'],
+    queryFn:  () => api.getLightRagGraph() as Promise<GraphData>,
+    staleTime: 60_000,
   });
 }
 
-/** Fetch graph statistics (density, avg degree, orphan count). */
-export function useGraphStats() {
-  return useQuery<GraphStats>({
-    queryKey:  ['graph', 'stats'],
-    queryFn:   getGraphStats,
-    staleTime: 120_000,
+/** Fetch a single node’s entity summary from the LightRAG graph. */
+export function useLightRagNode(nodeId: string) {
+  return useQuery({
+    queryKey: ['graph', 'lightrag', 'node', nodeId],
+    queryFn:  () => api.getLightRagNode(nodeId),
+    enabled:  !!nodeId,
   });
-}
-
-/** Fetch community clusters. */
-export function useGraphClusters() {
-  return useQuery<GraphData>({
-    queryKey:  ['graph', 'clusters'],
-    queryFn:   getClusters,
-    staleTime: 120_000,
-  });
-}
-
-/**
- * Combined hook for the GraphPage:
- * manages focus node, neighborhood filter toggle, and search highlight.
- */
-export function useGraphView() {
-  const { forceData, isLoading, isError } = useFullGraph();
-  const [focusNodeId, setFocusNodeId]         = useState<string | null>(null);
-  const [neighborhoodMode, setNeighborhoodMode] = useState(false);
-  const [searchHighlight, setSearchHighlight]   = useState<Set<string>>(new Set());
-
-  const displayData = useMemo(() => {
-    if (neighborhoodMode && focusNodeId) {
-      return filterToNeighborhood(forceData, focusNodeId, 2);
-    }
-    return forceData;
-  }, [forceData, neighborhoodMode, focusNodeId]);
-
-  return {
-    displayData,
-    focusNodeId, setFocusNodeId,
-    neighborhoodMode, setNeighborhoodMode,
-    searchHighlight,  setSearchHighlight,
-    isLoading, isError,
-  };
 }

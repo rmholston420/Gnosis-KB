@@ -1,88 +1,63 @@
 /**
- * Notes API — typed wrappers around the FastAPI /api/v1/notes endpoints.
+ * api/notes.ts — typed wrappers for the notes + vault endpoints.
  */
-import client from './client';
-import type { Note, PaginatedNotes, BacklinksResponse } from '../types';
-
-export interface CreateNotePayload {
-  title: string;
-  body: string;
-  note_type?: string;
-  status?: string;
-  tags?: string[];
-  folder?: string;
-  source_url?: string;
-}
-
-export interface UpdateNotePayload extends Partial<CreateNotePayload> {
-  last_reviewed?: string;
-}
+import { apiGet, apiPost, apiPut, apiDelete } from './client';
+import type { Note, NoteCreate, NoteUpdate } from '../types';
 
 export interface ListNotesParams {
-  folder?: string;
-  type?: string;
-  status?: string;
-  tags?: string;
-  search?: string;
-  page?: number;
-  limit?: number;
+  folder?:    string;
+  tag?:       string;
+  note_type?: string;
+  q?:         string;
+  limit?:     number;
+  offset?:    number;
 }
 
-/** List notes with optional filters. */
-export async function listNotes(params?: ListNotesParams): Promise<PaginatedNotes> {
-  const { data } = await client.get<PaginatedNotes>('/api/v1/notes', { params });
-  return data;
+export async function listNotes(params: ListNotesParams = {}): Promise<Note[]> {
+  const qs = new URLSearchParams();
+  if (params.folder)    qs.set('folder',    params.folder);
+  if (params.tag)       qs.set('tag',        params.tag);
+  if (params.note_type) qs.set('note_type',  params.note_type);
+  if (params.q)         qs.set('q',          params.q);
+  if (params.limit)     qs.set('limit',      String(params.limit));
+  if (params.offset)    qs.set('offset',     String(params.offset));
+  const query = qs.toString();
+  return apiGet<Note[]>(`/notes/${query ? `?${query}` : ''}`);
 }
 
-/** Get a single note by ID including its backlinks. */
 export async function getNote(noteId: string): Promise<Note> {
-  const { data } = await client.get<Note>(`/api/v1/notes/${noteId}`);
-  return data;
+  return apiGet<Note>(`/notes/${noteId}`);
 }
 
-/** Create a new note. Writes .md to the vault filesystem. */
-export async function createNote(payload: CreateNotePayload): Promise<Note> {
-  const { data } = await client.post<Note>('/api/v1/notes', payload);
-  return data;
+export async function createNote(payload: NoteCreate): Promise<Note> {
+  return apiPost<Note>('/notes/', payload);
 }
 
-/** Update an existing note. */
-export async function updateNote(noteId: string, payload: UpdateNotePayload): Promise<Note> {
-  const { data } = await client.put<Note>(`/api/v1/notes/${noteId}`, payload);
-  return data;
+export async function updateNote(noteId: string, payload: NoteUpdate): Promise<Note> {
+  return apiPut<Note>(`/notes/${noteId}`, payload);
 }
 
-/** Soft-delete a note (marks is_deleted=true; vault file remains). */
 export async function deleteNote(noteId: string): Promise<void> {
-  await client.delete(`/api/v1/notes/${noteId}`);
+  return apiDelete(`/notes/${noteId}`);
 }
 
-/** Get all notes that link TO this note. */
-export async function getBacklinks(noteId: string): Promise<BacklinksResponse> {
-  const { data } = await client.get<BacklinksResponse>(`/api/v1/notes/${noteId}/backlinks`);
-  return data;
+export async function listTags(): Promise<string[]> {
+  return apiGet<string[]>('/notes/tags');
 }
 
-/** Get all notes this note links OUT to. */
-export async function getOutlinks(noteId: string): Promise<BacklinksResponse> {
-  const { data } = await client.get<BacklinksResponse>(`/api/v1/notes/${noteId}/outlinks`);
-  return data;
+export async function listFolders(): Promise<string[]> {
+  return apiGet<string[]>('/notes/folders');
 }
 
-/** Get or create today's daily note. */
-export async function getDailyNote(): Promise<Note> {
-  const { data } = await client.get<Note>('/api/v1/notes/daily');
-  return data;
+export async function listTemplates(): Promise<string[]> {
+  return apiGet<string[]>('/notes/templates');
 }
 
-/** Get orphaned notes (zero incoming + zero outgoing links). */
-export async function getOrphans(): Promise<Note[]> {
-  const { data } = await client.get<Note[]>('/api/v1/notes/orphans');
-  return data;
+export async function ingestNote(path: string): Promise<{ job_id: string }> {
+  return apiPost<{ job_id: string }>('/notes/ingest', { path });
 }
 
-/** Create a note from a saved template. */
-export async function createFromTemplate(templateSlug: string): Promise<Note> {
-  const { data } = await client.post<Note>(`/api/v1/notes/from-template/${templateSlug}`);
-  return data;
+/** Trigger a full vault re-sync. Re-exported here AND from services/api. */
+export async function triggerVaultSync(): Promise<{ job_id: string }> {
+  return apiPost<{ job_id: string }>('/vault/sync', {});
 }
