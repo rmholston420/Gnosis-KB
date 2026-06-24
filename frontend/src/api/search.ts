@@ -1,12 +1,10 @@
-/**
- * api/search.ts — typed API client for search endpoints.
- */
 import type { SearchResult, SearchMode } from '../types';
 
 const BASE = (import.meta as unknown as { env: Record<string, string> }).env?.VITE_API_URL ?? '';
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const url = BASE ? `${BASE}${path}` : new URL(path, 'http://localhost').toString();
+  const res = await fetch(url, {
     headers: { 'Content-Type': 'application/json' },
     ...init,
   });
@@ -14,14 +12,22 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export const searchApi = {
-  search: (query: string, mode: SearchMode = 'hybrid') =>
-    req<SearchResult[]>(
-      `/api/search?q=${encodeURIComponent(query)}&mode=${mode}`
-    ),
+export async function searchNotes(query: string, mode: SearchMode = 'hybrid') {
+  return req<{ query: string; mode: SearchMode; items: SearchResult[]; total: number }>(
+    `/api/search?q=${encodeURIComponent(query)}&mode=${mode}`,
+  );
+}
 
-  getSimilar: (noteId: string) =>
-    req<SearchResult[]>(`/api/search/similar/${noteId}`),
+export async function getSimilarNotes(noteId: string) {
+  return req<SearchResult[]>(`/api/search/similar/${noteId}`);
+}
+
+export const searchApi = {
+  search: async (query: string, mode: SearchMode = 'hybrid') => {
+    const res = await searchNotes(query, mode);
+    return res.items;
+  },
+  getSimilar: getSimilarNotes,
 };
 
 export default searchApi;

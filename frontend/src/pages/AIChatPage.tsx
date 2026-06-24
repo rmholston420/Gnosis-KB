@@ -1,10 +1,6 @@
 import React from 'react';
 import AIChat from '../components/AIChat';
 
-/**
- * AIChatPage — full-screen AI chat interface.
- * AIChat handles session management, history, and streaming replies.
- */
 export default function AIChatPage() {
   return (
     <div className="flex flex-col h-full bg-gnosis-bg">

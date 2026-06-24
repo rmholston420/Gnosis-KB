@@ -1,27 +1,32 @@
-/**
- * DailyNotePage — today’s daily journal note.
- * Fetches or creates the daily note via api.getDailyNote() and
- * opens it in the editor.
- */
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import api from '../services/api';
 import { today } from '../lib/dateUtils';
 import type { Note } from '../types';
 
-export default function DailyNotePage() {
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { retry: false } },
+});
+
+function DailyNotePageInner() {
   const navigate = useNavigate();
-  const dateStr  = today();
+  const dateStr = today();
 
   const { data: note, isLoading, isError } = useQuery<Note>({
     queryKey: ['daily', dateStr],
-    queryFn:  () => api.getDailyNote(dateStr) as Promise<Note>,
+    queryFn: () => api.getDailyNote(dateStr) as Promise<Note>,
   });
+
+  React.useEffect(() => {
+    if (note) {
+      navigate(`/notes/${note.note_id ?? (note as { id?: string }).id}`, { replace: true });
+    }
+  }, [navigate, note]);
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-full">
+      <div className="flex items-center justify-center h-full" data-testid="loading">
         <span className="text-gnosis-muted text-sm">Loading daily note…</span>
       </div>
     );
@@ -41,7 +46,13 @@ export default function DailyNotePage() {
     );
   }
 
-  // Redirect to the full note editor
-  navigate(`/notes/${note.note_id}`, { replace: true });
   return null;
+}
+
+export default function DailyNotePage() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <DailyNotePageInner />
+    </QueryClientProvider>
+  );
 }

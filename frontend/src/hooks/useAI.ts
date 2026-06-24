@@ -1,87 +1,79 @@
 /**
  * hooks/useAI.ts — TanStack Query + Mutation hooks for AI features.
- *
- * All hooks expose the raw result envelopes so callers can decide how to
- * unwrap them (e.g. result?.suggestions, result?.summary).
- * The AiSidebar component does the unwrapping at render time.
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { aiApi } from '../api/ai';
-import type {
-  SummarizeResult,
-  CritiqueResult,
-  LinkSuggestResult,
-  TagSuggestResult,
-} from '../api/ai';
+import api from '../services/api';
 import type { ChatMessage, ChatSource } from '../types';
 
-// ── Note Summary (mutation — user triggers on demand) ────────────────────────
+export interface SummarizeResult {
+  summary: string;
+  keywords?: string[];
+}
+
+export interface CritiqueResult {
+  critique: string;
+  suggestions?: unknown[];
+}
+
+export interface LinkSuggestResult {
+  suggestions: unknown[];
+}
+
+export interface TagSuggestResult {
+  suggestions: unknown[];
+}
 
 export function useNoteSummary(noteId?: string | null) {
-  return useMutation<SummarizeResult, Error, string | undefined>({
-    mutationFn: (id) => aiApi.summarizeNote((id ?? noteId)!),
+  return useQuery<SummarizeResult>({
+    queryKey: ['ai', 'summary', noteId],
+    queryFn: () => api.summarizeNote(noteId!) as Promise<SummarizeResult>,
+    enabled: Boolean(noteId),
   });
 }
-
-// ── Note Critique ─────────────────────────────────────────────────────────────
 
 export function useNoteCritique(noteId?: string | null) {
-  return useMutation<CritiqueResult, Error, string | undefined>({
-    mutationFn: (id) => aiApi.critiqueNote((id ?? noteId)!),
+  return useQuery<CritiqueResult>({
+    queryKey: ['ai', 'critique', noteId],
+    queryFn: () => api.critiqueNote(noteId!) as Promise<CritiqueResult>,
+    enabled: Boolean(noteId),
   });
 }
 
-/** Alias kept for backward-compat with older test imports */
 export const useCritiqueNote = useNoteCritique;
 
-// ── Link Suggestions ──────────────────────────────────────────────────────────
-
-/**
- * Returns the raw { suggestions: LinkSuggestion[] } envelope.
- * Callers should access data?.suggestions to get the array.
- */
 export function useLinkSuggestions(noteId?: string | null) {
-  return useQuery({
+  return useQuery<LinkSuggestResult>({
     queryKey: ['ai', 'link-suggestions', noteId],
-    queryFn:  (): Promise<LinkSuggestResult> => aiApi.suggestLinks(noteId!),
-    enabled:  Boolean(noteId),
+    queryFn: () => api.suggestLinks(noteId!) as Promise<LinkSuggestResult>,
+    enabled: Boolean(noteId),
   });
 }
 
-// ── Tag Suggestions ───────────────────────────────────────────────────────────
-
-/**
- * Returns the raw { suggestions: TagSuggestion[] } envelope.
- * Callers should access data?.suggestions to get the array.
- */
 export function useTagSuggestions(noteId?: string | null) {
-  return useQuery({
+  return useQuery<TagSuggestResult>({
     queryKey: ['ai', 'tag-suggestions', noteId],
-    queryFn:  (): Promise<TagSuggestResult> => aiApi.suggestTags(noteId!),
-    enabled:  Boolean(noteId),
+    queryFn: () => api.suggestTags(noteId!) as Promise<TagSuggestResult>,
+    enabled: Boolean(noteId),
   });
 }
-
-// ── AI Chat ───────────────────────────────────────────────────────────────────
 
 export interface AiChatState {
-  messages:    ChatMessage[];
-  sources:     ChatSource[];
-  isStreaming:  boolean;
-  streamText:   string;
+  messages: ChatMessage[];
+  sources: ChatSource[];
+  isStreaming: boolean;
+  streamText: string;
 }
 
 export function useAIChat() {
   const qc = useQueryClient();
-  const send = useMutation<void, Error, string>({
+  return useMutation<void, Error, string>({
     mutationFn: async (query: string) => {
       void qc;
       return new Promise<void>((resolve) => {
-        aiApi.streamQuery(query, undefined, resolve);
+        api.streamQuery(query, undefined, resolve);
       });
     },
   });
-  return send;
 }
 
-export type { SummarizeResult, CritiqueResult, LinkSuggestResult, TagSuggestResult };
+export type { ChatMessage, ChatSource };
