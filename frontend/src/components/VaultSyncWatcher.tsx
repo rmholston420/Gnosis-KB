@@ -43,9 +43,9 @@ export function VaultSyncWatcher() {
 
       case 'sync_complete':
         setVaultSyncStatus('idle');
-        qc.invalidateQueries({ queryKey: ['notes'] });
-        qc.invalidateQueries({ queryKey: ['graph'] });
-        qc.invalidateQueries({ queryKey: ['search'] });
+        void qc.invalidateQueries({ queryKey: ['notes'] });
+        void qc.invalidateQueries({ queryKey: ['graph'] });
+        void qc.invalidateQueries({ queryKey: ['search'] });
         break;
 
       case 'sync_error':
@@ -53,25 +53,27 @@ export function VaultSyncWatcher() {
         break;
 
       case 'note_created':
-        qc.invalidateQueries({ queryKey: ['notes'] });
+        void qc.invalidateQueries({ queryKey: ['notes'] });
         break;
 
       case 'note_updated': {
         const noteId = (data as { note_id?: string })?.note_id;
-        if (noteId) qc.invalidateQueries({ queryKey: ['note', noteId] });
-        qc.invalidateQueries({ queryKey: ['notes'] });
+        if (noteId) void qc.invalidateQueries({ queryKey: ['note', noteId] });
+        void qc.invalidateQueries({ queryKey: ['notes'] });
         break;
       }
 
       case 'note_deleted':
-        qc.invalidateQueries({ queryKey: ['notes'] });
-        qc.invalidateQueries({ queryKey: ['graph'] });
+        void qc.invalidateQueries({ queryKey: ['notes'] });
+        void qc.invalidateQueries({ queryKey: ['graph'] });
         break;
 
       default:
         break;
     }
-  }, [lastMessage]);
+  }, [lastMessage, qc, setVaultSyncStatus, setVaultSyncProgress]);
 
   return null;
 }
+
+export default VaultSyncWatcher;
