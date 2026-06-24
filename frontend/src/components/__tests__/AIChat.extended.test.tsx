@@ -11,11 +11,14 @@
  * Stream mocking: use start() not pull() so all chunks are buffered
  * synchronously and available on the very first reader.read() await.
  *
- * Error SSE branch note: AIChat.tsx's { error } branch appends to the
+ * Error SSE branch note: AIChat.tsx { error } branch appends to the
  * `accumulated` local var but does NOT call setMessages — only the
- * { token } branch does. To make the error text reach the DOM we must
- * emit a { token } chunk AFTER the { error } chunk so that setMessages
- * is called with the full accumulated string.
+ * { token } branch does. To make the error text reach the DOM we emit
+ * a { token: ' ' } chunk AFTER the { error } chunk.
+ *
+ * Meta badge note: jsdom's nwsapi CSS parser rejects Tailwind slash-
+ * opacity class names (bg-purple-500/20) in querySelector strings, so
+ * we use classList.contains() instead.
  */
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
@@ -59,6 +62,16 @@ function getSendButton(): HTMLElement {
   return buttons[buttons.length - 1];
 }
 
+/**
+ * Find the LightRAG source badge span without CSS selector parsing.
+ * jsdom nwsapi chokes on Tailwind slash-opacity classes like bg-purple-500/20.
+ * We iterate spans and check classList instead.
+ */
+function findSourceBadge(): HTMLElement | null {
+  const spans = Array.from(document.querySelectorAll('span'));
+  return spans.find((s) => s.classList.contains('bg-purple-500/20')) ?? null;
+}
+
 describe('AIChat — SSE streaming (lines 99-118)', () => {
   beforeEach(() => vi.clearAllMocks());
   afterEach(() => vi.unstubAllGlobals());
@@ -88,11 +101,11 @@ describe('AIChat — SSE streaming (lines 99-118)', () => {
       target: { value: 'meta test' },
     });
     fireEvent.click(getSendButton());
-    // Target the badge by its unique purple Tailwind class to avoid
-    // ambiguous match against the mode button and footer span.
+    // Use classList.contains instead of querySelector to avoid jsdom
+    // nwsapi SYNTAX_ERR on Tailwind slash-opacity class names.
     await waitFor(
       () => {
-        const badge = document.querySelector('span.bg-purple-500\/20') as HTMLElement | null;
+        const badge = findSourceBadge();
         expect(badge).toBeTruthy();
         expect(badge!.textContent).toMatch(/LightRAG/i);
       },
@@ -101,13 +114,11 @@ describe('AIChat — SSE streaming (lines 99-118)', () => {
   });
 
   it('appends error token to message (lines 117-118)', async () => {
-    // The { error } SSE branch appends to `accumulated` but does NOT call
-    // setMessages. A subsequent { token } chunk triggers setMessages with
-    // the full accumulated string (including the error suffix). We use an
-    // empty-string token (' ') to force the flush without adding visible text.
+    // { error } branch appends to accumulated but never calls setMessages.
+    // A subsequent { token: ' ' } triggers the flush.
     mockFetchOk([
       sseChunk({ error: 'Backend exploded' }),
-      sseChunk({ token: ' ' }),        // flush: causes setMessages with accumulated
+      sseChunk({ token: ' ' }),
       'data: [DONE]\n\n',
     ]);
     render(<AIChat />);
@@ -115,7 +126,6 @@ describe('AIChat — SSE streaming (lines 99-118)', () => {
       target: { value: 'error test' },
     });
     fireEvent.click(getSendButton());
-    // Component appends: '\n\n*Error: Backend exploded*' + ' ' to accumulated
     await waitFor(
       () => expect(screen.queryByText(/Backend exploded/i)).toBeTruthy(),
       { timeout: 4000 },
