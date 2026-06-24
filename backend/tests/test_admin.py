@@ -5,30 +5,112 @@ Covers three scenarios:
   2. One legacy note (owner_id=0) — note is reassigned to new_owner_id.
   3. Non-admin caller (FakeUser id=2) — endpoint returns 403.
 
-The conftest.py fixtures handle:
-  - SQLite in-memory DB (test_engine / test_db)
-  - require_user override → FakeUser(id=1) by default
-  - LightRAG / Qdrant / vault-watcher patches
+Isolation strategy
+------------------
+The ``client`` fixture wires ``get_db`` to its own session factory so that
+the HTTP layer and any direct DB seeds use the same in-memory SQLite
+connection (StaticPool).
 
-For scenario 3 we temporarily override require_user a second time inside
-the test to return a FakeUser with id=2.
+For tests 1 & 2 we need seeds written by ``test_db`` to be visible to the
+router.  We achieve this by building a *shared* session factory from
+``test_engine`` and injecting it into both the client's ``get_db`` override
+and the seed helper — rather than using the separate ``test_db`` fixture
+which opens a different session object.
 """
 
 from __future__ import annotations
 
-from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
+import tempfile
+from collections.abc import AsyncGenerator
+from dataclasses import dataclass
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
+
+import pytest
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from gnosis.models.note import Note
 from gnosis.models.user import User
 
+
 # ---------------------------------------------------------------------------
-# Helpers
+# Shared-session client fixture
 # ---------------------------------------------------------------------------
 
 
-async def _seed_user(db: AsyncSession, user_id: int = 1) -> User:
-    """Insert a minimal User row so _get_primary_user() can resolve owner."""
+@pytest_asyncio.fixture
+async def admin_client(test_engine, vault_dir) -> AsyncGenerator[tuple[AsyncClient, AsyncSession], None]:
+    """Yield (client, session) that share the same SQLite connection.
+
+    Both the HTTP layer's get_db override and the seed session use the same
+    async_sessionmaker so that rows inserted before the request are visible
+    to the router.
+    """
+    from unittest.mock import AsyncMock, patch
+
+    session_factory = async_sessionmaker(bind=test_engine, expire_on_commit=False)
+
+    p1 = patch("gnosis.services.vector_store.ensure_collection", return_value=None)
+    p2 = patch(
+        "gnosis.services.vault_sync.start_vault_watcher",
+        new=AsyncMock(
+            return_value=type("O", (), {"stop": lambda s: None, "join": lambda s: None})()
+        ),
+    )
+    p3 = patch("gnosis.services.graph_rag.graph_rag.initialize", new=AsyncMock(return_value=None))
+
+    with p1, p2, p3:
+        from gnosis import config
+        from gnosis.core.auth import get_current_user, get_vault_owner_ids, require_user
+        from gnosis.main import create_app
+
+        settings = config.get_settings()
+        settings.vault_path = str(vault_dir)
+
+        app = create_app()
+
+        async def _override_get_db():
+            async with session_factory() as session:
+                yield session
+
+        async def _fake_user():
+            @dataclass
+            class _FU:
+                id: int = 1
+                email: str = "test@gnosis.local"
+                full_name: str | None = "Test User"
+                vault_slug: str | None = "test"
+                vault_path: str | None = None
+                is_active: bool = True
+                is_superuser: bool = False
+            return _FU()
+
+        async def _fake_owner_ids() -> set[int]:
+            return {1}
+
+        from gnosis.database import get_db
+        app.dependency_overrides[get_db] = _override_get_db
+        app.dependency_overrides[require_user] = _fake_user
+        app.dependency_overrides[get_current_user] = _fake_user
+        app.dependency_overrides[get_vault_owner_ids] = _fake_owner_ids
+
+        async with session_factory() as seed_session:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as c:
+                yield c, seed_session
+
+        app.dependency_overrides.clear()
+
+
+# ---------------------------------------------------------------------------
+# Seed helpers
+# ---------------------------------------------------------------------------
+
+
+async def _seed_user(session: AsyncSession, user_id: int = 1) -> User:
     user = User(
         id=user_id,
         email=f"user{user_id}@gnosis.local",
@@ -36,14 +118,13 @@ async def _seed_user(db: AsyncSession, user_id: int = 1) -> User:
         is_active=True,
         is_superuser=False,
     )
-    db.add(user)
-    await db.commit()
-    await db.refresh(user)
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
     return user
 
 
-async def _seed_legacy_note(db: AsyncSession) -> Note:
-    """Insert a Note with owner_id=0 (the legacy sentinel)."""
+async def _seed_legacy_note(session: AsyncSession) -> Note:
     note = Note(
         id="legacy-note-001",
         title="Legacy Note",
@@ -54,9 +135,9 @@ async def _seed_legacy_note(db: AsyncSession) -> Note:
         note_type="permanent",
         is_deleted=False,
     )
-    db.add(note)
-    await db.commit()
-    await db.refresh(note)
+    session.add(note)
+    await session.commit()
+    await session.refresh(note)
     return note
 
 
@@ -65,10 +146,10 @@ async def _seed_legacy_note(db: AsyncSession) -> Note:
 # ---------------------------------------------------------------------------
 
 
-async def test_reindex_no_legacy_notes(client: AsyncClient, test_db: AsyncSession) -> None:
+async def test_reindex_no_legacy_notes(admin_client) -> None:
     """When no notes have owner_id=0 the endpoint returns fixed=0."""
-    # Seed a real user so _get_primary_user() doesn't 500
-    await _seed_user(test_db)
+    client, session = admin_client
+    await _seed_user(session)
 
     resp = await client.post(
         "/api/v1/admin/reindex",
@@ -86,10 +167,11 @@ async def test_reindex_no_legacy_notes(client: AsyncClient, test_db: AsyncSessio
 # ---------------------------------------------------------------------------
 
 
-async def test_reindex_reassigns_legacy_note(client: AsyncClient, test_db: AsyncSession) -> None:
+async def test_reindex_reassigns_legacy_note(admin_client) -> None:
     """A note with owner_id=0 is updated to owner_id=1 and ingest is attempted."""
-    await _seed_user(test_db, user_id=1)
-    note = await _seed_legacy_note(test_db)
+    client, session = admin_client
+    await _seed_user(session, user_id=1)
+    note = await _seed_legacy_note(session)
 
     resp = await client.post(
         "/api/v1/admin/reindex",
@@ -105,8 +187,6 @@ async def test_reindex_reassigns_legacy_note(client: AsyncClient, test_db: Async
     assert note_result["id"] == note.id
     assert note_result["old_owner_id"] == 0
     assert note_result["new_owner_id"] == 1
-    # LightRAG is patched to a no-op in tests; ingest will be a lightrag_error
-    # or "ingested" depending on mock depth — either is acceptable.
     assert note_result["status"] == "ok"
 
 
@@ -116,16 +196,9 @@ async def test_reindex_reassigns_legacy_note(client: AsyncClient, test_db: Async
 
 
 async def test_reindex_forbidden_for_non_admin(
-    async_client: AsyncClient, test_db: AsyncSession
+    async_client: AsyncClient,
 ) -> None:
     """A user with id != 1 receives HTTP 403 Forbidden."""
-    import tempfile
-    from dataclasses import dataclass
-    from pathlib import Path
-    from unittest.mock import AsyncMock, patch
-
-    from httpx import ASGITransport
-
     from gnosis.core.auth import require_user
     from gnosis.main import create_app
 
@@ -147,18 +220,18 @@ async def test_reindex_forbidden_for_non_admin(
         for folder in ["00-inbox", "10-zettelkasten"]:
             (vault / folder).mkdir()
 
-        with (
-            patch("gnosis.services.vector_store.ensure_collection", return_value=None),
-            patch(
-                "gnosis.services.vault_sync.start_vault_watcher",
-                new=AsyncMock(
-                    return_value=type("O", (), {"stop": lambda s: None, "join": lambda s: None})()
-                ),
+        p1 = patch("gnosis.services.vector_store.ensure_collection", return_value=None)
+        p2 = patch(
+            "gnosis.services.vault_sync.start_vault_watcher",
+            new=AsyncMock(
+                return_value=type("O", (), {"stop": lambda s: None, "join": lambda s: None})()
             ),
-            patch(
-                "gnosis.services.graph_rag.graph_rag.initialize", new=AsyncMock(return_value=None)
-            ),
-        ):
+        )
+        p3 = patch(
+            "gnosis.services.graph_rag.graph_rag.initialize", new=AsyncMock(return_value=None)
+        )
+
+        with p1, p2, p3:
             from gnosis import config
 
             settings = config.get_settings()
