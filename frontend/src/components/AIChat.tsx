@@ -6,284 +6,233 @@
  * Token is read from localStorage ('gnosis_token') to mirror api.ts.
  *
  * Meta event: the backend emits a single `{meta: {rag_source, mode}}`
- * event just before [DONE].  We capture it and display a colour-coded
- * badge in the header showing which retrieval path answered the query.
+ * event just before [DONE].  We capture it and display a colour-coded badge
+ * beneath the assistant message.
  */
 
-import { useRef, useState, useEffect } from 'react';
-import { Send, Trash2, GitBranch, Database } from 'lucide-react';
-import { useAppStore } from '../store/useAppStore';
-import api from '../services/api';
+import { useRef, useState } from 'react';
+import { Send, Loader2, Bot, User, Zap, BookOpen, Cpu } from 'lucide-react';
 import type { ChatMessage } from '../types';
 
-const RAG_MODES = ['hybrid', 'local', 'global'] as const;
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api/v1';
 
-type RagSource = 'lightrag' | 'qdrant' | null;
+type RagSource = 'lightrag' | 'vector' | 'hybrid' | 'naive';
+type ChatMode  = 'hybrid' | 'lightrag' | 'vector' | 'naive';
 
-function getToken(): string {
-  return localStorage.getItem('gnosis_token') ?? '';
-}
+interface MetaPayload { rag_source: RagSource; mode: ChatMode; }
 
-/** Small badge showing which RAG path produced the last answer. */
-function RagSourceBadge({ source, mode }: { source: RagSource; mode: string }) {
-  if (!source) return null;
-  const isGraph = source === 'lightrag';
-  return (
-    <span
-      className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border transition-colors ${
-        isGraph
-          ? 'bg-accent-purple/10 border-accent-purple/30 text-accent-purple'
-          : 'bg-accent-blue/10 border-accent-blue/30 text-accent-blue'
-      }`}
-      title={isGraph ? 'Answer from LightRAG knowledge graph' : 'Answer from Qdrant vector store'}
-    >
-      {isGraph ? <GitBranch size={10} /> : <Database size={10} />}
-      {isGraph ? `Graph · ${mode}` : `Vector · ${mode}`}
-    </span>
-  );
+const SOURCE_BADGE: Record<RagSource, { label: string; className: string }> = {
+  lightrag: { label: 'LightRAG', className: 'bg-purple-500/20 text-purple-300 border-purple-500/30' },
+  vector:   { label: 'Vector',   className: 'bg-blue-500/20   text-blue-300   border-blue-500/30'   },
+  hybrid:   { label: 'Hybrid',   className: 'bg-teal-500/20   text-teal-300   border-teal-500/30'   },
+  naive:    { label: 'Naive',    className: 'bg-gray-500/20   text-gray-300   border-gray-500/30'   },
+};
+
+interface AIChatMessage extends ChatMessage {
+  meta?: MetaPayload;
 }
 
 export default function AIChat() {
-  const {
-    chatMessages,
-    appendChatMessage,
-    updateLastAssistantMessage,
-    clearChat,
-    ragMode,
-    setRagMode,
-    sessionId,
-  } = useAppStore();
+  const [messages, setMessages] = useState<AIChatMessage[]>([]);
+  const [input,    setInput]    = useState('');
+  const [loading,  setLoading]  = useState(false);
+  const [mode,     setMode]     = useState<ChatMode>('hybrid');
+  const bottomRef  = useRef<HTMLDivElement>(null);
+  const sessionRef = useRef<string>(crypto.randomUUID());
 
-  const [input, setInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  // Track the RAG source used for the most recent response
-  const [lastRagSource, setLastRagSource] = useState<RagSource>(null);
-  const [lastRagMode, setLastRagMode] = useState<string>(ragMode);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
+  async function send() {
+    const text = input.trim();
+    if (!text || loading) return;
 
-  const scrollToBottom = () =>
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [chatMessages]);
-
-  // Clear badge when chat is cleared
-  useEffect(() => {
-    if (chatMessages.length === 0) {
-      setLastRagSource(null);
-    }
-  }, [chatMessages.length]);
-
-  const handleSend = async () => {
-    if (!input.trim() || isLoading) return;
-
-    // Clear badge on new message
-    setLastRagSource(null);
-
-    const userMsg: ChatMessage = {
-      role: 'user',
-      content: input.trim(),
-      timestamp: new Date().toISOString(),
-    };
-    appendChatMessage(userMsg);
+    const userMsg: AIChatMessage = { role: 'user', content: text };
+    setMessages((prev) => [...prev, userMsg]);
     setInput('');
-    setIsLoading(true);
+    setLoading(true);
 
-    // Seed an empty assistant bubble immediately so it appears while streaming
-    appendChatMessage({
-      role: 'assistant',
-      content: '',
-      timestamp: new Date().toISOString(),
-    });
-
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
+    // Append a placeholder assistant message we'll stream into
+    const assistantIdx = messages.length + 1;
+    setMessages((prev) => [...prev, { role: 'assistant', content: '' }]);
 
     try {
-      const url =
-        `/api/v1/ai/stream/chat` +
-        `?message=${encodeURIComponent(userMsg.content)}` +
-        `&mode=${ragMode}`;
-
-      const resp = await fetch(url, {
-        signal: ctrl.signal,
+      const token = localStorage.getItem('gnosis_token') ?? '';
+      const res = await fetch(`${API_BASE}/ai/chat/stream`, {
+        method: 'POST',
         headers: {
-          Authorization: `Bearer ${getToken()}`,
-          Accept: 'text/event-stream',
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
         },
+        body: JSON.stringify({ message: text, mode, session_id: sessionRef.current }),
       });
 
-      if (!resp.ok || !resp.body) {
-        throw new Error(`HTTP ${resp.status}`);
+      if (!res.ok || !res.body) {
+        throw new Error(`HTTP ${res.status}`);
       }
 
-      const reader = resp.body.getReader();
+      const reader  = res.body.getReader();
       const decoder = new TextDecoder();
       let accumulated = '';
       let buf = '';
 
+      // eslint-disable-next-line no-constant-condition
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
         buf += decoder.decode(value, { stream: true });
-        const lines = buf.split('\n');
-        buf = lines.pop() ?? '';
 
-        for (const line of lines) {
-          if (!line.startsWith('data:')) continue;
-          const raw = line.slice(5).trim();
-          if (raw === '[DONE]') break;
-          try {
-            const parsed = JSON.parse(raw);
-            if (parsed.error) throw new Error(parsed.error);
-            // Meta event — capture RAG source info
-            if (parsed.meta) {
-              setLastRagSource(parsed.meta.rag_source as RagSource);
-              setLastRagMode(parsed.meta.mode as string);
-              continue;
+        // SSE lines end with \n\n
+        const parts = buf.split('\n\n');
+        buf = parts.pop() ?? '';
+
+        for (const part of parts) {
+          for (const line of part.split('\n')) {
+            if (!line.startsWith('data: ')) continue;
+            const payload = line.slice(6).trim();
+            if (payload === '[DONE]') continue;
+            try {
+              const parsed = JSON.parse(payload) as
+                | { token: string }
+                | { meta: MetaPayload }
+                | { error: string };
+
+              if ('error' in parsed) {
+                accumulated += `\n\n*Error: ${parsed.error}*`;
+              } else if ('meta' in parsed) {
+                // Meta arrives just before [DONE] — attach to the message
+                setMessages((prev) =>
+                  prev.map((m, i) =>
+                    i === assistantIdx ? { ...m, meta: parsed.meta } : m
+                  )
+                );
+              } else if ('token' in parsed) {
+                accumulated += parsed.token;
+                setMessages((prev) =>
+                  prev.map((m, i) =>
+                    i === assistantIdx ? { ...m, content: accumulated } : m
+                  )
+                );
+                bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+              }
+            } catch {
+              // ignore non-JSON lines
             }
-            const chunk = parsed.token ?? parsed.text ?? '';
-            accumulated += chunk;
-            updateLastAssistantMessage(accumulated);
-          } catch {
-            // ignore malformed SSE lines
           }
         }
       }
-
-      // Fallback: stream returned nothing, use POST endpoint
-      if (!accumulated) {
-        const resp2 = (await api.chat(
-          userMsg.content,
-          ragMode,
-          sessionId || undefined
-        )) as { answer: string };
-        updateLastAssistantMessage(resp2.answer);
-      }
     } catch (err) {
-      if ((err as Error).name !== 'AbortError') {
-        updateLastAssistantMessage(
-          `Error: ${err instanceof Error ? err.message : 'Unknown error'}`
-        );
-      }
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      setMessages((prev) =>
+        prev.map((m, i) =>
+          i === assistantIdx
+            ? { ...m, content: `*Failed to get response: ${msg}*` }
+            : m
+        )
+      );
     } finally {
-      setIsLoading(false);
-      abortRef.current = null;
-      scrollToBottom();
+      setLoading(false);
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  };
-
-  const handleStop = () => {
-    abortRef.current?.abort();
-    setIsLoading(false);
-  };
+  }
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-border flex-shrink-0">
-        <div className="flex items-center gap-2">
-          <h2 className="text-sm font-semibold text-text-primary">AI Chat</h2>
-          {/* RAG source badge — appears after first response, fades in */}
-          {lastRagSource && !isLoading && (
-            <RagSourceBadge source={lastRagSource} mode={lastRagMode} />
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <select
-            value={ragMode}
-            onChange={(e) => setRagMode(e.target.value as typeof ragMode)}
-            className="text-xs bg-bg-tertiary border border-border rounded px-2 py-1 text-text-secondary"
-          >
-            {RAG_MODES.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={clearChat}
-            className="p-1.5 text-text-muted hover:text-text-primary transition-colors"
-            title="Clear chat"
-          >
-            <Trash2 size={14} />
-          </button>
-        </div>
-      </div>
+    <div className="flex h-full flex-col bg-bg-primary text-text-primary">
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
-        {chatMessages.length === 0 && (
-          <div className="text-center text-text-muted text-sm py-12">
-            Ask anything about your knowledge base…
-          </div>
-        )}
-        {chatMessages.map((msg, i) => (
-          <div
-            key={i}
-            className={`flex ${
-              msg.role === 'user' ? 'justify-end' : 'justify-start'
+      {/* Mode selector */}
+      <div className="flex items-center gap-2 border-b border-border-default px-4 py-2">
+        <span className="text-xs text-text-muted">Mode:</span>
+        {(['hybrid', 'lightrag', 'vector', 'naive'] as ChatMode[]).map((m) => (
+          <button
+            key={m}
+            onClick={() => setMode(m)}
+            className={`rounded px-2 py-0.5 text-xs transition-colors ${
+              mode === m
+                ? 'bg-accent-teal text-white'
+                : 'text-text-muted hover:bg-bg-elevated'
             }`}
           >
-            <div
-              className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
-                msg.role === 'user'
-                  ? 'bg-accent-blue text-white'
-                  : 'bg-bg-tertiary text-text-primary'
-              }`}
-            >
-              <p className="whitespace-pre-wrap leading-relaxed">
-                {msg.content}
-                {/* blinking cursor on last assistant bubble while streaming */}
-                {isLoading &&
-                  i === chatMessages.length - 1 &&
-                  msg.role === 'assistant' && (
-                    <span className="inline-block w-0.5 h-3.5 bg-current ml-0.5 animate-pulse align-middle" />
-                  )}
-              </p>
+            {m}
+          </button>
+        ))}
+      </div>
+
+      {/* Message list */}
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+        {messages.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-full gap-3 text-text-muted">
+            <Bot size={40} className="opacity-30" />
+            <p className="text-sm">Ask anything about your knowledge base</p>
+          </div>
+        )}
+        {messages.map((msg, i) => (
+          <div key={i} className={`flex gap-3 ${ msg.role === 'user' ? 'justify-end' : 'justify-start' }`}>
+            {msg.role === 'assistant' && (
+              <div className="flex-shrink-0 w-7 h-7 rounded-full bg-accent-teal/20 flex items-center justify-center">
+                <Cpu size={14} className="text-accent-teal" />
+              </div>
+            )}
+            <div className={`max-w-[75%] ${ msg.role === 'user' ? 'order-first' : '' }`}>
+              <div
+                className={`rounded-lg px-3 py-2 text-sm leading-relaxed ${
+                  msg.role === 'user'
+                    ? 'bg-accent-teal text-white ml-auto'
+                    : 'bg-bg-secondary text-text-primary'
+                }`}
+              >
+                {msg.content || (
+                  <span className="inline-flex gap-1">
+                    <span className="animate-bounce" style={{ animationDelay: '0ms'   }}>·</span>
+                    <span className="animate-bounce" style={{ animationDelay: '150ms' }}>·</span>
+                    <span className="animate-bounce" style={{ animationDelay: '300ms' }}>·</span>
+                  </span>
+                )}
+              </div>
+              {msg.role === 'assistant' && msg.meta && (() => {
+                const badge = SOURCE_BADGE[msg.meta.rag_source];
+                return badge ? (
+                  <div className="mt-1 flex items-center gap-1.5">
+                    <span className={`rounded border px-1.5 py-0.5 text-xs font-medium ${badge.className}`}>
+                      {badge.label}
+                    </span>
+                    <span className="text-xs text-text-faint capitalize">{msg.meta.mode} mode</span>
+                  </div>
+                ) : null;
+              })()}
             </div>
+            {msg.role === 'user' && (
+              <div className="flex-shrink-0 w-7 h-7 rounded-full bg-bg-tertiary flex items-center justify-center">
+                <User size={14} className="text-text-muted" />
+              </div>
+            )}
           </div>
         ))}
-        <div ref={messagesEndRef} />
+        <div ref={bottomRef} />
       </div>
 
       {/* Input */}
-      <div className="px-4 py-3 border-t border-border flex-shrink-0">
+      <div className="border-t border-border-default px-4 py-3">
         <div className="flex items-end gap-2">
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                handleSend();
-              }
+              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); }
             }}
-            placeholder="Ask about your vault… (Enter to send, Shift+Enter for newline)"
-            className="flex-1 bg-bg-tertiary border border-border rounded px-3 py-2 text-sm text-text-primary placeholder-text-muted outline-none resize-none focus:border-accent-blue transition-colors min-h-[38px] max-h-32"
+            placeholder="Ask your knowledge base…"
             rows={1}
-            disabled={isLoading}
+            className="flex-1 resize-none rounded-lg bg-bg-secondary px-3 py-2 text-sm focus:outline-none border border-border-default min-h-[36px] max-h-[120px]"
+            style={{ height: 'auto' }}
           />
-          {isLoading ? (
-            <button
-              onClick={handleStop}
-              className="p-2 bg-red-500 hover:bg-red-600 text-white rounded transition-colors flex-shrink-0"
-              title="Stop generation"
-            >
-              <span className="w-3.5 h-3.5 block bg-white rounded-sm" />
-            </button>
-          ) : (
-            <button
-              onClick={handleSend}
-              disabled={!input.trim()}
-              className="p-2 bg-accent-blue hover:bg-blue-600 disabled:opacity-50 text-white rounded transition-colors flex-shrink-0"
-            >
-              <Send size={15} />
-            </button>
-          )}
+          <button
+            onClick={() => void send()}
+            disabled={loading || !input.trim()}
+            className="flex-shrink-0 rounded-lg bg-accent-teal p-2 text-white hover:bg-accent-teal/80 disabled:opacity-50 transition-colors"
+          >
+            {loading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+          </button>
+        </div>
+        <div className="mt-1.5 flex items-center gap-1 text-xs text-text-faint">
+          <Zap size={10} />
+          <span>Powered by LightRAG · <BookOpen size={10} className="inline" /> references your vault</span>
         </div>
       </div>
     </div>

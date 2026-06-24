@@ -72,7 +72,6 @@ function MarkdownWithWikilinks({
     <div className="prose prose-sm prose-invert max-w-none text-text-primary">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         components={({
           // Intercept unknown elements — react-markdown passes unrecognised
           // HTML tags through the component map under their tag name.

@@ -43,7 +43,7 @@ function buildWikilinkExtension(
       return src.indexOf('[[');
     },
     tokenizer(src: string): WikiToken | undefined {
-      const match = src.match(/^\[\[([^\]\[]+?)(?:\|([^\]\[]+?))?\]\]/);
+      const match = src.match(/^\[\[([^[\]]+?)(?:\|([^[\]]+?))?\]\]/);
       if (!match) return undefined;
       return {
         type: 'wikilink',

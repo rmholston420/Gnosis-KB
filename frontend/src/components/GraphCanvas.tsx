@@ -5,54 +5,54 @@
 import { useEffect, useRef } from 'react';
 import cytoscape from 'cytoscape';
 // cytoscape-fcose has no bundled types — use require to bypass TS module resolution
-// eslint-disable-next-line @typescript-eslint/no-require-imports
+// eslint-disable-next-line @typescript-eslint/no-var-requires
 const fcose = require('cytoscape-fcose');
 import { useNavigate } from 'react-router-dom';
 import type { GraphData, NoteType } from '../types';
 
 cytoscape.use(fcose);
 
-const NOTE_TYPE_COLOR: Record<NoteType | string, string> = {
-  permanent: '#58a6ff',
-  fleeting: '#3fb950',
-  literature: '#d2a8ff',
-  journal: '#ffa657',
-  map: '#79c0ff',
-  reference: '#f78166',
-  project: '#e3b341',
-  template: '#8b949e',
+const NOTE_TYPE_COLORS: Record<NoteType | 'default', string> = {
+  fleeting:  '#f59e0b',
+  permanent: '#4f9cf9',
+  map:       '#a855f7',
+  template:  '#6b7280',
+  default:   '#9ca3af',
 };
 
 interface GraphCanvasProps {
   data: GraphData;
-  height?: string;
-  onNodeClick?: (noteId: string) => void;
+  onNodeClick?: (id: string) => void;
 }
 
-export default function GraphCanvas({ data, height = '100%', onNodeClick }: GraphCanvasProps) {
+export default function GraphCanvas({ data, onNodeClick }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const cyRef = useRef<cytoscape.Core | null>(null);
-  const navigate = useNavigate();
+  const cyRef        = useRef<cytoscape.Core | null>(null);
+  const navigate     = useNavigate();
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerRef.current || !data) return;
+
+    if (cyRef.current) {
+      cyRef.current.destroy();
+    }
 
     const elements: cytoscape.ElementDefinition[] = [
       ...data.nodes.map((n) => ({
         data: {
-          id: n.id,
-          label: n.title.length > 30 ? n.title.slice(0, 30) + '...' : n.title,
-          noteType: n.note_type,
-          inLinks: n.incoming_link_count,
-          size: Math.max(20, Math.min(60, 20 + n.incoming_link_count * 4)),
+          id:    n.id,
+          label: n.title,
+          type:  n.note_type,
+          color: NOTE_TYPE_COLORS[n.note_type ?? 'default'] ?? NOTE_TYPE_COLORS.default,
+          size:  Math.max(20, Math.sqrt((n.incoming_link_count ?? 0) + (n.outgoing_link_count ?? 0) + 1) * 12),
         },
       })),
-      ...data.edges.map((e, i) => ({
+      ...data.edges.map((e) => ({
         data: {
-          id: `e-${i}`,
+          id:     `${e.source}-${e.target}`,
           source: e.source,
           target: e.target,
-          label: e.link_text,
+          label:  e.link_text ?? '',
         },
       })),
     ];
@@ -64,61 +64,61 @@ export default function GraphCanvas({ data, height = '100%', onNodeClick }: Grap
         {
           selector: 'node',
           style: {
-            'background-color': (ele: cytoscape.NodeSingular) =>
-              NOTE_TYPE_COLOR[ele.data('noteType')] || '#8b949e',
-            'label': 'data(label)',
-            'color': '#e6edf3',
-            'font-size': '10px',
-            'text-valign': 'bottom',
-            'text-halign': 'center',
-            'text-margin-y': 4,
-            'width': 'data(size)',
-            'height': 'data(size)',
-            'border-width': 1,
-            'border-color': '#30363d',
+            'background-color':   'data(color)',
+            'label':              'data(label)',
+            'width':              'data(size)',
+            'height':             'data(size)',
+            'font-size':          '10px',
+            'color':              '#e5e7eb',
+            'text-valign':        'bottom',
+            'text-halign':        'center',
+            'text-margin-y':      4,
+            'text-background-color': '#1f2937',
+            'text-background-opacity': 0.7,
+            'text-background-padding': '2px',
           },
         },
         {
           selector: 'edge',
           style: {
-            'width': 1,
-            'line-color': '#30363d',
-            'target-arrow-color': '#30363d',
+            'width':              1,
+            'line-color':         '#374151',
+            'target-arrow-color': '#374151',
             'target-arrow-shape': 'triangle',
-            'curve-style': 'bezier',
-            'opacity': 0.6,
+            'curve-style':        'bezier',
+            'opacity':            0.6,
           },
         },
         {
           selector: 'node:selected',
-          style: {
-            'border-width': 2,
-            'border-color': '#58a6ff',
-          },
+          style: { 'border-width': 2, 'border-color': '#4f9cf9' },
+        },
+        {
+          selector: 'node:active',
+          style: { 'overlay-opacity': 0.1 },
         },
       ],
       layout: {
-        name: 'fcose',
-        animate: true,
+        name:             'fcose',
+        animate:          true,
         animationDuration: 600,
-        fit: true,
-        padding: 30,
-        randomize: false,
+        nodeSep:          80,
+        idealEdgeLength:  120,
+        quality:          'default',
       } as cytoscape.LayoutOptions,
+      userZoomingEnabled:    true,
+      userPanningEnabled:    true,
+      boxSelectionEnabled:   false,
+      minZoom: 0.1,
+      maxZoom: 5,
     });
 
-    cy.on('dblclick', 'node', (e) => {
-      const nodeId = e.target.data('id');
-      if (onNodeClick) onNodeClick(nodeId);
-      else navigate(`/notes/${nodeId}`);
-    });
-
-    cy.on('mouseover', 'node', (e) => {
-      e.target.style({ 'border-width': 2, 'border-color': '#58a6ff' });
-    });
-    cy.on('mouseout', 'node', (e) => {
-      if (!e.target.selected()) {
-        e.target.style({ 'border-width': 1, 'border-color': '#30363d' });
+    cy.on('tap', 'node', (evt) => {
+      const id = evt.target.id() as string;
+      if (onNodeClick) {
+        onNodeClick(id);
+      } else {
+        navigate(`/notes/${id}`);
       }
     });
 
@@ -126,21 +126,15 @@ export default function GraphCanvas({ data, height = '100%', onNodeClick }: Grap
 
     return () => {
       cy.destroy();
-      cyRef.current = null;
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
 
   return (
-    <div className="relative" style={{ height }}>
-      <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
-      <div className="absolute bottom-4 left-4 bg-bg-secondary border border-border rounded p-2 text-xs space-y-1">
-        {Object.entries(NOTE_TYPE_COLOR).map(([type, color]) => (
-          <div key={type} className="flex items-center gap-1.5">
-            <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
-            <span className="text-text-secondary capitalize">{type}</span>
-          </div>
-        ))}
-      </div>
-    </div>
+    <div
+      ref={containerRef}
+      className="h-full w-full bg-bg-primary"
+      style={{ minHeight: '400px' }}
+    />
   );
 }
