@@ -9,18 +9,39 @@
  *  5. Response interceptor passes successful responses through untouched
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import MockAdapter from 'axios-mock-adapter';
-
-// Dynamically import AFTER setup so the interceptors are wired at module load time
 import { apiClient } from '../client';
 
 const mock = new MockAdapter(apiClient);
 
+// ---------------------------------------------------------------------------
+// window.location stub
+// jsdom blocks window.location.href assignments (navigation is a no-op).
+// We replace location with a plain writable object so the interceptor's
+// `window.location.href = '/login'` is observable in tests.
+// ---------------------------------------------------------------------------
+let locationStub: { href: string };
+const originalLocation = window.location;
+
 beforeEach(() => {
   mock.reset();
   localStorage.clear();
-  window.location.href = 'http://localhost:3000/';
+
+  locationStub = { href: 'http://localhost:3000/' };
+  Object.defineProperty(window, 'location', {
+    writable: true,
+    configurable: true,
+    value: locationStub,
+  });
+});
+
+afterEach(() => {
+  Object.defineProperty(window, 'location', {
+    writable: true,
+    configurable: true,
+    value: originalLocation,
+  });
 });
 
 describe('apiClient request interceptor', () => {
@@ -48,10 +69,9 @@ describe('apiClient response interceptor', () => {
     await expect(apiClient.get('/api/v1/protected')).rejects.toThrow();
 
     expect(localStorage.getItem('gnosis_token')).toBeNull();
-    // jsdom resolves href='/login' against the current origin.
-    // Assert the pathname only so the test is environment-agnostic
-    // (origin may be localhost or localhost:3000 depending on test runner).
-    expect(new URL(window.location.href).pathname).toBe('/login');
+    // The interceptor sets window.location.href = '/login'.
+    // Our writable stub captures the assignment directly.
+    expect(window.location.href).toBe('/login');
   });
 
   it('re-rejects non-401 errors without touching localStorage or location', async () => {
@@ -63,7 +83,7 @@ describe('apiClient response interceptor', () => {
     });
 
     expect(localStorage.getItem('gnosis_token')).toBe('good-token');
-    expect(new URL(window.location.href).pathname).not.toBe('/login');
+    expect(window.location.href).not.toBe('/login');
   });
 
   it('passes 200 responses through unchanged', async () => {
