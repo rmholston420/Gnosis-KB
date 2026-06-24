@@ -91,7 +91,9 @@ async function clear(): Promise<void> {
 /** Trigger a manual sync via the service worker (fallback for browsers
  *  without Background Sync API support). */
 export async function triggerManualSync(): Promise<void> {
-  if (!('serviceWorker' in navigator)) return;
+  // Guard against environments where serviceWorker is absent OR explicitly
+  // set to undefined (e.g. in tests that stub the property away).
+  if (!navigator.serviceWorker) return;
   const reg = await navigator.serviceWorker.ready;
   if ('sync' in reg) {
     // Background Sync supported — let the browser schedule it
