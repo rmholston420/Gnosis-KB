@@ -3,34 +3,31 @@
  * ====================
  * Unit tests for the IndexedDB-backed offline mutation queue.
  *
- * Uses fake-indexeddb (already a dev dep via idb test utils) to run
- * IndexedDB entirely in memory — no browser required.
+ * jsdom ships a real in-memory IndexedDB implementation — no extra
+ * package required.  The fake-indexeddb import has been removed.
  *
  * Cases (12):
- *  1.  count() returns 0 on a fresh DB
- *  2.  getAll() returns [] on a fresh DB
- *  3.  count() increments after SW writes a record directly
- *  4.  getAll() returns items sorted by timestamp (oldest first)
+ *  1.  count() returns 0 on a fresh store
+ *  2.  getAll() returns [] on a fresh store
+ *  3.  count() increments after a record is written directly to IDB
+ *  4.  getAll() returns items sorted oldest-first by timestamp
  *  5.  remove(id) deletes a single record
- *  6.  remove(unknown id) is a no-op (no error)
+ *  6.  remove(unknown id) is a no-op (no error thrown)
  *  7.  clear() removes all records
- *  8.  count() returns 0 after clear()
- *  9.  getAll() returns [] after clear()
- * 10.  multiple records survive round-trip with all fields intact
+ *  8.  count() is 0 after clear()
+ *  9.  getAll() is [] after clear()
+ * 10.  All QueuedMutation fields survive a round-trip
  * 11.  triggerManualSync is a no-op when serviceWorker is absent
  * 12.  triggerManualSync calls sync.register when Background Sync is present
  */
 
-import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
-import 'fake-indexeddb/auto';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { offlineQueue, triggerManualSync, type QueuedMutation } from '../offlineQueue';
-
-// ── helpers ──────────────────────────────────────────────────────────────────
 
 const DB_NAME    = 'gnosis-offline-queue';
 const STORE_NAME = 'mutations';
 
-/** Write a record directly into the IDB store (simulates the SW queuing it). */
+/** Write a record directly into IDB (simulates the SW queuing it). */
 function idbPut(item: QueuedMutation): Promise<void> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, 1);
@@ -60,12 +57,9 @@ function makeMutation(overrides: Partial<QueuedMutation> = {}): QueuedMutation {
   };
 }
 
-// Wipe the fake IDB between tests so each test starts clean.
 afterEach(async () => {
   await offlineQueue.clear();
 });
-
-// ── tests ─────────────────────────────────────────────────────────────────────
 
 describe('offlineQueue', () => {
   it('count() returns 0 on a fresh store', async () => {
@@ -140,24 +134,28 @@ describe('offlineQueue', () => {
   });
 
   it('triggerManualSync is a no-op when serviceWorker is absent', async () => {
-    // jsdom does not define navigator.serviceWorker by default
+    const original = Object.getOwnPropertyDescriptor(navigator, 'serviceWorker');
+    if (original) {
+      Object.defineProperty(navigator, 'serviceWorker', {
+        value: undefined, configurable: true,
+      });
+    }
     await expect(triggerManualSync()).resolves.toBeUndefined();
+    if (original) {
+      Object.defineProperty(navigator, 'serviceWorker', original);
+    }
   });
 
   it('triggerManualSync calls sync.register when Background Sync is available', async () => {
     const register = vi.fn().mockResolvedValue(undefined);
-    const mockReg  = { sync: { register } };
-    // Temporarily inject a minimal serviceWorker stub
+    const mockReg  = { sync: { register }, active: null };
     Object.defineProperty(navigator, 'serviceWorker', {
-      value:       { ready: Promise.resolve(mockReg) },
-      configurable: true,
+      value: { ready: Promise.resolve(mockReg) }, configurable: true,
     });
     await triggerManualSync();
     expect(register).toHaveBeenCalledWith('gnosis-sync-mutations');
-    // Restore
     Object.defineProperty(navigator, 'serviceWorker', {
-      value:       undefined,
-      configurable: true,
+      value: undefined, configurable: true,
     });
   });
 });
