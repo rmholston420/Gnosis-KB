@@ -91,7 +91,11 @@ beforeEach(() => {
 describe('NoteDetailPanel', () => {
   it('renders note title', () => {
     renderPanel();
-    expect(screen.getByText('Emptiness')).toBeInTheDocument();
+    // The title "Emptiness" appears twice: once in the panel header <h2> and
+    // once inside the rendered markdown body <h2>. Use getAllByText and assert
+    // the first instance (the panel header) is present.
+    const matches = screen.getAllByText('Emptiness');
+    expect(matches[0]).toBeInTheDocument();
   });
 
   it('renders tags', () => {

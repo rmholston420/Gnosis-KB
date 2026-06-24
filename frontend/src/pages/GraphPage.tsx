@@ -1,255 +1,148 @@
 /**
  * GraphPage.tsx
- * ============
- * Full-screen Cytoscape.js knowledge-graph visualisation.
+ * =============
+ * Tab-based knowledge-graph page.
+ *
+ * Tab 1 — Wikilinks:       react-force-graph-2d visualisation of vault link graph
+ * Tab 2 — LightRAG Knowledge: flat entity list from the LightRAG knowledge graph
+ *
+ * API calls:
+ *   api.getFullGraph()      → { nodes, edges }   (wikilinks graph)
+ *   api.getGraphEntities()  → { entities }        (LightRAG entity list)
  */
 
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import cytoscape from 'cytoscape';
-import type { Core, EventObject } from 'cytoscape';
-import type { GraphData, GraphNode, GraphEdge } from '../types';
+import React, { useEffect, useState, useCallback, lazy, Suspense } from 'react';
+import type { GraphData, GraphNode } from '../types';
 import api from '../services/api';
-import LightRagNodePanel, { type LightRagEntity, type LightRagRelation } from '../components/graph/LightRagNodePanel';
+import type { GraphEntitySummary } from '../services/api';
 import './GraphPage.css';
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-const NOTE_TYPE_COLORS: Record<string, string> = {
-  permanent:   '#01696f',
-  fleeting:    '#da7101',
-  literature:  '#006494',
-  journal:     '#7a39bb',
-  map:         '#437a22',
-  reference:   '#a13544',
-  project:     '#964219',
-  template:    '#7a7974',
-};
-const DEFAULT_COLOR = '#bab9b4';
+// Lazy-load ForceGraph so jsdom / SSR never touches the WebGL canvas.
+const ForceGraph2D = lazy(() => import('react-force-graph-2d'));
 
-const LAYOUTS = ['cose', 'breadthfirst', 'circle', 'grid', 'concentric'] as const;
-type LayoutName = typeof LAYOUTS[number];
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+type Tab = 'wikilinks' | 'lightrag';
+
+interface LightRagData {
+  entities: GraphEntitySummary[];
+  relations?: unknown[];
+}
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
-interface GraphPageProps {
-  api?: typeof import('../services/api').default;
-}
+export default function GraphPage() {
+  // ── Wikilinks graph ──────────────────────────────────────────────────────
+  const [graphData,    setGraphData]    = useState<GraphData | null>(null);
+  const [graphLoading, setGraphLoading] = useState(true);
+  const [graphError,   setGraphError]   = useState<string | null>(null);
 
-export default function GraphPage(_props: GraphPageProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const cyRef        = useRef<Core | null>(null);
+  // ── LightRAG entities ────────────────────────────────────────────────────
+  const [lrData,    setLrData]    = useState<LightRagData | null>(null);
+  const [lrLoading, setLrLoading] = useState(false);
+  const [lrError,   setLrError]   = useState<string | null>(null);
 
-  const [data,    setData]    = useState<GraphData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error,   setError]   = useState<string | null>(null);
+  // ── UI state ─────────────────────────────────────────────────────────────
+  const [activeTab,     setActiveTab]     = useState<Tab>('wikilinks');
+  const [nodeFilter,    setNodeFilter]    = useState('');
+  const [entityFilter,  setEntityFilter]  = useState('');
+  const [selectedNode,  setSelectedNode]  = useState<GraphNode | null>(null);
+  const [syncing,       setSyncing]       = useState(false);
 
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-
-  const [lightRagOpen,    setLightRagOpen]    = useState(false);
-  const [lightRagNode,    setLightRagNode]    = useState<{ entity: LightRagEntity; relations: LightRagRelation[] } | null>(null);
-  const [lightRagLoading, setLightRagLoading] = useState(false);
-  const [lightRagError,   setLightRagError]   = useState<string | null>(null);
-
-  const [layout, setLayout] = useState<LayoutName>('cose');
-  const [search, setSearch] = useState('');
-
-  // -------------------------------------------------------------------------
-  // Data fetch
-  // -------------------------------------------------------------------------
+  // ── Fetch wikilinks graph on mount ───────────────────────────────────────
   useEffect(() => {
-    api.getGraph()
-      .then((d: unknown) => { setData(d as GraphData); setLoading(false); })
-      .catch((e: unknown) => { setError(String(e)); setLoading(false); });
+    setGraphLoading(true);
+    api.getFullGraph()
+      .then((d: unknown) => {
+        setGraphData(d as GraphData);
+        setGraphLoading(false);
+      })
+      .catch((e: unknown) => {
+        setGraphError(String(e));
+        setGraphLoading(false);
+      });
   }, []);
 
-  const buildElements = useCallback(() => {
-    if (!data) return [];
+  // ── Fetch LightRAG entities when tab switches ────────────────────────────
+  useEffect(() => {
+    if (activeTab !== 'lightrag') return;
+    setLrLoading(true);
+    setLrError(null);
+    api.getGraphEntities()
+      .then((d: unknown) => {
+        setLrData(d as LightRagData);
+        setLrLoading(false);
+      })
+      .catch((e: unknown) => {
+        setLrError(String(e));
+        setLrLoading(false);
+      });
+  }, [activeTab]);
 
-    const nodes = (data.nodes ?? []).map((n: GraphNode) => ({
-      data: {
-        id:    n.id,
-        label: n.title,
-        color: NOTE_TYPE_COLORS[n.note_type ?? ''] ?? DEFAULT_COLOR,
-        type:  n.note_type ?? 'unknown',
-      },
-    }));
+  // ── Refresh handler ──────────────────────────────────────────────────────
+  const handleRefresh = useCallback(() => {
+    setGraphLoading(true);
+    setGraphError(null);
+    api.getFullGraph()
+      .then((d: unknown) => {
+        setGraphData(d as GraphData);
+        setGraphLoading(false);
+      })
+      .catch((e: unknown) => {
+        setGraphError(String(e));
+        setGraphLoading(false);
+      });
+    if (activeTab === 'lightrag') {
+      setLrLoading(true);
+      api.getGraphEntities()
+        .then((d: unknown) => { setLrData(d as LightRagData); setLrLoading(false); })
+        .catch((e: unknown) => { setLrError(String(e)); setLrLoading(false); });
+    }
+  }, [activeTab]);
 
-    const edges = (data.edges ?? []).map((e: GraphEdge) => ({
-      data: {
-        id:     `${e.source}-${e.target}`,
-        source: e.source,
-        target: e.target,
-        label:  e.link_text ?? '',
-      },
-    }));
-
-    return [...nodes, ...edges];
-  }, [data]);
-
-  // -------------------------------------------------------------------------
-  // LightRAG node open — defined before Cytoscape useEffect so it can be
-  // included in the dependency array without causing a lint warning.
-  // -------------------------------------------------------------------------
-  const handleLightRagOpen = useCallback(async (nodeId: string) => {
-    setLightRagOpen(true);
-    setLightRagLoading(true);
-    setLightRagError(null);
+  // ── Sync vault handler ───────────────────────────────────────────────────
+  const handleSyncVault = useCallback(async () => {
+    setSyncing(true);
     try {
-      const result = await api.getLightRagNode(nodeId) as { entity: LightRagEntity; relations: LightRagRelation[] };
-      setLightRagNode(result);
-    } catch (e) {
-      setLightRagError(String(e));
+      await api.triggerVaultSync();
+      // Re-fetch after sync
+      const d = await api.getFullGraph();
+      setGraphData(d as GraphData);
+    } catch (_e) {
+      // non-fatal
     } finally {
-      setLightRagLoading(false);
+      setSyncing(false);
     }
   }, []);
 
-  // -------------------------------------------------------------------------
-  // Cytoscape initialisation / re-render
-  // -------------------------------------------------------------------------
-  useEffect(() => {
-    if (!data || !containerRef.current) return;
+  // ── Derived ──────────────────────────────────────────────────────────────
+  const allNodes   = graphData?.nodes ?? [];
+  const nodeCount  = allNodes.length;
+  const edgeCount  = graphData?.edges?.length ?? 0;
 
-    if (cyRef.current) {
-      cyRef.current.destroy();
-      cyRef.current = null;
-    }
+  const filteredNodes = nodeFilter.trim()
+    ? allNodes.filter((n) =>
+        n.title?.toLowerCase().includes(nodeFilter.toLowerCase())
+      )
+    : allNodes;
 
-    const cy = cytoscape({
-      container: containerRef.current,
-      elements:  buildElements(),
-      style: [
-        {
-          selector: 'node',
-          style: {
-            'background-color':    'data(color)',
-            'width':               '28px',
-            'height':              '28px',
-            'label':               'data(label)',
-            'font-size':           '10px',
-            'color':               '#28251d',
-            'text-valign':         'bottom' as const,
-            'text-halign':         'center' as const,
-            'text-margin-y':       4,
-            'text-outline-color':  '#f7f6f2',
-            'text-outline-width':  2,
-            'border-width':        1.5,
-            'border-color':        'data(color)',
-            'border-opacity':      0.6,
-            'transition-property': 'background-color, border-color, width, height',
-            'transition-duration': '200ms',
-          } as unknown as cytoscape.Css.Node,
-        },
-        {
-          selector: 'node:selected',
-          style: {
-            'width':        '38px',
-            'height':       '38px',
-            'border-width': 3,
-            'border-color': '#01696f',
-          },
-        },
-        {
-          selector: 'node:active',
-          style: { 'overlay-opacity': 0 },
-        },
-        {
-          selector: 'edge',
-          style: {
-            'width':               1.5,
-            'line-color':          '#dcd9d5',
-            'target-arrow-color':  '#dcd9d5',
-            'target-arrow-shape':  'triangle' as const,
-            'curve-style':         'bezier' as const,
-            'arrow-scale':         0.8,
-            'transition-property': 'line-color, width',
-            'transition-duration': '200ms',
-          } as unknown as cytoscape.Css.Edge,
-        },
-        {
-          selector: 'edge:selected',
-          style: {
-            'line-color':         '#01696f',
-            'target-arrow-color': '#01696f',
-            'width':              2.5,
-          },
-        },
-      ],
-      layout: { name: layout, animate: false, padding: 40 },
-      minZoom: 0.1,
-      maxZoom: 4,
-      wheelSensitivity: 0.3,
-    });
+  const allEntities  = lrData?.entities ?? [];
+  const filteredEntities = entityFilter.trim()
+    ? allEntities.filter((e) =>
+        e.label?.toLowerCase().includes(entityFilter.toLowerCase()) ||
+        e.id?.toLowerCase().includes(entityFilter.toLowerCase())
+      )
+    : allEntities;
 
-    cyRef.current = cy;
+  const forceGraphData = {
+    nodes: filteredNodes.map((n) => ({ id: n.id, name: n.title, type: n.note_type })),
+    links: (graphData?.edges ?? []).map((e) => ({ source: e.source, target: e.target })),
+  };
 
-    cy.on('tap', 'node', (evt: EventObject) => {
-      const node = evt.target;
-      setSelectedNodeId(node.id());
-    });
-
-    cy.on('tap', 'node', (evt: EventObject) => {
-      if ((evt.type as string) === 'dblTap') {
-        const node = evt.target;
-        handleLightRagOpen(node.id());
-      }
-    });
-
-    cy.on('tap', (evt: EventObject) => {
-      if (evt.target === cy) setSelectedNodeId(null);
-    });
-
-    return () => {
-      cy.destroy();
-      cyRef.current = null;
-    };
-  }, [data, layout, buildElements, handleLightRagOpen]);
-
-  // -------------------------------------------------------------------------
-  // Layout change
-  // -------------------------------------------------------------------------
-  const handleLayoutChange = useCallback((name: LayoutName) => {
-    setLayout(name);
-    if (cyRef.current) {
-      cyRef.current.layout({ name, animate: true, padding: 40 }).run();
-    }
-  }, []);
-
-  // -------------------------------------------------------------------------
-  // Search / jump-to-node
-  // -------------------------------------------------------------------------
-  const handleSearch = useCallback((q: string) => {
-    setSearch(q);
-    if (!cyRef.current || !q.trim()) return;
-    const match = cyRef.current.nodes().filter(
-      (n) => n.data('label')?.toLowerCase().includes(q.toLowerCase()),
-    );
-    if (match.length) {
-      cyRef.current.animate({ fit: { eles: match, padding: 80 }, duration: 400 });
-      match.first().select();
-      setSelectedNodeId(match.first().id());
-    }
-  }, []);
-
-  // -------------------------------------------------------------------------
-  // Selected node
-  // -------------------------------------------------------------------------
-  const selectedNode = selectedNodeId
-    ? (data?.nodes ?? []).find((n: GraphNode) => n.id === selectedNodeId)
-    : null;
-
-  // -------------------------------------------------------------------------
-  // Stats
-  // -------------------------------------------------------------------------
-  const nodeCount = data?.nodes?.length ?? 0;
-  const edgeCount = data?.edges?.length ?? 0;
-
-  // -------------------------------------------------------------------------
-  // Render
-  // -------------------------------------------------------------------------
-  if (loading) {
+  // ── Loading state ─────────────────────────────────────────────────────────
+  if (graphLoading) {
     return (
       <div className="graph-page graph-page--loading">
         <span className="graph-page__spinner" aria-label="Loading graph" />
@@ -257,89 +150,167 @@ export default function GraphPage(_props: GraphPageProps) {
     );
   }
 
-  if (error) {
+  // ── Error state ───────────────────────────────────────────────────────────
+  if (graphError) {
     return (
       <div className="graph-page graph-page--error" role="alert">
-        <p>Failed to load graph: {error}</p>
-        <button onClick={() => window.location.reload()}>Retry</button>
+        <p>Failed to load graph: {graphError}</p>
+        <button onClick={handleRefresh}>Retry</button>
       </div>
     );
   }
 
+  // ── Main render ───────────────────────────────────────────────────────────
   return (
     <div className="graph-page">
-      {/* Toolbar */}
-      <div className="graph-page__toolbar" role="toolbar" aria-label="Graph controls">
-        <div className="graph-page__toolbar-group">
-          {LAYOUTS.map((l) => (
-            <button
-              key={l}
-              className={`graph-page__layout-btn${
-                l === layout ? ' graph-page__layout-btn--active' : ''
-              }`}
-              onClick={() => handleLayoutChange(l)}
-              aria-pressed={l === layout}
-            >
-              {l}
-            </button>
-          ))}
-        </div>
+      {/* ── Page heading ── */}
+      <div className="graph-page__header">
+        <h1 className="graph-page__title">Knowledge Graph</h1>
 
-        <input
-          className="graph-page__search"
-          type="search"
-          placeholder="Jump to node\u2026"
-          value={search}
-          onChange={(e) => handleSearch(e.target.value)}
-          aria-label="Search nodes"
-        />
-
-        <span className="graph-page__stats" aria-label={`${nodeCount} nodes, ${edgeCount} edges`}>
-          {nodeCount} nodes \u00b7 {edgeCount} edges
-        </span>
-      </div>
-
-      {/* Graph canvas */}
-      <div className="graph-page__canvas-wrap">
-        <div ref={containerRef} className="graph-page__canvas" aria-label="Knowledge graph" />
-      </div>
-
-      {/* Selected node side panel */}
-      {selectedNode && (
-        <div className="graph-page__side-panel">
+        {/* ── Tab bar ── */}
+        <div className="graph-page__tabs" role="tablist">
           <button
-            className="graph-page__side-panel-close"
-            onClick={() => setSelectedNodeId(null)}
-            aria-label="Close note panel"
+            role="tab"
+            aria-selected={activeTab === 'wikilinks'}
+            className={`graph-page__tab${activeTab === 'wikilinks' ? ' graph-page__tab--active' : ''}`}
+            onClick={() => setActiveTab('wikilinks')}
           >
-            \u00d7
+            Wikilinks
           </button>
-          <div className="graph-page__side-panel-title">{selectedNode.title}</div>
           <button
-            className="graph-page__lightrag-btn"
-            onClick={() => handleLightRagOpen(selectedNode.id)}
-            aria-label="Open LightRAG panel"
+            role="tab"
+            aria-selected={activeTab === 'lightrag'}
+            className={`graph-page__tab${activeTab === 'lightrag' ? ' graph-page__tab--active' : ''}`}
+            onClick={() => setActiveTab('lightrag')}
           >
-            Open in LightRAG
+            LightRAG Knowledge
           </button>
         </div>
+
+        {/* ── Toolbar ── */}
+        <div className="graph-page__toolbar" role="toolbar" aria-label="Graph controls">
+          {activeTab === 'wikilinks' && (
+            <input
+              className="graph-page__search"
+              type="search"
+              placeholder="Filter nodes\u2026"
+              value={nodeFilter}
+              onChange={(e) => setNodeFilter(e.target.value)}
+              aria-label="Filter nodes"
+            />
+          )}
+          {activeTab === 'lightrag' && (
+            <input
+              className="graph-page__search"
+              type="search"
+              placeholder="Filter entities\u2026"
+              value={entityFilter}
+              onChange={(e) => setEntityFilter(e.target.value)}
+              aria-label="Filter entities"
+            />
+          )}
+          <button
+            className="graph-page__refresh-btn"
+            onClick={handleRefresh}
+            aria-label="Refresh"
+          >
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      {/* ── Wikilinks tab ── */}
+      {activeTab === 'wikilinks' && (
+        <div className="graph-page__wikilinks">
+          {nodeCount === 0 ? (
+            <div className="graph-page__empty">
+              <p>No notes in the graph yet.</p>
+              <button
+                className="graph-page__sync-btn"
+                onClick={handleSyncVault}
+                disabled={syncing}
+                aria-label="Sync Vault"
+              >
+                {syncing ? 'Syncing\u2026' : 'Sync Vault'}
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="graph-page__stats">
+                <span className="graph-page__node-badge">
+                  {nodeCount} nodes
+                </span>
+                <span className="graph-page__edge-badge">
+                  {edgeCount} edges
+                </span>
+              </div>
+              <Suspense fallback={
+                <div className="graph-page__canvas-loading">Loading graph\u2026</div>
+              }>
+                <ForceGraph2D
+                  graphData={forceGraphData}
+                  nodeLabel="name"
+                  onNodeClick={(node) => {
+                    const n = allNodes.find((x) => x.id === (node as { id: string }).id);
+                    if (n) setSelectedNode(n);
+                  }}
+                />
+              </Suspense>
+            </>
+          )}
+
+          {/* Selected node panel */}
+          {selectedNode && (
+            <div className="graph-page__side-panel">
+              <button
+                className="graph-page__side-panel-close"
+                onClick={() => setSelectedNode(null)}
+                aria-label="Close note panel"
+              >
+                \u00d7
+              </button>
+              <div className="graph-page__side-panel-title">{selectedNode.title}</div>
+            </div>
+          )}
+        </div>
       )}
 
-      {/* LightRAG panel */}
-      {lightRagOpen && lightRagNode && (
-        <LightRagNodePanel
-          entity={lightRagNode.entity}
-          relations={lightRagNode.relations}
-          notes={[]}
-          onClose={() => setLightRagOpen(false)}
-          onNavigateToNote={(noteId) => { setSelectedNodeId(noteId); setLightRagOpen(false); }}
-        />
-      )}
-      {lightRagOpen && lightRagLoading && (
-        <div className="lightrag-loading" role="status">Loading LightRAG data\u2026</div>
-      )}
-      {lightRagOpen && lightRagError && (
-        <div className="lightrag-error" role="alert">{lightRagError}</div>
+      {/* ── LightRAG Knowledge tab ── */}
+      {activeTab === 'lightrag' && (
+        <div className="graph-page__lightrag">
+          {lrLoading && (
+            <div role="status" className="graph-page__lr-loading">
+              Loading entities\u2026
+            </div>
+          )}
+          {lrError && (
+            <div role="alert" className="graph-page__lr-error">
+              LightRAG graph not available: {lrError}
+            </div>
+          )}
+          {!lrLoading && !lrError && (
+            <>
+              <p className="graph-page__lr-count">
+                {filteredEntities.length} entities
+              </p>
+              <ul className="graph-page__entity-list" aria-label="Entity list">
+                {filteredEntities.map((entity) => (
+                  <li key={entity.id} className="graph-page__entity-item">
+                    <span className="graph-page__entity-id">{entity.id}</span>
+                    {entity.label && entity.label !== entity.id && (
+                      <span className="graph-page__entity-label">{entity.label}</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              {filteredEntities.length === 0 && !entityFilter && (
+                <p className="graph-page__lr-empty">
+                  No LightRAG entities indexed yet.
+                </p>
+              )}
+            </>
+          )}
+        </div>
       )}
     </div>
   );
