@@ -1,123 +1,158 @@
+/**
+ * NoteDetailPanel.extended.test.tsx
+ * NoteDetailPanel takes a `note: Note` prop directly (not noteId).
+ * note.body is the field read by extractWikilinks (not note.content).
+ */
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
+import NoteDetailPanel from '@/components/NoteDetailPanel';
 
-const mockGetNote = vi.fn();
-const mockDeleteNote = vi.fn();
-const mockUpdateNote = vi.fn();
+const mockSummarizeNote = vi.fn();
+const mockCritiqueNote = vi.fn();
+const mockSuggestLinks = vi.fn();
+const mockIngestNote = vi.fn();
 
 vi.mock('@/services/api', () => ({
   default: {
-    getNote: (...a: unknown[]) => mockGetNote(...a),
-    deleteNote: (...a: unknown[]) => mockDeleteNote(...a),
-    updateNote: (...a: unknown[]) => mockUpdateNote(...a),
+    summarizeNote: (...a: unknown[]) => mockSummarizeNote(...a),
+    critiqueNote:  (...a: unknown[]) => mockCritiqueNote(...a),
+    suggestLinks:  (...a: unknown[]) => mockSuggestLinks(...a),
+    ingestNote:    (...a: unknown[]) => mockIngestNote(...a),
   },
 }));
 
+/** Minimal Note fixture matching the actual Note type used by NoteDetailPanel */
 const NOTE = {
   id: 'note-1',
   title: 'Detail Note',
-  content: 'Some **content** here.',
+  body: 'Some **content** here. Links to [[Alpha]] and [[Beta|Alias]].',
   tags: ['dharma', 'practice'],
+  note_type: 'standard',
+  status: 'active',
+  folder: 'Teachings',
+  word_count: 12,
   updated_at: new Date().toISOString(),
-  backlinks: [],
 };
 
-async function setup(noteId = 'note-1', extraProps: Record<string, unknown> = {}) {
-  mockGetNote.mockResolvedValue(NOTE);
-  const { default: NoteDetailPanel } = await import('@/components/NoteDetailPanel');
-  render(
+function setup(overrides: Partial<typeof NOTE> = {}, extraProps: Record<string, unknown> = {}) {
+  const note = { ...NOTE, ...overrides };
+  return render(
     <MemoryRouter>
-      <NoteDetailPanel noteId={noteId} onClose={vi.fn()} {...extraProps} />
+      <NoteDetailPanel note={note as any} onClose={vi.fn()} {...extraProps} />
     </MemoryRouter>
   );
-  await waitFor(() => expect(mockGetNote).toHaveBeenCalled());
 }
 
 describe('NoteDetailPanel extended', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('renders note title', async () => {
-    await setup();
-    await waitFor(() => screen.getByText('Detail Note'));
+  it('renders note title', () => {
+    setup();
+    expect(screen.getByText('Detail Note')).toBeTruthy();
   });
 
-  it('renders tags', async () => {
-    await setup();
-    await waitFor(() => screen.getByText('dharma'));
+  it('renders tags', () => {
+    setup();
+    expect(screen.getByText('#dharma')).toBeTruthy();
   });
 
-  it('shows loading skeleton while fetching', () => {
-    mockGetNote.mockReturnValue(new Promise(() => {}));
-    import('@/components/NoteDetailPanel').then(({ default: NoteDetailPanel }) => {
-      render(
-        <MemoryRouter>
-          <NoteDetailPanel noteId="note-1" onClose={vi.fn()} />
-        </MemoryRouter>
-      );
-    });
+  it('renders wikilink chips from body', () => {
+    setup();
+    expect(screen.getByText('Alpha')).toBeTruthy();
   });
 
-  it('handles getNote rejection', async () => {
-    mockGetNote.mockRejectedValue(new Error('not found'));
-    const { default: NoteDetailPanel } = await import('@/components/NoteDetailPanel');
-    render(
-      <MemoryRouter>
-        <NoteDetailPanel noteId="bad-id" onClose={vi.fn()} />
-      </MemoryRouter>
-    );
-    await new Promise((r) => setTimeout(r, 80));
+  it('renders wikilink alias correctly', () => {
+    setup();
+    expect(screen.getByText('Alias')).toBeTruthy();
   });
 
-  it('calls onClose when close button is clicked', async () => {
+  it('renders note with no tags without crashing', () => {
+    setup({ tags: [] });
+    expect(screen.getByText('Detail Note')).toBeTruthy();
+  });
+
+  it('renders note with no wikilinks without crashing', () => {
+    setup({ body: 'Plain body text, no links.' });
+    expect(screen.getByText('Detail Note')).toBeTruthy();
+  });
+
+  it('calls onClose when close button is clicked', () => {
     const onClose = vi.fn();
-    mockGetNote.mockResolvedValue(NOTE);
-    const { default: NoteDetailPanel } = await import('@/components/NoteDetailPanel');
     render(
       <MemoryRouter>
-        <NoteDetailPanel noteId="note-1" onClose={onClose} />
+        <NoteDetailPanel note={NOTE as any} onClose={onClose} />
       </MemoryRouter>
     );
-    await waitFor(() => screen.getByText('Detail Note'));
-    const closeBtn = screen.queryByRole('button', { name: /close/i });
-    if (closeBtn) {
-      fireEvent.click(closeBtn);
-      expect(onClose).toHaveBeenCalled();
-    }
+    const closeBtn = screen.getByTitle('Close panel');
+    fireEvent.click(closeBtn);
+    expect(onClose).toHaveBeenCalled();
   });
 
-  it('delete button triggers deleteNote', async () => {
-    mockGetNote.mockResolvedValue(NOTE);
-    mockDeleteNote.mockResolvedValue({});
-    const { default: NoteDetailPanel } = await import('@/components/NoteDetailPanel');
-    render(
-      <MemoryRouter>
-        <NoteDetailPanel noteId="note-1" onClose={vi.fn()} />
-      </MemoryRouter>
-    );
-    await waitFor(() => screen.getByText('Detail Note'));
-    const deleteBtn = screen.queryByRole('button', { name: /delete/i });
-    if (deleteBtn) {
-      fireEvent.click(deleteBtn);
-      const confirmBtn = screen.queryByRole('button', { name: /confirm|yes|delete/i });
-      if (confirmBtn) {
-        fireEvent.click(confirmBtn);
-        await waitFor(() => expect(mockDeleteNote).toHaveBeenCalled());
-      }
-    }
+  it('edit button is present with correct title', () => {
+    setup();
+    expect(screen.getByTitle('Edit note')).toBeTruthy();
   });
 
-  it('edit button navigates or opens edit mode', async () => {
-    mockGetNote.mockResolvedValue(NOTE);
-    const { default: NoteDetailPanel } = await import('@/components/NoteDetailPanel');
+  it('summarize button triggers summarizeNote API call', async () => {
+    mockSummarizeNote.mockResolvedValue({ summary: 'A nice summary.' });
+    setup();
+    fireEvent.click(screen.getByText('Summarize'));
+    await waitFor(() => expect(mockSummarizeNote).toHaveBeenCalledWith('note-1'));
+    await waitFor(() => expect(screen.getByText('A nice summary.')).toBeTruthy());
+  });
+
+  it('critique button triggers critiqueNote API call', async () => {
+    mockCritiqueNote.mockResolvedValue({
+      overall: 'Good note.',
+      strengths: ['Clear'],
+      weaknesses: [],
+      suggestions: [],
+    });
+    setup();
+    fireEvent.click(screen.getByText('Critique'));
+    await waitFor(() => expect(mockCritiqueNote).toHaveBeenCalledWith('note-1'));
+  });
+
+  it('suggest links button triggers suggestLinks API call', async () => {
+    mockSuggestLinks.mockResolvedValue({ suggestions: [{ title: 'Dharma', reason: 'Related' }] });
+    setup();
+    fireEvent.click(screen.getByText('Suggest Links'));
+    await waitFor(() => expect(mockSuggestLinks).toHaveBeenCalledWith('note-1'));
+  });
+
+  it('ingest button triggers ingestNote API call', async () => {
+    mockIngestNote.mockResolvedValue({});
+    setup();
+    fireEvent.click(screen.getByText('Ingest'));
+    await waitFor(() => expect(mockIngestNote).toHaveBeenCalledWith('note-1'));
+  });
+
+  it('action error state shows error message', async () => {
+    mockSummarizeNote.mockRejectedValue(new Error('fail'));
+    setup();
+    fireEvent.click(screen.getByText('Summarize'));
+    await waitFor(() => expect(screen.getByText(/error occurred/i)).toBeTruthy());
+  });
+
+  it('result dismiss button clears result', async () => {
+    mockSummarizeNote.mockResolvedValue({ summary: 'Summary text.' });
+    setup();
+    fireEvent.click(screen.getByText('Summarize'));
+    await waitFor(() => screen.getByText('Summary text.'));
+    fireEvent.click(screen.getByText('\u00d7'));
+    expect(screen.queryByText('Summary text.')).toBeNull();
+  });
+
+  it('onWikilinkClick fires when chip is clicked', () => {
+    const onWikilinkClick = vi.fn();
     render(
       <MemoryRouter>
-        <NoteDetailPanel noteId="note-1" onClose={vi.fn()} />
+        <NoteDetailPanel note={NOTE as any} onClose={vi.fn()} onWikilinkClick={onWikilinkClick} />
       </MemoryRouter>
     );
-    await waitFor(() => screen.getByText('Detail Note'));
-    const editBtn = screen.queryByRole('button', { name: /edit/i });
-    if (editBtn) fireEvent.click(editBtn);
+    fireEvent.click(screen.getByText('Alpha'));
+    expect(onWikilinkClick).toHaveBeenCalledWith('Alpha');
   });
 });

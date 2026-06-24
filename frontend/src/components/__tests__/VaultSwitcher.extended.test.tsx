@@ -5,6 +5,8 @@
  * - Outside mousedown closes dropdown (178-182)
  * - Escape key closes dropdown (265-267)
  * - ActiveVaultBanner rendered/hidden/reset (333-356)
+ *
+ * NOTE: the store action is `switchVault(ownerId, label)` not setActiveVault.
  */
 import React from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
@@ -76,8 +78,9 @@ describe('VaultSwitcher — Escape key closes dropdown (lines 265-267)', () => {
 
 describe('VaultSwitcher — ActiveVaultBanner (lines 333-356)', () => {
   it('renders banner when viewing a shared vault', async () => {
+    // The store action is switchVault(ownerId, label), not setActiveVault
     await act(async () => {
-      useVaultStore.getState().setActiveVault(9, "Alice's Vault");
+      useVaultStore.getState().switchVault(9, "Alice's Vault");
     });
     await renderSwitcher();
     expect(screen.getByRole('status')).toBeInTheDocument();
@@ -86,7 +89,7 @@ describe('VaultSwitcher — ActiveVaultBanner (lines 333-356)', () => {
 
   it('shows "Return to my vault" button in banner', async () => {
     await act(async () => {
-      useVaultStore.getState().setActiveVault(9, "Alice's Vault");
+      useVaultStore.getState().switchVault(9, "Alice's Vault");
     });
     await renderSwitcher();
     expect(screen.getByRole('button', { name: /return to my vault/i })).toBeInTheDocument();
@@ -94,7 +97,7 @@ describe('VaultSwitcher — ActiveVaultBanner (lines 333-356)', () => {
 
   it('clicking Return resets vault to own', async () => {
     await act(async () => {
-      useVaultStore.getState().setActiveVault(9, "Alice's Vault");
+      useVaultStore.getState().switchVault(9, "Alice's Vault");
     });
     await renderSwitcher();
     fireEvent.click(screen.getByRole('button', { name: /return to my vault/i }));

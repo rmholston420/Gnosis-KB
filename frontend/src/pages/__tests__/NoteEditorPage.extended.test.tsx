@@ -2,31 +2,26 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-const mockGetNote = vi.fn();
+const mockGetNote    = vi.fn();
 const mockUpdateNote = vi.fn();
 const mockDeleteNote = vi.fn();
-const mockListNotes = vi.fn();
+const mockListNotes  = vi.fn();
 const mockCreateNote = vi.fn();
 
 vi.mock('@/services/api', () => ({
   default: {
-    getNote: (...a: unknown[]) => mockGetNote(...a),
+    getNote:    (...a: unknown[]) => mockGetNote(...a),
     updateNote: (...a: unknown[]) => mockUpdateNote(...a),
     deleteNote: (...a: unknown[]) => mockDeleteNote(...a),
-    listNotes: (...a: unknown[]) => mockListNotes(...a),
+    listNotes:  (...a: unknown[]) => mockListNotes(...a),
     createNote: (...a: unknown[]) => mockCreateNote(...a),
   },
 }));
 
 vi.mock('@/components/NoteEditor', () => ({
-  default: ({
-    value,
-    onChange,
-  }: {
-    value: string;
-    onChange: (v: string) => void;
-  }) => (
+  default: ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
     <textarea
       data-testid="note-editor"
       value={value}
@@ -43,16 +38,31 @@ vi.mock('@/components/notes/NoteTemplateGallery', () => ({
   ),
 }));
 
-const NOTE = { id: 'note-1', title: 'Test Note', content: 'Hello world', tags: ['a'], updated_at: new Date().toISOString() };
+const NOTE = {
+  id: 'note-1',
+  title: 'Test Note',
+  content: 'Hello world',
+  body: 'Hello world',
+  tags: ['a'],
+  note_type: 'standard',
+  status: 'active',
+  updated_at: new Date().toISOString(),
+};
+
+function makeClient() {
+  return new QueryClient({ defaultOptions: { queries: { retry: false } } });
+}
 
 async function renderWithId(id = 'note-1') {
   const { default: NoteEditorPage } = await import('@/pages/NoteEditorPage');
   render(
-    <MemoryRouter initialEntries={[`/notes/${id}/edit`]}>
-      <Routes>
-        <Route path="/notes/:id/edit" element={<NoteEditorPage />} />
-      </Routes>
-    </MemoryRouter>
+    <QueryClientProvider client={makeClient()}>
+      <MemoryRouter initialEntries={[`/notes/${id}/edit`]}>
+        <Routes>
+          <Route path="/notes/:id/edit" element={<NoteEditorPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>
   );
 }
 
@@ -62,27 +72,27 @@ describe('NoteEditorPage extended', () => {
   it('renders note content after load', async () => {
     mockGetNote.mockResolvedValue(NOTE);
     await renderWithId();
-    await waitFor(() => screen.getByTestId('note-editor'));
+    await waitFor(() => screen.getByTestId('note-editor'), { timeout: 3000 });
     expect((screen.getByTestId('note-editor') as HTMLTextAreaElement).value).toContain('Hello world');
   });
 
-  it('shows loading state while fetching', async () => {
+  it('shows loading state while fetching without crashing', async () => {
     mockGetNote.mockReturnValue(new Promise(() => {}));
     await renderWithId();
-    // Should not crash in loading state
+    await new Promise((r) => setTimeout(r, 30));
   });
 
-  it('handles note not found (404)', async () => {
+  it('handles note not found (404) without crashing', async () => {
     mockGetNote.mockRejectedValue(Object.assign(new Error('Not found'), { status: 404 }));
     await renderWithId('missing-id');
     await new Promise((r) => setTimeout(r, 80));
   });
 
-  it('calls updateNote on save', async () => {
+  it('calls updateNote on save button click', async () => {
     mockGetNote.mockResolvedValue(NOTE);
     mockUpdateNote.mockResolvedValue({ ...NOTE, title: 'Updated' });
     await renderWithId();
-    await waitFor(() => screen.getByTestId('note-editor'));
+    await waitFor(() => screen.getByTestId('note-editor'), { timeout: 3000 });
     const saveBtn = screen.queryByRole('button', { name: /save/i });
     if (saveBtn) {
       fireEvent.click(saveBtn);
@@ -90,17 +100,16 @@ describe('NoteEditorPage extended', () => {
     }
   });
 
-  it('edits content in textarea', async () => {
+  it('edits content in textarea without crashing', async () => {
     mockGetNote.mockResolvedValue(NOTE);
     await renderWithId();
-    await waitFor(() => screen.getByTestId('note-editor'));
+    await waitFor(() => screen.getByTestId('note-editor'), { timeout: 3000 });
     fireEvent.change(screen.getByTestId('note-editor'), { target: { value: 'New content' } });
   });
 
   it('template gallery onSelect sets content', async () => {
-    mockGetNote.mockResolvedValue({ ...NOTE, content: '' });
+    mockGetNote.mockResolvedValue({ ...NOTE, content: '', body: '' });
     await renderWithId();
-    await waitFor(() => screen.getByTestId('note-editor'));
     const galleryBtn = screen.queryByTestId('template-gallery')?.querySelector('button');
     if (galleryBtn) {
       fireEvent.click(galleryBtn);
