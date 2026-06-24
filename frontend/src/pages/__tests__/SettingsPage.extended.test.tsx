@@ -2,9 +2,9 @@
  * SettingsPage.extended.test.tsx
  * Targets uncovered lines:
  *   92-93   — model save success toast / state reset
- *   120     — syncObsidian success message
+ *   120     — syncObsidian success (mockSyncObsidian called; no visible text rendered on success path)
  *   260     — exportVault error message
- *   262     — syncObsidian error message
+ *   262     — syncObsidian error renders "Error" in section header status
  */
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
@@ -108,15 +108,12 @@ describe('SettingsPage — model save (lines 92-93)', () => {
       fireEvent.change(select, { target: { value: 'gpt-4o' } });
       await waitFor(() => {
         const btn = screen.queryByRole('button', { name: /Save model/i });
-        if (btn) {
-          fireEvent.click(btn);
-        }
+        if (btn) fireEvent.click(btn);
       });
       await waitFor(() => expect(mockSetModel).toHaveBeenCalledWith('gpt-4o'));
-      // After success, save button should either disappear or become disabled
+      // After success the save button is disabled (model matches savedModel)
       await new Promise((r) => setTimeout(r, 100));
       const btn = screen.queryByRole('button', { name: /Save model/i });
-      // btn may be gone or disabled — either is acceptable
       if (btn) expect((btn as HTMLButtonElement).disabled).toBe(true);
     }
   });
@@ -125,17 +122,20 @@ describe('SettingsPage — model save (lines 92-93)', () => {
 describe('SettingsPage — sync success (line 120)', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('shows Synced! after successful syncObsidian', async () => {
+  /**
+   * handleSync() resolves → setSyncStatus('idle') → no visible success text
+   * is rendered. The correct assertion is that the API was called and the
+   * component does not crash (syncStatus stays 'idle', button re-enables).
+   */
+  it('calls syncObsidian and re-enables Sync Now button after success', async () => {
     mockSyncObsidian.mockResolvedValue(undefined);
     renderPage();
     await waitFor(() => screen.getByRole('button', { name: /Sync Now/i }));
     fireEvent.click(screen.getByRole('button', { name: /Sync Now/i }));
-    await waitFor(() =>
-      expect(
-        screen.queryByText(/Synced!/i) ??
-        screen.queryByText(/Sync complete/i) ??
-        screen.queryByText(/success/i)
-      ).toBeTruthy(),
+    await waitFor(() => expect(mockSyncObsidian).toHaveBeenCalled(), { timeout: 3000 });
+    // Button should re-enable after promise resolves
+    await waitFor(
+      () => expect((screen.getByRole('button', { name: /Sync Now/i }) as HTMLButtonElement).disabled).toBe(false),
       { timeout: 3000 }
     );
   });
@@ -150,6 +150,7 @@ describe('SettingsPage — export error (line 260)', () => {
     await waitFor(() => screen.getByRole('button', { name: /Export Vault/i }));
     fireEvent.click(screen.getByRole('button', { name: /Export Vault/i }));
     await waitFor(() =>
+      // SettingsPage renders setExportError('Export failed. Try again.')
       expect(screen.getByText(/Export failed/i)).toBeTruthy(),
       { timeout: 3000 }
     );
@@ -159,13 +160,17 @@ describe('SettingsPage — export error (line 260)', () => {
 describe('SettingsPage — sync error (line 262)', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('shows sync error message when syncObsidian rejects', async () => {
+  /**
+   * handleSync() catch sets syncStatus('error').
+   * The section header status renders: <span>Error</span>  (not "Sync failed").
+   */
+  it('shows Error status when syncObsidian rejects', async () => {
     mockSyncObsidian.mockRejectedValue(new Error('sync failed'));
     renderPage();
     await waitFor(() => screen.getByRole('button', { name: /Sync Now/i }));
     fireEvent.click(screen.getByRole('button', { name: /Sync Now/i }));
     await waitFor(() =>
-      expect(screen.getByText(/Sync failed/i)).toBeTruthy(),
+      expect(screen.getByText(/^Error$/i)).toBeTruthy(),
       { timeout: 3000 }
     );
   });

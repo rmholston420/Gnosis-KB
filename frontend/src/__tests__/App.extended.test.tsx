@@ -9,6 +9,15 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 
+// ---- Hoist mock variables so vi.mock factories can reference them ----------
+const { mockToast } = vi.hoisted(() => {
+  const mockToast = Object.assign(vi.fn(), {
+    success: vi.fn(),
+    dismiss: vi.fn(),
+  });
+  return { mockToast };
+});
+
 // ---- Stub registerSW to capture callbacks ---------------------------------
 let capturedOnNeedRefresh: (() => void) | undefined;
 let capturedOnOfflineReady: (() => void) | undefined;
@@ -22,13 +31,10 @@ vi.mock('@/registerSW', () => ({
 }));
 
 // ---- Stub react-hot-toast --------------------------------------------------
-const mockToast = vi.fn();
-mockToast.success = vi.fn();
-mockToast.dismiss = vi.fn();
 vi.mock('react-hot-toast', () => ({
-  default: Object.assign(mockToast, { success: mockToast.success, dismiss: mockToast.dismiss }),
+  default: mockToast,
   Toaster: () => null,
-  toast: Object.assign(mockToast, { success: mockToast.success, dismiss: mockToast.dismiss }),
+  toast: mockToast,
 }));
 
 // ---- Stub all page components so lazy imports resolve instantly -----------
@@ -57,7 +63,6 @@ describe('App — registerSW callbacks (lines 27-41)', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('onNeedRefresh fires a toast with a Reload now message', async () => {
-    // Import App to trigger registerSW at module level
     await import('@/App');
     if (capturedOnNeedRefresh) {
       capturedOnNeedRefresh();
