@@ -19,7 +19,6 @@ const BASE =
 
 let _activeVaultPath: string | null = null;
 
-/** Call this when the active vault path changes (e.g. after vault selection). */
 export function setActiveVaultPath(path: string | null): void {
   _activeVaultPath = path;
 }
@@ -30,15 +29,13 @@ function authHeaders(): Record<string, string> {
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
   try {
-    // VaultState uses activeVaultOwnerId (not activeVaultPath).
-    // We derive an owner-id header instead of a path header here.
     const ownerId = useVaultStore.getState().activeVaultOwnerId;
     if (_activeVaultPath) headers['X-Vault-Path'] = _activeVaultPath;
     if (ownerId !== null && ownerId !== undefined) {
       headers['X-Vault-Owner-Id'] = String(ownerId);
     }
   } catch {
-    // useVaultStore unavailable outside React tree — skip
+    // skip outside React tree
   }
   return headers;
 }
@@ -66,16 +63,12 @@ async function request<T>(
   return res.json() as Promise<T>;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 const api = {
+  get:  <T>(path: string)                => request<T>('GET', path),
+  post: <T>(path: string, body?: unknown) => request<T>('POST', path, body),
+  put:  <T>(path: string, body?: unknown) => request<T>('PUT', path, body),
+  del:  <T>(path: string)                => request<T>('DELETE', path),
 
-  // Generic typed helpers (used by pages that need raw post/get)
-  get:  <T>(path: string)                   => request<T>('GET',  path),
-  post: <T>(path: string, body?: unknown)    => request<T>('POST', path, body),
-  put:  <T>(path: string, body?: unknown)    => request<T>('PUT',  path, body),
-  del:  <T>(path: string)                   => request<T>('DELETE', path),
-
-  // ── Notes ────────────────────────────────────────────────────────
   listNotes(params: Record<string, unknown> = {}) {
     const qs = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) {
@@ -117,13 +110,11 @@ const api = {
     return request<{ job_id: string }>('POST', '/notes/ingest', { path });
   },
 
-  // ── Daily note ──────────────────────────────────────────────────
   getDailyNote(dateStr?: string) {
     const path = dateStr ? `/notes/daily?date=${dateStr}` : '/notes/daily';
     return request<unknown>('GET', path);
   },
 
-  // ── Ingest ──────────────────────────────────────────────────────
   ingestFile(payload: { file_path: string; note_type?: string }) {
     return request<{ job_id: string }>('POST', '/ingest/file', payload);
   },
@@ -132,7 +123,6 @@ const api = {
     return request<{ job_id: string }>('POST', '/ingest/url', payload);
   },
 
-  // ── Graph ────────────────────────────────────────────────────────
   getGraph() {
     return request<unknown>('GET', '/graph');
   },
@@ -154,7 +144,6 @@ const api = {
     return request<unknown>('GET', '/graph/full');
   },
 
-  // ── Search ───────────────────────────────────────────────────────
   search(
     q: string,
     mode: 'hybrid' | 'semantic' | 'fulltext' | 'keyword' = 'hybrid',
@@ -164,13 +153,12 @@ const api = {
     return request<unknown[]>('GET', `/search?${qs.toString()}`);
   },
 
-  // ── AI / LLM ────────────────────────────────────────────────────
   chat(
-    query: string,
+    message: string,
     mode: 'hybrid' | 'local' | 'global' = 'hybrid',
     sessionId?: string,
   ) {
-    return request<unknown>('POST', '/ai/chat', { query, mode, session_id: sessionId });
+    return request<unknown>('POST', '/ai/chat', { message, mode, session_id: sessionId });
   },
 
   streamQuery(
@@ -182,7 +170,7 @@ const api = {
     const url = `${BASE}/ai/stream?${qs.toString()}`;
     const es = new EventSource(url);
     if (onChunk) {
-      es.addEventListener('message', (e) => onChunk(e.data));
+      es.addEventListener('message', (e) => onChunk((e as MessageEvent).data));
     }
     if (onDone) {
       es.addEventListener('done', () => { onDone(); es.close(); });
@@ -206,22 +194,15 @@ const api = {
     return request<unknown[]>('POST', `/ai/suggest-tags/${noteId}`, {});
   },
 
-  // ── Vault sync ─────────────────────────────────────────────────
   triggerVaultSync() {
     return request<void>('POST', '/vault/sync', {});
   },
 
-  // ── Backlinks ──────────────────────────────────────────────────
   getBacklinks(noteId: string) {
     return request<unknown>('GET', `/notes/${noteId}/backlinks`);
   },
-
 };
 
 export default api;
-
-// Named exports used by pages that import directly from services/api
 export const { triggerVaultSync } = api;
-
-// Re-export type so GraphPage and tests can import it from here
 export type { GraphEntitySummary } from '../types';

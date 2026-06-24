@@ -32,7 +32,6 @@ export default function SearchPage() {
     setSubmitted(query);
   };
 
-  // Fetch results for non-semantic modes
   const { data, isLoading, isError } = useSearch(
     mode !== 'semantic' ? submitted : '',
     mode !== 'semantic' ? mode : 'hybrid',
@@ -42,28 +41,31 @@ export default function SearchPage() {
     <div className="max-w-3xl mx-auto px-4 py-8">
       <h1 className="text-xl font-semibold text-gnosis-fg mb-6">Search</h1>
 
-      {/* Search bar */}
-      <form onSubmit={handleSearch} className="flex gap-2 mb-4">
-        <input
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search your vault\u2026"
-          className="flex-1 rounded-lg border border-gnosis-border bg-gnosis-surface px-3 py-2 text-sm text-gnosis-fg placeholder:text-gnosis-muted focus:outline-none focus:ring-2 focus:ring-gnosis-accent"
-        />
-        <button
-          type="submit"
-          className="px-4 py-2 rounded-lg bg-gnosis-accent text-white text-sm font-medium hover:opacity-90 transition-opacity"
-        >
-          Search
-        </button>
-      </form>
+      {mode !== 'semantic' && (
+        <form onSubmit={handleSearch} className="flex gap-2 mb-4">
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search your vault\u2026"
+            className="flex-1 rounded-lg border border-gnosis-border bg-gnosis-surface px-3 py-2 text-sm text-gnosis-fg placeholder:text-gnosis-muted focus:outline-none focus:ring-2 focus:ring-gnosis-accent"
+          />
+          <button
+            type="submit"
+            className="px-4 py-2 rounded-lg bg-gnosis-accent text-white text-sm font-medium hover:opacity-90 transition-opacity"
+          >
+            Search
+          </button>
+        </form>
+      )}
 
-      {/* Mode tabs */}
-      <div className="flex gap-1 mb-6">
+      <div className="flex gap-1 mb-6" role="tablist" aria-label="Search modes">
         {MODES.map(({ value, label }) => (
           <button
             key={value}
+            type="button"
+            role="tab"
+            aria-selected={mode === value}
             onClick={() => setMode(value)}
             className={[
               'px-3 py-1 rounded-md text-xs font-medium transition-colors',
@@ -77,9 +79,7 @@ export default function SearchPage() {
         ))}
       </div>
 
-      {/* Results */}
-      {submitted && mode === 'semantic' ? (
-        // SemanticSearch owns its own query input; seedNoteId is optional
+      {mode === 'semantic' ? (
         <SemanticSearch />
       ) : submitted ? (
         <SearchResults
