@@ -124,7 +124,176 @@ export default function NoteDetailPanel({
           const res = (await api.summarizeNote(note.id)) as { summary: string };
           content = res.summary;
         } else if (type === 'critique') {
-          // Critique returns a complex object — flatten to readable text
-          const res = (await api.critiqueNote(note.id)) as Record<string, unknown>;
-          const overall = (res as { overall?: string }).overall ?? '';
-          const raw = (res as {
+          // Critique returns a structured object — flatten to readable text
+          const res = (await api.critiqueNote(note.id)) as {
+            overall?: string;
+            strengths?: string[];
+            weaknesses?: string[];
+            suggestions?: string[];
+          };
+          const sections: string[] = [];
+          if (res.overall)    sections.push(res.overall);
+          if (res.strengths?.length)  sections.push(`**Strengths**\n${res.strengths.map((s) => `- ${s}`).join('\n')}`);
+          if (res.weaknesses?.length) sections.push(`**Weaknesses**\n${res.weaknesses.map((s) => `- ${s}`).join('\n')}`);
+          if (res.suggestions?.length) sections.push(`**Suggestions**\n${res.suggestions.map((s) => `- ${s}`).join('\n')}`);
+          content = sections.join('\n\n') || 'No critique returned.';
+        } else if (type === 'links') {
+          const res = (await api.suggestLinks(note.id)) as { suggestions: Array<{ title: string; reason: string }> };
+          content = (res.suggestions ?? []).length
+            ? res.suggestions.map((s) => `**[[${s.title}]]** — ${s.reason}`).join('\n\n')
+            : 'No link suggestions found.';
+        } else if (type === 'ingest') {
+          await api.ingestNote(note.id);
+          content = 'Note successfully ingested into the knowledge graph.';
+        }
+        setResult({ type, content });
+        setActionState('done');
+      } catch (err) {
+        console.error('NoteDetailPanel action failed:', err);
+        setResult({ type, content: 'An error occurred. Please try again.' });
+        setActionState('error');
+      }
+    },
+    [note.id]
+  );
+
+  const actionLabel: Record<ActionResult['type'], string> = {
+    summary: 'Summary',
+    critique: 'Critique',
+    links: 'Suggested Links',
+    ingest: 'Ingest Status',
+  };
+
+  return (
+    <div className="flex h-full flex-col bg-bg-secondary text-text-primary">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-2 border-b border-border-default px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <h2 className="truncate text-sm font-semibold leading-snug">{note.title}</h2>
+          {note.folder && (
+            <p className="mt-0.5 truncate text-xs text-text-muted">{note.folder}</p>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            onClick={() => navigate(`/notes/${note.id}`)}
+            className="rounded p-1.5 text-text-muted hover:bg-bg-tertiary hover:text-text-primary transition-colors"
+            title="Edit note"
+          >
+            <Edit3 size={14} />
+          </button>
+          <button
+            onClick={onClose}
+            className="rounded p-1.5 text-text-muted hover:bg-bg-tertiary hover:text-text-primary transition-colors"
+            title="Close panel"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      </div>
+
+      {/* Tags */}
+      {note.tags && note.tags.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 border-b border-border-default px-4 py-2">
+          {note.tags.map((tag) => (
+            <span
+              key={tag}
+              className="rounded-full bg-bg-tertiary px-2 py-0.5 text-xs text-text-muted"
+            >
+              #{tag}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Wikilinks chip row */}
+      {wikilinks.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 border-b border-border-default px-4 py-2">
+          {wikilinks.map((title) => (
+            <button
+              key={title}
+              onClick={() => onWikilinkClick?.(title)}
+              className="inline-flex items-center gap-0.5 rounded bg-accent-blue/10 px-1.5 py-0.5 text-xs font-medium text-accent-blue hover:bg-accent-blue/20 transition-colors border border-accent-blue/20"
+            >
+              <Link2 size={9} />
+              {title}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Body */}
+      <div className="flex-1 overflow-y-auto px-4 py-3">
+        <MarkdownWithWikilinks body={note.body} onWikilinkClick={onWikilinkClick} />
+      </div>
+
+      {/* Action result */}
+      {result && (
+        <div className="border-t border-border-default px-4 py-3">
+          <p className="mb-1 text-xs font-semibold text-text-muted">
+            {actionLabel[result.type]}
+          </p>
+          <div className="prose prose-sm prose-invert max-w-none text-text-secondary">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{result.content}</ReactMarkdown>
+          </div>
+        </div>
+      )}
+
+      {/* Action buttons */}
+      <div className="border-t border-border-default px-3 py-2">
+        <div className="flex flex-wrap gap-1.5">
+          <ActionButton
+            icon={<FileText size={12} />}
+            label="Summarize"
+            loading={actionState === 'loading' && result?.type === 'summary'}
+            onClick={() => runAction('summary')}
+          />
+          <ActionButton
+            icon={<Cpu size={12} />}
+            label="Critique"
+            loading={actionState === 'loading' && result?.type === 'critique'}
+            onClick={() => runAction('critique')}
+          />
+          <ActionButton
+            icon={<Link2 size={12} />}
+            label="Suggest Links"
+            loading={actionState === 'loading' && result?.type === 'links'}
+            onClick={() => runAction('links')}
+          />
+          <ActionButton
+            icon={<Share2 size={12} />}
+            label="Ingest"
+            loading={actionState === 'loading' && result?.type === 'ingest'}
+            onClick={() => runAction('ingest')}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Small reusable action button
+// ---------------------------------------------------------------------------
+function ActionButton({
+  icon,
+  label,
+  loading,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  loading: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={loading}
+      className="inline-flex items-center gap-1 rounded bg-bg-tertiary px-2.5 py-1 text-xs font-medium text-text-secondary hover:bg-bg-elevated hover:text-text-primary transition-colors disabled:opacity-50"
+    >
+      {loading ? <Loader2 size={12} className="animate-spin" /> : icon}
+      {label}
+    </button>
+  );
+}
