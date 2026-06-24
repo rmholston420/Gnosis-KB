@@ -41,8 +41,8 @@ vi.mock('react-force-graph-2d', () => ({
     onNodeHover?: (node: unknown) => void;
   }) => {
     React.useEffect(() => {
-      (window as Record<string, unknown>).__fgOnNodeClick = onNodeClick;
-      (window as Record<string, unknown>).__fgOnNodeHover = onNodeHover;
+      ((window as unknown) as Record<string, unknown>).__fgOnNodeClick = onNodeClick;
+      ((window as unknown) as Record<string, unknown>).__fgOnNodeHover = onNodeHover;
     });
     return React.createElement('div', { 'data-testid': 'force-graph' });
   }),
@@ -132,10 +132,10 @@ describe('GraphPage — node click side panel', () => {
   it('shows side panel after node click', async () => {
     wrap();
     await waitFor(() =>
-      (window as Record<string, unknown>).__fgOnNodeClick ||
+      (window as unknown as Record<string, unknown>).__fgOnNodeClick ||
       document.querySelector('.graph-page__canvas')
     );
-    const onNodeClick = (window as Record<string, unknown>).__fgOnNodeClick as ((n: unknown) => void) | undefined;
+    const onNodeClick = (window as unknown as Record<string, unknown>).__fgOnNodeClick as ((n: unknown) => void) | undefined;
     if (onNodeClick) {
       act(() => { onNodeClick(GRAPH_DATA.nodes[0]); });
       await waitFor(() =>
