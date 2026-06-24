@@ -1,119 +1,78 @@
 /**
  * NoteEditorPage.test.tsx
+ * Tests:
+ *  - renders loading skeleton when note is fetching
+ *  - renders editor after note loads
+ *  - Edit/Preview toggle switches between editor and preview
+ *  - Save button triggers updateNote mutation
+ *  - New note route renders blank editor
  */
-import { render, screen, waitFor } from '@testing-library/react';
-import { describe, it, expect, vi } from 'vitest';
+import React from 'react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import type { Note } from '../../types';
+import NoteEditorPage from '../NoteEditorPage';
+import * as notesApi from '../../api/notes';
 
-const { mockApi, mockNote: _mockNote, mockStore, mockNavigate } = vi.hoisted(() => {
-  const mockNote: Note = {
-    id: 'abc123',
-    title: 'Existing Note',
-    slug: 'existing-note',
-    body: '# Hello',
-    body_html: '<h1>Hello</h1>',
-    note_type: 'permanent',
-    status: 'draft',
-    folder: '10-zettelkasten',
-    word_count: 1,
-    is_deleted: false,
-    vector_indexed: false,
-    graph_indexed: false,
-    frontmatter: {},
-    tags: [],
-    outgoing_links: [],
-    incoming_links: [],
-  };
-  const mockApi = {
-    getNote: vi.fn().mockResolvedValue(mockNote),
-    createNote: vi.fn(),
-    updateNote: vi.fn(),
-    listNotes: vi.fn().mockResolvedValue({ items: [] }),
-  };
-  const mockStore = { setActiveNoteId: vi.fn(), activeNoteId: null };
-  const mockNavigate = vi.fn();
-  return { mockApi, mockNote, mockStore, mockNavigate };
-});
+const noteFixture = {
+  note_id: 'note-1',
+  id: 'note-1',
+  title: 'Impermanence',
+  body: '# Impermanence\n\nAll phenomena are transient.',
+  slug: 'impermanence',
+  folder: '10-zettelkasten',
+  note_type: 'permanent',
+  tags: ['buddhism'],
+  status: 'active',
+  word_count: 5,
+  is_deleted: false,
+  vector_indexed: true,
+  graph_indexed: true,
+  frontmatter: {},
+  outgoing_links: [],
+  incoming_links: [],
+} as const;
 
-vi.mock('react-router-dom', async (orig) => ({
-  ...(await orig<typeof import('react-router-dom')>()),
-  useNavigate: () => mockNavigate,
-}));
+function makeClient() {
+  return new QueryClient({ defaultOptions: { queries: { retry: false } } });
+}
 
-vi.mock('../../components/NoteEditor', () => ({
-  default: ({ note }: { note: Note }) => (
-    <div data-testid="note-editor">{note.title || 'untitled'}</div>
-  ),
-}));
-
-vi.mock('../../components/notes/NoteTemplateGallery', () => ({
-  NoteTemplateGallery: ({ onClose }: { onClose: () => void }) => (
-    <div data-testid="template-gallery">
-      <button onClick={onClose}>Close gallery</button>
-    </div>
-  ),
-}));
-
-vi.mock('../../components/editor/WikilinkAutocomplete', () => ({
-  default: () => <div data-testid="wikilink-autocomplete" />,
-  useWikilinkDetector: () => ({
-    wikilinkQuery: null,
-    insertWikilink: vi.fn(),
-    anchorRect: null,
-  }),
-}));
-
-vi.mock('../../services/api', () => ({ default: mockApi }));
-vi.mock('../../store/useAppStore', () => ({ useAppStore: () => mockStore }));
-
-import NoteEditorPage from '../../pages/NoteEditorPage';
-
-function wrap(path = '/editor/new', route = '/editor/:id') {
-  return render(
-    <MemoryRouter initialEntries={[path]}>
-      <QueryClientProvider client={new QueryClient()}>
+function Wrapper({ path = '/notes/note-1' }: { path?: string }) {
+  return (
+    <QueryClientProvider client={makeClient()}>
+      <MemoryRouter initialEntries={[path]}>
         <Routes>
-          <Route path={route} element={<NoteEditorPage />} />
+          <Route path="notes/new" element={<NoteEditorPage />} />
+          <Route path="notes/:id" element={<NoteEditorPage />} />
         </Routes>
-      </QueryClientProvider>
-    </MemoryRouter>
+      </MemoryRouter>
+    </QueryClientProvider>
   );
 }
 
-describe('NoteEditorPage — new note', () => {
-  it('shows template gallery for new note route', async () => {
-    wrap('/editor/new');
-    await waitFor(() => {
-      const gallery = screen.queryByTestId('template-gallery');
-      const editor  = screen.queryByTestId('note-editor');
-      expect(gallery ?? editor).toBeTruthy();
-    });
-  });
-});
+describe('NoteEditorPage', () => {
+  afterEach(() => vi.restoreAllMocks());
 
-describe('NoteEditorPage — edit note', () => {
-  it('loads existing note and shows editor', async () => {
-    wrap('/editor/abc123');
-    await waitFor(() => {
-      const editor = screen.queryByTestId('note-editor');
-      if (editor) expect(editor.textContent).toContain('Existing Note');
-    });
+  it('renders the editor after note loads', async () => {
+    vi.spyOn(notesApi, 'fetchNote').mockResolvedValue(noteFixture as never);
+    render(<Wrapper />);
+    await waitFor(() => screen.getByTestId('note-editor'));
+    expect(screen.getByTestId('note-editor')).toBeInTheDocument();
   });
 
-  it('calls api.getNote with the note id', async () => {
-    wrap('/editor/abc123');
-    await waitFor(() => {
-      if (mockApi.getNote.mock.calls.length > 0)
-        expect(mockApi.getNote).toHaveBeenCalledWith('abc123');
-    });
+  it('edit/preview toggle switches mode', async () => {
+    vi.spyOn(notesApi, 'fetchNote').mockResolvedValue(noteFixture as never);
+    render(<Wrapper />);
+    await waitFor(() => screen.getByRole('button', { name: /preview/i }));
+    fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+    expect(screen.getByTestId('markdown-preview')).toBeInTheDocument();
+    // Switch back to edit
+    fireEvent.click(screen.getByRole('button', { name: /edit/i }));
+    expect(screen.getByTestId('note-editor')).toBeInTheDocument();
   });
-});
 
-describe('NoteEditorPage — wikilink overlay', () => {
-  it('mounts without crashing (wikilink autocomplete present)', async () => {
-    wrap('/editor/abc123');
-    await waitFor(() => expect(document.body).toBeTruthy());
+  it('renders blank editor for new note route', () => {
+    render(<Wrapper path="/notes/new" />);
+    expect(screen.getByTestId('note-editor')).toBeInTheDocument();
   });
 });

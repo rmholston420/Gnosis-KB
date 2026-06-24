@@ -1,78 +1,76 @@
 /**
- * aiStore — Zustand slice for AI provider configuration and chat session.
+ * aiStore.ts
+ * ==========
+ * Zustand slice for AI panel state and vault-sync status.
+ *
+ * Slice:
+ *  - activeTab: which AI sidebar tab is open
+ *  - summary / linkSuggestions / tagSuggestions / critique results
+ *  - vaultSyncStatus + vaultSyncProgress (fed by VaultSyncWatcher)
  */
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
-import type { AiChatMessage, RagMode } from '../types';
+import type { LinkSuggestion } from '../types';
 
-export type LlmProvider = 'ollama' | 'groq' | 'openai' | 'openrouter';
+export type AiTab = 'summary' | 'links' | 'tags' | 'critique';
+export type SyncStatus = 'idle' | 'syncing' | 'error';
 
 interface AiState {
-  /** Selected LLM provider. */
-  provider:    LlmProvider;
-  /** Current RAG query mode. */
-  ragMode:     RagMode;
-  /** Active chat session messages. */
-  history:     AiChatMessage[];
-  /** True while an SSE stream is active. */
-  isStreaming: boolean;
-  /** Last stream error, if any. */
-  streamError: string | null;
-  /** Persisted Ollama model selection. */
-  ollamaModel: string;
+  activeTab: AiTab;
+  summary: string | null;
+  summaryLoading: boolean;
+  linkSuggestions: LinkSuggestion[];
+  tagSuggestions: string[];
+  critique: string | null;
+  critiqueLoading: boolean;
 
-  // ---- Actions ----
-  setProvider:    (p: LlmProvider) => void;
-  setRagMode:     (m: RagMode) => void;
-  appendMessage:  (msg: AiChatMessage) => void;
-  updateLastMsg:  (content: string, citations?: string[]) => void;
-  setStreaming:   (v: boolean) => void;
-  setStreamError: (e: string | null) => void;
-  clearHistory:   () => void;
-  setOllamaModel: (model: string) => void;
+  // Vault sync status (set by VaultSyncWatcher)
+  vaultSyncStatus: SyncStatus;
+  vaultSyncProgress: number; // 0-100
+
+  // Actions
+  setActiveTab: (tab: AiTab) => void;
+  setSummary: (s: string | null) => void;
+  setSummaryLoading: (v: boolean) => void;
+  setLinkSuggestions: (links: LinkSuggestion[]) => void;
+  setTagSuggestions: (tags: string[]) => void;
+  setCritique: (c: string | null) => void;
+  setCritiqueLoading: (v: boolean) => void;
+  setVaultSyncStatus: (s: SyncStatus) => void;
+  setVaultSyncProgress: (p: number) => void;
+  resetAiPanel: () => void;
 }
 
-export const useAiStore = create<AiState>()(
-  persist(
-    immer<AiState>((set) => ({
-      provider:    'ollama',
-      ragMode:     'hybrid',
-      history:     [],
-      isStreaming: false,
-      streamError: null,
-      ollamaModel: 'qwen2.5:14b',
+const INITIAL: Omit<AiState, 'setActiveTab' | 'setSummary' | 'setSummaryLoading' | 'setLinkSuggestions' | 'setTagSuggestions' | 'setCritique' | 'setCritiqueLoading' | 'setVaultSyncStatus' | 'setVaultSyncProgress' | 'resetAiPanel'> = {
+  activeTab: 'summary',
+  summary: null,
+  summaryLoading: false,
+  linkSuggestions: [],
+  tagSuggestions: [],
+  critique: null,
+  critiqueLoading: false,
+  vaultSyncStatus: 'idle',
+  vaultSyncProgress: 0,
+};
 
-      setProvider:    (p) => set((s) => { s.provider    = p; }),
-      setRagMode:     (m) => set((s) => { s.ragMode     = m; }),
-      setStreaming:   (v) => set((s) => { s.isStreaming  = v; }),
-      setStreamError: (e) => set((s) => { s.streamError = e; }),
-      setOllamaModel: (model) => set((s) => { s.ollamaModel = model; }),
+export const useAiStore = create<AiState>()(immer((set) => ({
+  ...INITIAL,
 
-      appendMessage: (msg) => set((s) => {
-        s.history.push(msg);
-      }),
-
-      updateLastMsg: (content, citations) => set((s) => {
-        const last = s.history[s.history.length - 1];
-        if (last?.role === 'assistant') {
-          last.content    = content;
-          last.citations  = citations;
-        } else {
-          s.history.push({ role: 'assistant', content, citations });
-        }
-      }),
-
-      clearHistory: () => set((s) => {
-        s.history     = [];
-        s.isStreaming  = false;
-        s.streamError = null;
-      }),
-    })),
-    {
-      name:    'gnosis-ai-store',
-      // Only persist provider + model preferences, not the chat history
-      partialize: (s) => ({ provider: s.provider, ragMode: s.ragMode, ollamaModel: s.ollamaModel }),
-    },
-  ),
-);
+  setActiveTab: (tab)    => set((s) => { s.activeTab = tab; }),
+  setSummary:   (sum)    => set((s) => { s.summary = sum; }),
+  setSummaryLoading: (v) => set((s) => { s.summaryLoading = v; }),
+  setLinkSuggestions: (links) => set((s) => { s.linkSuggestions = links; }),
+  setTagSuggestions:  (tags)  => set((s) => { s.tagSuggestions = tags; }),
+  setCritique: (c)       => set((s) => { s.critique = c; }),
+  setCritiqueLoading: (v) => set((s) => { s.critiqueLoading = v; }),
+  setVaultSyncStatus:   (status)   => set((s) => { s.vaultSyncStatus = status; }),
+  setVaultSyncProgress: (progress) => set((s) => { s.vaultSyncProgress = progress; }),
+  resetAiPanel: () => set((s) => {
+    s.summary           = null;
+    s.summaryLoading    = false;
+    s.linkSuggestions   = [];
+    s.tagSuggestions    = [];
+    s.critique          = null;
+    s.critiqueLoading   = false;
+  }),
+})));
