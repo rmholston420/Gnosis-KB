@@ -7,7 +7,7 @@
  *  - onChange is called with a Partial<Frontmatter> object
  */
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { FrontmatterPanel } from '../FrontmatterPanel';
 import type { Frontmatter } from '../FrontmatterPanel';

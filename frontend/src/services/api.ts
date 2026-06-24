@@ -14,7 +14,8 @@
  */
 import { useVaultStore } from '../store/useVaultStore';
 
-const BASE = (import.meta as any).env?.VITE_API_BASE_URL ?? '/api';
+const BASE =
+  (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_API_BASE_URL ?? '/api';
 
 let _activeVaultPath: string | null = null;
 

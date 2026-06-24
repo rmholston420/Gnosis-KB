@@ -45,7 +45,7 @@ const ICON_MAP: Record<string, string> = {
 
 export function NoteTemplateGallery({ onSelect, onClose }: Props) {
   const [templates, setTemplates] = useState<NoteTemplate[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [_loading, _setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
@@ -55,11 +55,15 @@ export function NoteTemplateGallery({ onSelect, onClose }: Props) {
       .then((data) => {
         const tpls = (data as unknown as NoteTemplate[]);
         setTemplates(tpls);
-        if ((data as unknown as NoteTemplate[]).length > 0) {
-          setActiveId((data as unknown as NoteTemplate[])[0].id);
+        _setLoading(false);
+        if (tpls.length > 0) {
+          setActiveId(tpls[0].id);
         }
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to load templates'));
+      .catch((err: unknown) => {
+        _setLoading(false);
+        setError(err instanceof Error ? err.message : 'Failed to load templates');
+      });
   }, []);
 
   // Focus trap
@@ -87,6 +91,7 @@ export function NoteTemplateGallery({ onSelect, onClose }: Props) {
   }, [onClose]);
 
   const active = templates.find((t) => t.id === activeId) ?? null;
+  const loading = _loading;
 
   return (
     <div

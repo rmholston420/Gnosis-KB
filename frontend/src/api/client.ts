@@ -3,7 +3,10 @@
  * Reads the VITE_API_BASE_URL env var (defaults to /api).
  */
 
-const BASE = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_BASE_URL) ?? '/api';
+const BASE =
+  (typeof import.meta !== 'undefined'
+    ? (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_API_BASE_URL
+    : undefined) ?? '/api';
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const token =

@@ -115,21 +115,20 @@ function TreeNodeRow({ node, depth, activeId }: TreeNodeRowProps) {
 export function VaultTree() {
   const { pathname } = useLocation();
   const { data } = useNotes();
-  const notes = (data ?? []) as Note[];
 
   // Extract active note ID from path
   const activeId = pathname.startsWith('/notes/')
     ? pathname.replace('/notes/', '').split('?')[0]
     : '';
 
-  const tree = useMemo(() => buildTree(notes), [notes]);
+  const tree = useMemo(() => buildTree((data ?? []) as Note[]), [data]);
 
   return (
     <nav className="overflow-y-auto flex-1 py-1" aria-label="Vault tree">
       {tree.map((node) => (
         <TreeNodeRow key={node.path} node={node} depth={0} activeId={activeId} />
       ))}
-      {notes.length === 0 && (
+      {(data ?? []).length === 0 && (
         <p className="text-xs text-gnosis-muted px-3 py-2">No notes yet.</p>
       )}
     </nav>

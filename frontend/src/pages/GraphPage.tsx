@@ -5,7 +5,7 @@ import React, { useState } from 'react';
 import { GraphView2D } from '../components/graph/GraphView2D';
 import { GraphControls } from '../components/graph/GraphControls';
 import { NodeDetailOverlay } from '../components/graph/NodeDetailOverlay';
-import type { GraphNode, GraphEntitySummary } from '../types';
+import type { GraphNode } from '../types';
 
 export default function GraphPage() {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);

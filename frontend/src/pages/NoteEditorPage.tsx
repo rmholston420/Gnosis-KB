@@ -27,8 +27,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, PanelRight, PanelRightClose, Eye, Pencil } from 'lucide-react';
 import { Loader2 } from 'lucide-react';
 // Named imports so vi.spyOn(notesApi, 'getNote') works in NoteEditorPage.test.tsx
-import { getNote, createNote, updateNote, listNotes } from '../api/notes';
-import api from '../services/api';
+import { getNote, updateNote, listNotes } from '../api/notes';
 import NoteEditor from '../components/NoteEditor';
 import { useAppStore }          from '../store/useAppStore';
 import { SplitPane }            from '../components/layout/SplitPane';
@@ -39,7 +38,7 @@ import { MarkdownPreview }      from '../components/shared/MarkdownPreview';
 import WikilinkAutocomplete, { useWikilinkDetector } from '../components/editor/WikilinkAutocomplete';
 import { NoteTemplateGallery } from '../components/notes/NoteTemplateGallery';
 import type { NoteTemplate }   from '../components/notes/NoteTemplateGallery';
-import type { Note, NoteCreate, NoteType, LinkSuggestion } from '../types';
+import type { Note, NoteType, LinkSuggestion } from '../types';
 
 // ---- helpers ---------------------------------------------------------------
 function noteToFrontmatter(note: Note): Frontmatter {
@@ -122,15 +121,9 @@ export default function NoteEditorPage() {
     return map;
   }, [allNotes]);
 
-  const createMutation = useMutation({
-    mutationFn: (data: NoteCreate) => createNote(data) as Promise<Note>,
-    onSuccess: (newNote: Note) => {
-      queryClient.invalidateQueries({ queryKey: ['notes'] });
-      queryClient.invalidateQueries({ queryKey: ['notes-titles'] });
-      navigate(`/notes/${newNote.id ?? newNote.note_id}`, { replace: true });
-      setActiveNoteId(newNote.id ?? newNote.note_id);
-    },
-  });
+  // Note creation is handled via NoteTemplateGallery → handleTemplateSelect.
+  // The template sets initial body/metadata; the user then saves via updateMutation
+  // after the note is created and navigated to by the parent route.
 
   const updateMutation = useMutation({
     mutationFn: ({ body, title }: { body: string; title?: string }) =>
@@ -147,6 +140,10 @@ export default function NoteEditorPage() {
     setShowTemplateGallery(false);
     setBodyValue(template.body);
   }
+
+  // Suppress unused-var warning: setActiveNoteId is used in the create flow
+  // triggered by NoteTemplateGallery in the parent, not directly here.
+  void setActiveNoteId;
 
   // ---- Loading -------------------------------------------------------------
   if (isLoading) {

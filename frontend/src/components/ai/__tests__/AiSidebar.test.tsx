@@ -14,7 +14,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import * as aiApi from '../../../api/ai';
 import { AiSidebar } from '../AiSidebar';
-import type { LinkSuggestion, LinkSuggestResult, SummarizeResult } from '../../../api/ai';
+import type { LinkSuggestResult, SummarizeResult } from '../../../api/ai';
 
 const linkFixture: LinkSuggestResult = {
   suggestions: [

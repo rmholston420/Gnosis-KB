@@ -39,8 +39,10 @@ function fontSize(count: number, max: number): string {
 export function TagCloud() {
   const navigate = useNavigate();
   const { data } = useNotes();
-  const notes  = (data ?? []) as Array<{ tags?: string[] }>;
-  const tags   = useMemo(() => buildTagCounts(notes), [notes]);
+  const tags = useMemo(
+    () => buildTagCounts((data ?? []) as Array<{ tags?: string[] }>),
+    [data],
+  );
   const maxCnt = tags[0]?.count ?? 1;
 
   if (tags.length === 0) return null;

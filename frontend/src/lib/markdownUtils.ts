@@ -6,7 +6,7 @@
  */
 
 /** Regex that matches [[Title]] and [[Title|Alias]] wikilinks. */
-const WIKILINK_RE = /\[\[([^\[\]|]+)(?:\|([^\[\]]+))?\]\]/g;
+const WIKILINK_RE = /\[\[([^[\]|]+)(?:\|([^[\]]+))?\]\]/g;
 
 export interface ParsedWikilink {
   /** The raw matched string, e.g. `[[Foo|Bar]]` */

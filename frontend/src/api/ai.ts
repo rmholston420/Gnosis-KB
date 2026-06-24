@@ -50,7 +50,7 @@ export const aiApi = {
       const reader  = res.body?.getReader();
       const decoder = new TextDecoder();
       if (!reader) { onDone?.(); return; }
-      while (true) {
+      for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
         onChunk?.(decoder.decode(value, { stream: true }));

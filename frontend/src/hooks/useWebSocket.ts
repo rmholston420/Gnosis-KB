@@ -13,7 +13,9 @@ export type WsMessage = { type: string; data?: unknown };
 export type ReadyState = 0 | 1 | 2 | 3;
 
 const WS_BASE =
-  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_WS_URL) ??
+  (typeof import.meta !== 'undefined'
+    ? (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_WS_URL
+    : undefined) ??
   `${typeof window !== 'undefined' && window.location.origin.replace(/^http/, 'ws')}/ws`;
 
 function useWebSocket(url: string) {

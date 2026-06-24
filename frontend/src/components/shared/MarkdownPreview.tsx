@@ -22,7 +22,7 @@ function preprocessWikilinks(
   titleToId: Record<string, string>,
 ): string {
   return md.replace(
-    /\[\[([^\[\]|]+)(?:\|([^\[\]]+))?\]\]/g,
+    /\[\[([^[\]|]+)(?:\|([^[\]]+))?\]\]/g,
     (_raw, title, alias) => {
       const display = (alias ?? title).trim();
       const id = titleToId[title.trim()];
