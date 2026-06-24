@@ -111,7 +111,10 @@ describe('MocPage — sections tab', () => {
 
   it('shows result metadata (note count)', async () => {
     await generate();
-    expect(screen.getByText(/12/)).toBeInTheDocument();
+    // note_count: 12 appears in multiple places (e.g. "12 notes scanned"
+    // in the sidebar summary AND in the sections tab footer).
+    // Use getAllByText and assert at least one match exists.
+    expect(screen.getAllByText(/12/).length).toBeGreaterThan(0);
   });
 });
 

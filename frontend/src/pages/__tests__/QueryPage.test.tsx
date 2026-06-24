@@ -8,6 +8,9 @@
  * pattern places top-level variable references inside a hoisted factory,
  * causing "Cannot access 'x' before initialization" and a secondary
  * "Cannot find module" crash on require('../QueryPage').
+ *
+ * IMPORTANT: the Run button is disabled={!queryText.trim()}, so every test
+ * that exercises the run path must type into the textarea first.
  */
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
@@ -68,6 +71,17 @@ describe('QueryPage — rendering', () => {
     wrap();
     expect(screen.getByPlaceholderText(/from folder where/i)).toBeInTheDocument();
   });
+
+  it('Run button is disabled when textarea is empty', () => {
+    wrap();
+    expect(screen.getByRole('button', { name: /run/i })).toBeDisabled();
+  });
+
+  it('Run button is enabled after typing a query', () => {
+    wrap();
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'FROM notes' } });
+    expect(screen.getByRole('button', { name: /run/i })).not.toBeDisabled();
+  });
 });
 
 describe('QueryPage — run query', () => {
@@ -76,6 +90,8 @@ describe('QueryPage — run query', () => {
       data: { rows: [], total: 0, query_time_ms: 3 },
     });
     wrap();
+    // Must populate textarea before Run becomes clickable
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'FROM notes' } });
     fireEvent.click(screen.getByRole('button', { name: /run/i }));
     await waitFor(() =>
       expect(mockPost).toHaveBeenCalled()
@@ -88,6 +104,7 @@ describe('QueryPage — run query', () => {
   it('shows error message on run failure', async () => {
     mockPost.mockRejectedValueOnce(new Error('bad query'));
     wrap();
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'FROM notes' } });
     fireEvent.click(screen.getByRole('button', { name: /run/i }));
     await waitFor(() =>
       expect(screen.getByText(/error/i)).toBeInTheDocument()
