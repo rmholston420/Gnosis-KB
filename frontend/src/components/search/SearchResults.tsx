@@ -1,48 +1,70 @@
 /**
  * SearchResults — renders a list of hybrid search results with highlighted excerpts.
+ *
+ * Props:
+ *   results        – array of SearchResult objects
+ *   query          – the current search string (used for highlighting)
+ *   isLoading      – show skeleton loader
+ *   isError        – show error state
+ *   total          – optional result count
+ *   onResultClick  – called with note_id when a card is clicked
  */
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Clock, Tag, ArrowRight } from 'lucide-react';
-import { relativeTime } from '../../lib/dateUtils';
+import { Tag, ArrowRight } from 'lucide-react';
 import { NODE_COLORS } from '../../lib/graphUtils';
 import type { SearchResult } from '../../types';
 
 interface SearchResultsProps {
-  results:   SearchResult[];
-  query?:    string;
-  isLoading: boolean;
-  isError:   boolean;
-  total?:    number;
+  results:        SearchResult[];
+  query?:         string;
+  isLoading?:     boolean;
+  isError?:       boolean;
+  total?:         number;
+  onResultClick:  (noteId: string) => void;
 }
 
 /** Highlight occurrences of `query` in `text` with a <mark> element. */
 function Highlight({ text, query }: { text: string; query?: string }) {
   if (!query?.trim()) return <>{text}</>;
-  const re = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+  const re = new RegExp(
+    `(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`,
+    'gi',
+  );
   const parts = text.split(re);
   return (
     <>
       {parts.map((part, i) =>
-        re.test(part)
-          ? <mark key={i} className="bg-gnosis-accent/25 text-gnosis-fg rounded-sm px-0.5">{part}</mark>
-          : <React.Fragment key={i}>{part}</React.Fragment>,
+        re.test(part) ? (
+          <mark key={i} className="bg-gnosis-accent/25 text-gnosis-fg rounded-sm px-0.5">
+            {part}
+          </mark>
+        ) : (
+          <React.Fragment key={i}>{part}</React.Fragment>
+        ),
       )}
     </>
   );
 }
 
 /** Single search result row. */
-function ResultRow({ result, query }: { result: SearchResult; query?: string }) {
-  const navigate = useNavigate();
-  const typeColor = NODE_COLORS[result.note_type ?? 'default'] ?? NODE_COLORS['default'];
+function ResultRow({
+  result,
+  query,
+  onResultClick,
+}: {
+  result:        SearchResult;
+  query?:        string;
+  onResultClick: (noteId: string) => void;
+}) {
+  const typeColor =
+    NODE_COLORS[result.note_type ?? 'default'] ?? NODE_COLORS['default'];
 
   return (
     <button
-      onClick={() => navigate(`/notes/${result.note_id}`)}
+      onClick={() => onResultClick(result.note_id)}
       className="w-full text-left group flex gap-3 p-3 rounded-lg bg-gnosis-surface hover:bg-gnosis-hover border border-transparent hover:border-gnosis-border transition-all"
     >
-      {/* Type indicator */}
+      {/* Type indicator stripe */}
       <span
         className="w-1 rounded-full flex-shrink-0 mt-1 self-stretch"
         style={{ background: typeColor }}
@@ -61,10 +83,10 @@ function ResultRow({ result, query }: { result: SearchResult; query?: string }) 
           )}
         </div>
 
-        {/* Excerpt */}
-        {result.excerpt && (
+        {/* Snippet / excerpt */}
+        {(result.snippet ?? result.excerpt) && (
           <p className="text-xs text-gnosis-muted leading-relaxed line-clamp-2">
-            <Highlight text={result.excerpt} query={query} />
+            <Highlight text={result.snippet ?? result.excerpt!} query={query} />
           </p>
         )}
 
@@ -79,16 +101,13 @@ function ResultRow({ result, query }: { result: SearchResult; query?: string }) 
               {result.tags.slice(0, 2).join(', ')}
             </span>
           )}
-          {result.modified_at && (
-            <span className="flex items-center gap-1 ml-auto">
-              <Clock size={10} />
-              {relativeTime(result.modified_at)}
-            </span>
-          )}
         </div>
       </div>
 
-      <ArrowRight size={14} className="text-gnosis-muted group-hover:text-gnosis-fg self-center flex-shrink-0 transition-colors" />
+      <ArrowRight
+        size={14}
+        className="text-gnosis-muted group-hover:text-gnosis-fg self-center flex-shrink-0 transition-colors"
+      />
     </button>
   );
 }
@@ -96,7 +115,14 @@ function ResultRow({ result, query }: { result: SearchResult; query?: string }) 
 /**
  * Renders the full search results list with loading + empty states.
  */
-export function SearchResults({ results, query, isLoading, isError, total }: SearchResultsProps) {
+export function SearchResults({
+  results,
+  query,
+  isLoading = false,
+  isError = false,
+  total,
+  onResultClick,
+}: SearchResultsProps) {
   if (isLoading) {
     return (
       <div className="space-y-2">
@@ -133,7 +159,12 @@ export function SearchResults({ results, query, isLoading, isError, total }: Sea
       )}
       <div className="space-y-1.5">
         {results.map((r) => (
-          <ResultRow key={r.note_id} result={r} query={query} />
+          <ResultRow
+            key={r.note_id}
+            result={r}
+            query={query}
+            onResultClick={onResultClick}
+          />
         ))}
       </div>
     </div>

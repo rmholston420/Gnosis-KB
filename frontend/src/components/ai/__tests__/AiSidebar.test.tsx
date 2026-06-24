@@ -1,7 +1,11 @@
 /**
  * AiSidebar.test.tsx
- * Spy on real exports: suggestLinks, summarizeNote.
- * Render with noteId='note-456' so the tabs are shown (not the guard).
+ *
+ * The AiSidebar uses collapsible <Section> panels, not a tab-bar.
+ * Each section header button has aria-expanded.  Spying on the api module
+ * functions requires the query/mutation hooks to call the real api exports.
+ *
+ * onInsertLink receives the full LinkSuggestion object.
  */
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
@@ -10,8 +14,9 @@ import { MemoryRouter } from 'react-router-dom';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import * as aiApi from '../../../api/ai';
 import { AiSidebar } from '../AiSidebar';
+import type { LinkSuggestion } from '../../../types';
 
-const linkFixture = [
+const linkFixture: LinkSuggestion[] = [
   { target_note_id: 'n1', target_title: 'Emptiness', score: 0.95, reason: 'Related concept' },
 ];
 
@@ -36,19 +41,19 @@ describe('AiSidebar', () => {
     expect(screen.getByText(/open a note/i)).toBeInTheDocument();
   });
 
-  it('renders all four tab buttons when a note is open', () => {
+  it('renders all four section headers when a note is open', () => {
     render(
       <Wrapper>
         <AiSidebar noteId="note-456" onInsertLink={() => {}} onInsertTag={() => {}} />
       </Wrapper>
     );
-    expect(screen.getByRole('tab', { name: /summary/i })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: /links/i })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: /tags/i })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: /critique/i })).toBeInTheDocument();
+    expect(screen.getByText(/AI Summary/i)).toBeInTheDocument();
+    expect(screen.getByText(/Suggested Links/i)).toBeInTheDocument();
+    expect(screen.getByText(/Suggested Tags/i)).toBeInTheDocument();
+    expect(screen.getByText(/ZK Critique/i)).toBeInTheDocument();
   });
 
-  it('switches to Links tab and calls onInsertLink when suggestion accepted', async () => {
+  it('accepts a link suggestion and calls onInsertLink', async () => {
     vi.spyOn(aiApi, 'suggestLinks').mockResolvedValue(linkFixture);
     const onInsertLink = vi.fn();
     render(
@@ -56,11 +61,12 @@ describe('AiSidebar', () => {
         <AiSidebar noteId="note-456" onInsertLink={onInsertLink} onInsertTag={() => {}} />
       </Wrapper>
     );
-    fireEvent.click(screen.getByRole('tab', { name: /links/i }));
-    fireEvent.click(screen.getByRole('button', { name: /fetch link suggestions/i }));
+    // Open the Suggested Links section
+    fireEvent.click(screen.getByText(/Suggested Links/i));
+    // Wait for the suggestion to appear after the query resolves
     await waitFor(() => screen.getByText('Emptiness'));
-    fireEvent.click(screen.getByRole('button', { name: /accept/i }));
-    expect(onInsertLink).toHaveBeenCalledWith('Emptiness');
+    fireEvent.click(screen.getByRole('button', { name: /insert/i }));
+    expect(onInsertLink).toHaveBeenCalledWith(linkFixture[0]);
   });
 
   it('generate summary button fires summarize mutation', async () => {
@@ -70,6 +76,8 @@ describe('AiSidebar', () => {
         <AiSidebar noteId="note-456" onInsertLink={() => {}} onInsertTag={() => {}} />
       </Wrapper>
     );
+    // Expand the AI Summary section (closed by default)
+    fireEvent.click(screen.getByText(/AI Summary/i));
     const generateBtn = screen.getByRole('button', { name: /generate summary/i });
     fireEvent.click(generateBtn);
     await waitFor(() => expect(spy).toHaveBeenCalledWith('note-456'));
