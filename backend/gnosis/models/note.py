@@ -69,7 +69,7 @@ class Note(Base):
         "Tag",
         secondary="note_tags",
         back_populates="notes",
-        lazy="noload",
+        lazy="select",
     )
 
     outgoing_links: Mapped[list[Link]] = relationship(
