@@ -1,13 +1,14 @@
 /**
  * App.tsx — root shell.
  * Adds:
- *  1. Global ⌘K / Ctrl+K shortcut → commandPaletteStore.toggle()
+ *  1. Global ⌘K / Ctrl+K shortcut → useCommandPaletteStore.toggle()
  *  2. useVaultWebSocket() mounted once so live sync events reach every page
+ *  3. <CommandPalette open={open} onClose={closePalette} /> rendered outside Routes
  */
 import React, { useEffect } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import Layout from './components/layout/Layout';
-import { CommandPalette } from './components/shared/CommandPalette';
+import { CommandPalette } from './components/CommandPalette';
 import { useCommandPaletteStore } from './store/editorStore';
 import { useVaultWebSocket } from './hooks/useWebSocket';
 
@@ -26,7 +27,7 @@ const AnalyticsPage  = React.lazy(() => import('./pages/AnalyticsPage'));
 const NotFoundPage   = React.lazy(() => import('./pages/NotFoundPage'));
 
 export default function App() {
-  const { toggle } = useCommandPaletteStore();
+  const { open, toggle, closePalette } = useCommandPaletteStore();
 
   // ⌘K / Ctrl+K global shortcut
   useEffect(() => {
@@ -45,7 +46,7 @@ export default function App() {
 
   return (
     <>
-      <React.Suspense fallback={<div className="flex h-screen items-center justify-center text-gnosis-muted text-sm">Loading…</div>}>
+      <React.Suspense fallback={<div className="flex h-screen items-center justify-center text-gnosis-muted text-sm">Loading\u2026</div>}>
         <Routes>
           <Route element={<Layout />}>
             <Route index            element={<NotesPage />} />
@@ -66,7 +67,9 @@ export default function App() {
           </Route>
         </Routes>
       </React.Suspense>
-      <CommandPalette />
+
+      {/* Command palette — rendered outside Routes so it persists across navigation */}
+      <CommandPalette open={open} onClose={closePalette} />
     </>
   );
 }

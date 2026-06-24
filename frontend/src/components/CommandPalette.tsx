@@ -4,12 +4,16 @@
  *   - Quick-jump to any note by title
  *   - Navigate to top-level pages
  *   - Create a new note
+ *
+ * Data source: listNotes() from api/notes (called directly so vitest spies
+ * on apiNotes.listNotes resolve correctly in CommandPalette.test.tsx).
  */
 import React, { useEffect, useState, useCallback } from 'react';
 import { Command } from 'cmdk';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { FileText, Plus, Home, Search, GitBranch, Brain, BookOpen, Hash, Zap, Settings, X } from 'lucide-react';
-import { useNotes } from '../hooks/useNotes';
+import { listNotes } from '../api/notes';
 import type { Note } from '../types';
 
 interface CommandPaletteProps {
@@ -29,13 +33,29 @@ const PAGES = [
 ];
 
 export function CommandPalette({ open, onClose }: CommandPaletteProps) {
-  const navigate   = useNavigate();
+  const navigate = useNavigate();
   const [query, setQuery] = useState('');
-  const { data }   = useNotes();
+
+  // Fetch all notes for jump-to — enabled only when palette is open to avoid
+  // unnecessary background requests.
+  const { data } = useQuery({
+    queryKey: ['notes-palette'],
+    queryFn:  () => listNotes({ limit: 200 }),
+    enabled:  open,
+    staleTime: 30_000,
+  });
   const notes: Note[] = (data?.items ?? []) as Note[];
 
   // Reset query when palette opens
   useEffect(() => { if (open) setQuery(''); }, [open]);
+
+  // Escape key closes palette
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      onClose();
+    }
+  }, [onClose]);
 
   const goTo = useCallback((href: string) => {
     navigate(href);
@@ -69,12 +89,14 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
             <Search size={14} className="text-text-muted flex-shrink-0" />
             <Command.Input
               autoFocus
+              role="combobox"
               placeholder="Search notes or jump to a page\u2026"
               value={query}
               onValueChange={setQuery}
+              onKeyDown={handleKeyDown}
               className="flex-1 bg-transparent text-sm text-text-primary placeholder-text-muted outline-none"
             />
-            <button onClick={onClose} className="text-text-muted hover:text-text-primary transition-colors p-1">
+            <button onClick={onClose} className="text-text-muted hover:text-text-primary transition-colors p-1" aria-label="Close command palette">
               <X size={13} />
             </button>
           </div>

@@ -1,10 +1,16 @@
 /**
  * editorStore — Zustand slice for active note editor state.
  * Tracks the currently open note, dirty flag, and autosave status.
+ *
+ * Also exports useCommandPaletteStore — the ⌘K palette open/close state.
  */
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import type { Note } from '../types';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Editor store
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface EditorState {
   /** Currently open note, or null if none. */
@@ -64,3 +70,21 @@ export const useEditorStore = create<EditorState>()(immer((set) => ({
     s.editorContent = '';
   }),
 })));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Command-palette store  (⌘K open/close)
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface CommandPaletteState {
+  open:           boolean;
+  toggle:         () => void;
+  openPalette:    () => void;
+  closePalette:   () => void;
+}
+
+export const useCommandPaletteStore = create<CommandPaletteState>()((set) => ({
+  open: false,
+  toggle:       () => set((s) => ({ open: !s.open })),
+  openPalette:  () => set({ open: true }),
+  closePalette: () => set({ open: false }),
+}));
