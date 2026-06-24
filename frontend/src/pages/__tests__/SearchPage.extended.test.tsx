@@ -44,20 +44,16 @@ function renderPage() {
   );
 }
 
+// use getByLabelText — robust regardless of ARIA role mapping
+const getInput = () => screen.getByLabelText('Search query');
+
 // ─────────────────────────────────────────────────────────────────────────────
 describe('SearchPage — blank query early return (lines 45-48)', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => { vi.clearAllMocks(); mockSearch.mockResolvedValue({ items: [], total: 0 }); });
 
   it('does not call api.search when query is blank', async () => {
     renderPage();
-    const searchInput = screen.getByRole('searchbox') ?? screen.getByRole('textbox');
-    fireEvent.change(searchInput, { target: { value: '' } });
-    const form = searchInput.closest('form');
-    if (form) fireEvent.submit(form);
-    else {
-      const btn = screen.queryByRole('button', { name: /search/i });
-      if (btn) fireEvent.click(btn);
-    }
+    fireEvent.change(getInput(), { target: { value: '' } });
     await act(async () => {});
     expect(mockSearch).not.toHaveBeenCalled();
   });
@@ -70,10 +66,7 @@ describe('SearchPage — error state (line 56 + 121)', () => {
   it('shows error message when search rejects', async () => {
     mockSearch.mockRejectedValue(new Error('Search failed'));
     renderPage();
-    const searchInput = screen.getByRole('searchbox') ?? screen.getByRole('textbox');
-    fireEvent.change(searchInput, { target: { value: 'dharma' } });
-    const form = searchInput.closest('form');
-    if (form) fireEvent.submit(form);
+    fireEvent.change(getInput(), { target: { value: 'dharma' } });
     await waitFor(() => expect(screen.queryByText(/error|failed/i)).toBeTruthy());
   });
 });
@@ -85,10 +78,7 @@ describe('SearchPage — no results empty state (line 141)', () => {
   it('shows "No results" when search returns empty array', async () => {
     mockSearch.mockResolvedValue({ items: [], total: 0 });
     renderPage();
-    const searchInput = screen.getByRole('searchbox') ?? screen.getByRole('textbox');
-    fireEvent.change(searchInput, { target: { value: 'xyznotfound' } });
-    const form = searchInput.closest('form');
-    if (form) fireEvent.submit(form);
+    fireEvent.change(getInput(), { target: { value: 'xyznotfound' } });
     await waitFor(() => expect(screen.queryByText(/no results/i)).toBeTruthy());
   });
 });
@@ -100,11 +90,8 @@ describe('SearchPage — results footer (lines 148-150)', () => {
   it('shows result count when results returned', async () => {
     mockSearch.mockResolvedValue({ items: RESULTS, total: 2 });
     renderPage();
-    const searchInput = screen.getByRole('searchbox') ?? screen.getByRole('textbox');
-    fireEvent.change(searchInput, { target: { value: 'dharma' } });
-    const form = searchInput.closest('form');
-    if (form) fireEvent.submit(form);
+    fireEvent.change(getInput(), { target: { value: 'dharma' } });
     await waitFor(() => expect(screen.queryByText('Dharma One')).toBeTruthy());
-    expect(screen.queryByText(/showing|results/i)).toBeTruthy();
+    expect(screen.queryByText(/result/i)).toBeTruthy();
   });
 });

@@ -11,6 +11,7 @@ const mockGetSettings    = vi.fn();
 const mockUpdateSettings = vi.fn();
 const mockGetStats       = vi.fn();
 const mockReindex        = vi.fn();
+const mockGetProviders   = vi.fn();
 
 vi.mock('@/services/api', () => ({
   default: {
@@ -18,6 +19,8 @@ vi.mock('@/services/api', () => ({
     updateSettings: (...a: unknown[]) => mockUpdateSettings(...a),
     getStats:       (...a: unknown[]) => mockGetStats(...a),
     reindex:        (...a: unknown[]) => mockReindex(...a),
+    // SettingsPage calls getProviders() on mount via useEffect
+    getProviders:   (...a: unknown[]) => mockGetProviders(...a),
     listNotes:      vi.fn().mockResolvedValue({ items: [] }),
   },
 }));
@@ -52,10 +55,16 @@ function renderPage() {
   );
 }
 
+beforeEach(() => {
+  vi.clearAllMocks();
+  // Default happy-path values; individual tests override as needed
+  mockGetSettings.mockResolvedValue(BASE_SETTINGS);
+  mockGetStats.mockResolvedValue(BASE_STATS);
+  mockGetProviders.mockResolvedValue({ providers: [] });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 describe('SettingsPage — loading + error', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
-
   it('shows loading state initially', () => {
     mockGetSettings.mockReturnValue(new Promise(() => {}));
     mockGetStats.mockReturnValue(new Promise(() => {}));
@@ -65,7 +74,6 @@ describe('SettingsPage — loading + error', () => {
 
   it('shows error when getSettings rejects', async () => {
     mockGetSettings.mockRejectedValue(new Error('Settings load failed'));
-    mockGetStats.mockResolvedValue(BASE_STATS);
     renderPage();
     await waitFor(() => expect(screen.queryByText(/error/i)).toBeTruthy());
   });
@@ -73,18 +81,12 @@ describe('SettingsPage — loading + error', () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('SettingsPage — content', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
-
   it('renders vault path', async () => {
-    mockGetSettings.mockResolvedValue(BASE_SETTINGS);
-    mockGetStats.mockResolvedValue(BASE_STATS);
     renderPage();
     await waitFor(() => expect(screen.queryByDisplayValue('/home/user/vault')).toBeTruthy());
   });
 
   it('renders stats', async () => {
-    mockGetSettings.mockResolvedValue(BASE_SETTINGS);
-    mockGetStats.mockResolvedValue(BASE_STATS);
     renderPage();
     await waitFor(() => expect(screen.queryByText(/150/)).toBeTruthy());
   });
@@ -92,11 +94,7 @@ describe('SettingsPage — content', () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('SettingsPage — save settings', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
-
   it('calls updateSettings on save', async () => {
-    mockGetSettings.mockResolvedValue(BASE_SETTINGS);
-    mockGetStats.mockResolvedValue(BASE_STATS);
     mockUpdateSettings.mockResolvedValue(BASE_SETTINGS);
     renderPage();
     await waitFor(() => screen.queryByDisplayValue('/home/user/vault'));
@@ -110,11 +108,7 @@ describe('SettingsPage — save settings', () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('SettingsPage — reindex', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
-
   it('calls reindex when reindex button clicked', async () => {
-    mockGetSettings.mockResolvedValue(BASE_SETTINGS);
-    mockGetStats.mockResolvedValue(BASE_STATS);
     mockReindex.mockResolvedValue({});
     renderPage();
     await waitFor(() => screen.queryByDisplayValue('/home/user/vault'));
@@ -128,11 +122,7 @@ describe('SettingsPage — reindex', () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('SettingsPage — toggle auto-save', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
-
   it('renders auto-save toggle', async () => {
-    mockGetSettings.mockResolvedValue(BASE_SETTINGS);
-    mockGetStats.mockResolvedValue(BASE_STATS);
     renderPage();
     await waitFor(() => {
       const toggle = screen.queryByRole('checkbox', { name: /auto.?save/i });

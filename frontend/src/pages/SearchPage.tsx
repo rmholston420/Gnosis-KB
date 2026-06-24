@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Search, AlertCircle } from 'lucide-react';
 import api from '../services/api';
 import type { SearchResult } from '../types';
@@ -10,7 +11,8 @@ interface SearchResponse {
 }
 
 export default function SearchPage() {
-  const [q, setQ] = useState('');
+  const [searchParams] = useSearchParams();
+  const [q, setQ] = useState(() => searchParams.get('q') ?? '');
   const [m, setM] = useState('hybrid');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [total, setTotal] = useState(0);
@@ -44,10 +46,11 @@ export default function SearchPage() {
       <div className="flex items-center gap-2 mb-4">
         <Search size={18} />
         <input
+          type="search"
           className="flex-1 border rounded px-3 py-1"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Search vault…"
+          placeholder="Search vault\u2026"
           aria-label="Search query"
         />
         <select value={m} onChange={(e) => setM(e.target.value)} aria-label="Search mode">
@@ -57,7 +60,7 @@ export default function SearchPage() {
         </select>
       </div>
 
-      {fetching && <p className="text-muted">Searching…</p>}
+      {fetching && <p className="text-muted">Searching\u2026</p>}
 
       {error && (
         <div className="flex items-center gap-2 text-red-600" role="alert">
@@ -67,7 +70,7 @@ export default function SearchPage() {
       )}
 
       {!fetching && !error && q.trim() && results.length === 0 && (
-        <p className="text-muted">No results for "{q}".</p>
+        <p className="text-muted">No results for &ldquo;{q}&rdquo;.</p>
       )}
 
       {total > 0 && (

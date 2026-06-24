@@ -13,9 +13,10 @@ vi.mock('react-router-dom', async () => {
   return { ...actual, useNavigate: () => mockNavigate };
 });
 
-const mockSearchNotes = vi.fn();
+// SearchPage calls api.search (not api.searchNotes)
+const mockSearch = vi.fn();
 vi.mock('../../services/api', () => ({
-  default: { searchNotes: (...args: unknown[]) => mockSearchNotes(...args) },
+  default: { search: (...args: unknown[]) => mockSearch(...args) },
 }));
 
 function renderPage(initialSearch = '') {
@@ -29,34 +30,35 @@ function renderPage(initialSearch = '') {
 }
 
 beforeEach(() => {
-  mockSearchNotes.mockReset();
+  mockSearch.mockReset();
   mockNavigate.mockReset();
-  mockSearchNotes.mockResolvedValue({ items: [], total: 0 });
+  mockSearch.mockResolvedValue({ items: [], total: 0 });
 });
 
 describe('SearchPage', () => {
   it('renders the search input', () => {
     renderPage();
-    expect(screen.getByRole('textbox')).toBeInTheDocument();
+    // type="search" gives role="searchbox"
+    expect(screen.getByRole('searchbox')).toBeInTheDocument();
   });
 
   it('populates input from URL query param ?q=', () => {
-    mockSearchNotes.mockResolvedValue({
+    mockSearch.mockResolvedValue({
       items: [{ id: 'n1', title: 'Karma', slug: 'karma', note_type: 'permanent', tags: [] }],
       total: 1,
     });
     renderPage('?q=karma');
-    const input = screen.getByRole('textbox') as HTMLInputElement;
+    const input = screen.getByRole('searchbox') as HTMLInputElement;
     expect(input.value).toBe('karma');
   });
 
-  it('calls searchNotes when URL has ?q=', async () => {
+  it('calls search when URL has ?q=', async () => {
     renderPage('?q=dharma');
-    await waitFor(() => expect(mockSearchNotes).toHaveBeenCalled());
+    await waitFor(() => expect(mockSearch).toHaveBeenCalled());
   });
 
   it('renders result titles', async () => {
-    mockSearchNotes.mockResolvedValue({
+    mockSearch.mockResolvedValue({
       items: [{ id: 'n1', title: 'Karma', slug: 'karma', note_type: 'permanent', tags: [] }],
       total: 1,
     });
@@ -67,13 +69,13 @@ describe('SearchPage', () => {
   it('renders empty state for no results', async () => {
     renderPage('?q=xyz123');
     await waitFor(() =>
-      expect(screen.getByText(/no results|not found|empty/i)).toBeInTheDocument()
+      expect(screen.getByText(/no results/i)).toBeInTheDocument()
     );
   });
 
   it('typing in the input triggers a new search', async () => {
     renderPage();
-    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'samsara' } });
-    await waitFor(() => expect(mockSearchNotes).toHaveBeenCalled());
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'samsara' } });
+    await waitFor(() => expect(mockSearch).toHaveBeenCalled());
   });
 });
