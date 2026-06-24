@@ -49,7 +49,7 @@ export default function GraphPage() {
     showLabels,
   } = useGraphStore();
 
-  // ── Wikilinks graph ──────────────────────────────────────────────────
+  // ── Wikilinks graph ────────────────────────────────────────────
   const {
     data: graphData,
     isLoading: graphLoading,
@@ -61,7 +61,7 @@ export default function GraphPage() {
     retry: false,
   });
 
-  // ── LightRAG graph health ───────────────────────────────────────────
+  // ── LightRAG graph health ───────────────────────────────────
   const { isLoading: lrGraphLoading, isError: lrGraphIsError, error: lrGraphError } = useQuery({
     queryKey: ['lightrag-graph'],
     queryFn:  () => api.getLightRagGraph(),
@@ -81,7 +81,7 @@ export default function GraphPage() {
   const lrIsError = lrGraphIsError || lrEntitiesIsError;
   const lrError   = lrGraphError   ?? lrEntitiesError;
 
-  // ── Derived graph data ──────────────────────────────────────────────────
+  // ── Derived graph data ─────────────────────────────────────────────
   const allNodes  = graphData?.nodes ?? [];
   const edgeCount = graphData?.edges?.length ?? 0;
 
@@ -142,7 +142,7 @@ export default function GraphPage() {
       )
     : allEntities;
 
-  // ── Handlers ──────────────────────────────────────────────────────
+  // ── Handlers ─────────────────────────────────────────────────
   const handleRefresh = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ['graph'] });
     if (activeTab === 'lightrag') {
@@ -169,11 +169,19 @@ export default function GraphPage() {
     graphRef.current?.zoom(2.5, 600);
   }, [selectNode]);
 
-  const handleZoomIn  = () => graphRef.current?.zoom((graphRef.current as unknown as { zoom: () => number }).zoom?.() * 1.3 ?? 1.5, 200);
-  const handleZoomOut = () => graphRef.current?.zoom((graphRef.current as unknown as { zoom: () => number }).zoom?.() / 1.3 ?? 0.8, 200);
+  // Read the current zoom level first (with its own fallback), THEN do the
+  // arithmetic. This ensures ?? has a null/undefined to guard against and
+  // avoids the esbuild "?? always returns left operand" warning that fires
+  // when the fallback is placed after a multiply/divide result (which is
+  // always a number — never null/undefined — even when .zoom?.() is undefined).
+  const getZoom = () =>
+    (graphRef.current as unknown as { zoom?: () => number } | null)?.zoom?.() ?? 1;
+
+  const handleZoomIn  = () => graphRef.current?.zoom(getZoom() * 1.3, 200);
+  const handleZoomOut = () => graphRef.current?.zoom(getZoom() / 1.3, 200);
   const handleZoomFit = () => graphRef.current?.zoomToFit(400, 40);
 
-  // ── Render ──────────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────
   return (
     <div className="graph-page">
       {/* Header */}
