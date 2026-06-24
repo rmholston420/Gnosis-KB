@@ -1,113 +1,91 @@
-/**
- * SearchPage.tsx — full hybrid / semantic / keyword search UI.
- * Uses the hook layer (hooks/useSearch) so RTL tests can spy correctly.
- */
-import React, { useState, useEffect } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
-import { Search, Loader2, AlertCircle } from 'lucide-react';
-import { useHybridSearch, useKeywordSearch } from '../hooks/useSearch';
-import { SearchResults } from '../components/search/SearchResults';
-import { SemanticSearch } from '../components/search/SemanticSearch';
+import React, { useState, useCallback } from 'react';
+import { useSearch } from '../hooks/useSearch';
+import SearchResults from '../components/search/SearchResults';
+import SemanticSearch from '../components/search/SemanticSearch';
+import type { SearchMode } from '../types';
 
-type Mode = 'hybrid' | 'semantic' | 'keyword';
-
-const MODES: { id: Mode; label: string }[] = [
-  { id: 'hybrid',   label: 'Hybrid'   },
-  { id: 'semantic', label: 'Semantic' },
-  { id: 'keyword',  label: 'Keyword'  },
+const MODES: { label: string; value: SearchMode }[] = [
+  { label: 'Hybrid',   value: 'hybrid'   },
+  { label: 'Semantic', value: 'semantic' },
+  { label: 'Keyword',  value: 'keyword'  },
+  { label: 'Full-text',value: 'fulltext' },
 ];
 
 export default function SearchPage() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const navigate = useNavigate();
+  const [query,  setQuery]  = useState('');
+  const [mode,   setMode]   = useState<SearchMode>('hybrid');
+  const [input,  setInput]  = useState('');
 
-  const [query, setQuery] = useState(searchParams.get('q') ?? '');
-  const [mode, setMode]   = useState<Mode>('hybrid');
+  // Debounced search via hook
+  const { data, isLoading, isError } = useSearch(query, mode);
 
-  useEffect(() => {
-    const p = new URLSearchParams(searchParams);
-    if (query) { p.set('q', query); } else { p.delete('q'); }
-    setSearchParams(p, { replace: true });
-  }, [query]); // eslint-disable-line
-
-  const hybridResult  = useHybridSearch(query);
-  const keywordResult = useKeywordSearch(query);
-  const active = mode === 'keyword' ? keywordResult : hybridResult;
-  const { data, isLoading, isError } = active;
-  const items = data?.items ?? [];
-  const total = data?.total ?? 0;
-
-  const handleResultClick = (noteId: string) => navigate(`/notes/${noteId}`);
+  const handleSubmit = useCallback(
+    (e: React.FormEvent) => {
+      e.preventDefault();
+      setQuery(input.trim());
+    },
+    [input],
+  );
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-8 space-y-6">
-      <h1 className="text-xl font-semibold text-gnosis-fg">Search</h1>
+    <div className="flex flex-col h-full bg-gnosis-bg text-gnosis-fg">
+      {/* ── Header ── */}
+      <div className="px-6 pt-6 pb-4 border-b border-gnosis-border">
+        <h1 className="text-xl font-semibold mb-4">Search</h1>
 
-      <div className="relative">
-        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gnosis-muted pointer-events-none" />
-        <input
-          type="search"
-          role="searchbox"
-          aria-label="Search vault"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search your vault…"
-          className="w-full pl-9 pr-4 py-2.5 text-sm bg-gnosis-surface border border-gnosis-border rounded-lg text-gnosis-fg placeholder-gnosis-muted focus:outline-none focus:ring-2 focus:ring-gnosis-accent"
-        />
-      </div>
+        {/* Mode tabs */}
+        <div className="flex gap-1 mb-4" role="tablist">
+          {MODES.map((m) => (
+            <button
+              key={m.value}
+              role="tab"
+              aria-selected={mode === m.value}
+              onClick={() => setMode(m.value)}
+              className={[
+                'px-3 py-1.5 rounded text-sm transition-colors',
+                mode === m.value
+                  ? 'bg-gnosis-surface text-gnosis-fg font-medium shadow-sm'
+                  : 'text-gnosis-muted hover:text-gnosis-fg hover:bg-gnosis-surface',
+              ].join(' ')}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
 
-      <div role="tablist" className="flex gap-1 p-1 bg-gnosis-surface rounded-lg w-fit border border-gnosis-border">
-        {MODES.map(({ id, label }) => (
-          <button
-            key={id}
-            role="button"
-            aria-pressed={mode === id}
-            onClick={() => setMode(id)}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-              mode === id ? 'bg-gnosis-accent text-white' : 'text-gnosis-muted hover:text-gnosis-fg hover:bg-gnosis-hover'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {mode === 'semantic' && <SemanticSearch />}
-
-      {mode !== 'semantic' && (
-        <>
-          {isError && (
-            <div className="flex items-center gap-2 text-sm text-red-400 p-3 rounded-lg border border-red-400/20">
-              <AlertCircle size={15} /><span>Search failed — please try again.</span>
-            </div>
-          )}
-          {isLoading && (
-            <div className="flex items-center gap-2 text-sm text-gnosis-muted">
-              <Loader2 size={14} className="animate-spin" /><span>Searching…</span>
-            </div>
-          )}
-          {!isLoading && !isError && query && items.length === 0 && (
-            <p className="text-sm text-gnosis-muted py-8 text-center">
-              No results for <strong className="text-gnosis-fg">"{query}"</strong>
-            </p>
-          )}
-          {/*
-            SearchResults renders its own count paragraph internally.
-            Do NOT add a duplicate count <p> here — tests call getByText(/N results/i)
-            and would find two elements.
-          */}
-          {items.length > 0 && (
-            <SearchResults
-              results={items}
-              query={query}
-              isLoading={isLoading}
-              isError={isError}
-              total={total}
-              onResultClick={handleResultClick}
+        {/* Search bar — only for non-semantic modes */}
+        {mode !== 'semantic' && (
+          <form onSubmit={handleSubmit} className="flex gap-2">
+            <input
+              type="search"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Search your vault…"
+              className="flex-1 px-3 py-2 rounded bg-gnosis-surface border border-gnosis-border text-gnosis-fg placeholder-gnosis-muted text-sm focus:outline-none focus:ring-2 focus:ring-gnosis-accent"
             />
-          )}
-        </>
-      )}
+            <button
+              type="submit"
+              className="px-4 py-2 rounded bg-gnosis-accent text-white text-sm font-medium hover:opacity-90 transition-opacity"
+            >
+              Search
+            </button>
+          </form>
+        )}
+      </div>
+
+      {/* ── Body ── */}
+      <div className="flex-1 overflow-y-auto px-6 py-4">
+        {mode === 'semantic' ? (
+          <SemanticSearch />
+        ) : (
+          <SearchResults
+            results={data?.items ?? data?.results ?? []}
+            query={query}
+            isLoading={isLoading}
+            isError={isError}
+          />
+        )}
+      </div>
     </div>
   );
 }
