@@ -39,5 +39,46 @@ export default function SearchPage() {
     void run();
   }, [q, m]);
 
-  return <div className="p-4">Search</div>;
+  return (
+    <div className="p-4">
+      <div className="flex items-center gap-2 mb-4">
+        <Search size={18} />
+        <input
+          className="flex-1 border rounded px-3 py-1"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search vault…"
+          aria-label="Search query"
+        />
+        <select value={m} onChange={(e) => setM(e.target.value)} aria-label="Search mode">
+          <option value="hybrid">Hybrid</option>
+          <option value="semantic">Semantic</option>
+          <option value="keyword">Keyword</option>
+        </select>
+      </div>
+
+      {fetching && <p className="text-muted">Searching…</p>}
+
+      {error && (
+        <div className="flex items-center gap-2 text-red-600" role="alert">
+          <AlertCircle size={16} />
+          <span>Search failed. Please try again.</span>
+        </div>
+      )}
+
+      {!fetching && !error && q.trim() && results.length === 0 && (
+        <p className="text-muted">No results for "{q}".</p>
+      )}
+
+      {total > 0 && (
+        <p className="text-sm text-muted mb-2">{total} result{total !== 1 ? 's' : ''}</p>
+      )}
+
+      <div className="space-y-2">
+        {results.map((r) => (
+          <NoteCard key={r.note_id} note={r as unknown as import('../types').Note} />
+        ))}
+      </div>
+    </div>
+  );
 }

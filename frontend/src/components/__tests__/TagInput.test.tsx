@@ -2,29 +2,14 @@
  * TagInput
  * ========
  * Tests for the inline tag editor used in NoteEditor.
- *
- * Cases (10):
- *  1.  Renders existing tags
- *  2.  Enter key adds a tag and clears input
- *  3.  Comma key adds a tag
- *  4.  Duplicate tags are not added
- *  5.  Whitespace-only input is rejected
- *  6.  Backspace on empty input removes the last tag
- *  7.  Clicking × on a tag removes it
- *  8.  onChange is called with the new array after add
- *  9.  onChange is called with the new array after remove
- *  10. Input is disabled when disabled=true
  */
 
-import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import TagInput from '../TagInput';
 
-// Prevent TagInput's useQuery from making real HTTP requests in unit tests.
-// The autocomplete feature is not under test here — we just need the
-// component to mount without crashing.
 vi.mock('../../services/api', () => ({
   default: {
     listTags: vi.fn().mockResolvedValue([]),
@@ -34,12 +19,7 @@ vi.mock('../../services/api', () => ({
 function makeClient() {
   return new QueryClient({
     defaultOptions: {
-      queries: {
-        // Never retry in tests — fail fast
-        retry: false,
-        // Don't cache between tests
-        gcTime: 0,
-      },
+      queries: { retry: false, gcTime: 0 },
     },
   });
 }
@@ -94,7 +74,7 @@ describe('TagInput', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it('ignores whitespace-only input', () => {
+  it('rejects whitespace-only input', () => {
     const onChange = vi.fn();
     setup([], onChange);
     const input = screen.getByRole('textbox');
@@ -105,36 +85,33 @@ describe('TagInput', () => {
 
   it('Backspace on empty input removes last tag', () => {
     const onChange = vi.fn();
-    setup(['alpha', 'beta'], onChange);
+    setup(['a', 'b'], onChange);
     const input = screen.getByRole('textbox');
     fireEvent.keyDown(input, { key: 'Backspace' });
-    expect(onChange).toHaveBeenCalledWith(['alpha']);
+    expect(onChange).toHaveBeenCalledWith(['a']);
   });
 
-  it('clicking × removes the tag', () => {
+  it('clicking × removes a tag', () => {
     const onChange = vi.fn();
-    setup(['alpha', 'beta'], onChange);
-    // Each tag has a remove button (×)
-    const removeButtons = screen.getAllByRole('button');
-    fireEvent.click(removeButtons[0]); // removes 'alpha'
-    expect(onChange).toHaveBeenCalledWith(['beta']);
+    setup(['removeme'], onChange);
+    fireEvent.click(screen.getByRole('button', { name: /remove removeme/i }));
+    expect(onChange).toHaveBeenCalledWith([]);
   });
 
   it('onChange called with new array after add', () => {
     const onChange = vi.fn();
-    setup(['existing'], onChange);
+    setup(['x'], onChange);
     const input = screen.getByRole('textbox');
-    fireEvent.change(input, { target: { value: 'new' } });
+    fireEvent.change(input, { target: { value: 'y' } });
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(onChange).toHaveBeenCalledWith(['existing', 'new']);
+    expect(onChange).toHaveBeenCalledWith(['x', 'y']);
   });
 
   it('onChange called with new array after remove', () => {
     const onChange = vi.fn();
-    setup(['alpha', 'beta'], onChange);
-    const removeButtons = screen.getAllByRole('button');
-    fireEvent.click(removeButtons[1]); // removes 'beta'
-    expect(onChange).toHaveBeenCalledWith(['alpha']);
+    setup(['p', 'q'], onChange);
+    fireEvent.click(screen.getByRole('button', { name: /remove p/i }));
+    expect(onChange).toHaveBeenCalledWith(['q']);
   });
 
   it('input is disabled when disabled=true', () => {

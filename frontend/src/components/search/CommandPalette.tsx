@@ -1,37 +1,18 @@
 /**
  * CommandPalette — Global Cmd+K / Ctrl+K command palette.
- *
- * Features:
- *   - Opens on Cmd+K (Mac) or Ctrl+K (Windows/Linux) from anywhere in the app
- *   - Closes on Escape key
- *   - Fuzzy note search via Fuse.js over a cached note list
- *   - Built-in navigation actions: New Note, Go to Graph, Go to Search, Go to Settings
- *   - Keyboard navigation: Arrow keys, Enter to execute, Escape to dismiss
- *   - Uses cmdk (Command component) for accessible list management
- *
- * @see https://cmdk.paco.me
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Command } from "cmdk";
 import { useNavigate } from "react-router-dom";
 import Fuse from "fuse.js";
-import {
-  FileText,
-  GitBranch,
-  Plus,
-  Search,
-  Settings,
-  Zap,
-} from "lucide-react";
+import { FileText, GitBranch, Plus, Search, Settings, Zap } from "lucide-react";
 
-/** Lightweight note stub used for palette search results. */
 interface NoteStub {
   id: string;
   title: string;
   folder: string;
 }
 
-/** Static navigation action item. */
 interface ActionItem {
   id: string;
   label: string;
@@ -40,7 +21,6 @@ interface ActionItem {
   group: "actions";
 }
 
-/** Note search result item. */
 interface NoteItem {
   id: string;
   title: string;
@@ -50,7 +30,6 @@ interface NoteItem {
 
 type PaletteItem = ActionItem | NoteItem;
 
-/** Fetch vault note stubs for search index population. */
 async function fetchNoteStubs(): Promise<NoteStub[]> {
   const base = import.meta.env.VITE_API_BASE_URL ?? "";
   try {
@@ -67,7 +46,6 @@ async function fetchNoteStubs(): Promise<NoteStub[]> {
   }
 }
 
-/** Create a new note via the API and navigate to the editor. */
 async function createQuickNote(navigate: ReturnType<typeof useNavigate>) {
   const base = import.meta.env.VITE_API_BASE_URL ?? "";
   try {
@@ -93,20 +71,11 @@ async function createQuickNote(navigate: ReturnType<typeof useNavigate>) {
   }
 }
 
-/** Props for CommandPalette component. */
 interface CommandPaletteProps {
-  /** Called when the palette should close (user pressed Escape or clicked backdrop). */
   onClose?: () => void;
 }
 
-/**
- * CommandPalette — Global search and navigation overlay.
- *
- * Can be imported as either a named or default import:
- *   import CommandPalette from './CommandPalette';
- *   import { CommandPalette } from './CommandPalette';
- */
-export function CommandPalette({ onClose }: CommandPaletteProps = {}) {
+export default function CommandPalette({ onClose }: CommandPaletteProps = {}) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [notes, setNotes] = useState<NoteStub[]>([]);
@@ -114,7 +83,6 @@ export function CommandPalette({ onClose }: CommandPaletteProps = {}) {
   const fuseRef = useRef<Fuse<NoteStub> | null>(null);
   const navigate = useNavigate();
 
-  /** Load note stubs and build Fuse index on first open. */
   useEffect(() => {
     if (open && notes.length === 0) {
       fetchNoteStubs().then((stubs) => {
@@ -128,7 +96,6 @@ export function CommandPalette({ onClose }: CommandPaletteProps = {}) {
     }
   }, [open, notes.length]);
 
-  /** Register Cmd+K / Ctrl+K global shortcut and Escape to close. */
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
@@ -139,7 +106,6 @@ export function CommandPalette({ onClose }: CommandPaletteProps = {}) {
       if (e.key === "Escape") {
         setOpen((prev) => {
           if (prev) {
-            // Reset query and notify parent when closing via Escape
             setQuery("");
             onClose?.();
             return false;
@@ -150,8 +116,6 @@ export function CommandPalette({ onClose }: CommandPaletteProps = {}) {
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  // onClose is stable (passed from parent), safe to include
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onClose]);
 
   const close = useCallback(() => {
@@ -160,7 +124,6 @@ export function CommandPalette({ onClose }: CommandPaletteProps = {}) {
     onClose?.();
   }, [onClose]);
 
-  /** Build static action items. */
   const actions: ActionItem[] = [
     {
       id: "new-note",
@@ -199,7 +162,6 @@ export function CommandPalette({ onClose }: CommandPaletteProps = {}) {
     },
   ];
 
-  /** Update results when query changes. */
   useEffect(() => {
     if (!query.trim()) {
       setResults(actions);
@@ -248,8 +210,6 @@ export function CommandPalette({ onClose }: CommandPaletteProps = {}) {
                 No results found
               </Command.Empty>
             )}
-
-            {/* Actions group */}
             {results.some((r) => r.group === "actions") && (
               <Command.Group heading="Actions" className="command-palette-group">
                 {results
@@ -267,8 +227,6 @@ export function CommandPalette({ onClose }: CommandPaletteProps = {}) {
                   ))}
               </Command.Group>
             )}
-
-            {/* Notes group */}
             {results.some((r) => r.group === "notes") && (
               <Command.Group heading="Notes" className="command-palette-group">
                 {results
@@ -277,10 +235,7 @@ export function CommandPalette({ onClose }: CommandPaletteProps = {}) {
                     <Command.Item
                       key={item.id}
                       value={item.id}
-                      onSelect={() => {
-                        close();
-                        navigate(`/editor/${item.id}`);
-                      }}
+                      onSelect={() => { close(); navigate(`/editor/${item.id}`); }}
                       className="command-palette-item"
                     >
                       <span className="command-palette-item-icon"><FileText size={16} /></span>
@@ -296,6 +251,3 @@ export function CommandPalette({ onClose }: CommandPaletteProps = {}) {
     </div>
   );
 }
-
-/** Allow both default and named imports. */
-export default CommandPalette;

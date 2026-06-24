@@ -14,7 +14,7 @@ import BacklinkPanel from '@/components/BacklinkPanel';
 const INC: import('@/types').LinkRef[] = [
   { source_id: 'note-a', target_id: 'note-1', link_text: 'Note A', link_type: 'wiki' },
 ];
-const OUT: import('@/types').LinkRef[] = [
+const _OUT: import('@/types').LinkRef[] = [
   { source_id: 'note-1', target_id: 'note-b', link_text: 'Note B', link_type: 'wiki' },
 ];
 
