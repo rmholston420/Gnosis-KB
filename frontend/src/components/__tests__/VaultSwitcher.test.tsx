@@ -13,7 +13,7 @@
  *  1.  Renders the switcher trigger button
  *  2.  Dropdown is closed by default
  *  3.  Clicking trigger opens the dropdown
- *  4.  Own-vault entry is shown with 'owner' badge
+ *  4.  Own-vault entry is shown with 'You' badge
  *  5.  Shared vault entries are listed
  *  6.  Pending grant shows an 'Accept' button
  *  7.  Clicking Accept calls acceptVaultGrant with the correct grantId
@@ -80,11 +80,12 @@ describe('VaultSwitcher', () => {
     await waitFor(() => expect(screen.getByText("Alice's Vault")).toBeInTheDocument());
   });
 
-  it('own-vault entry is shown with owner badge', async () => {
+  it('own-vault entry is shown with You badge', async () => {
     renderSwitcher();
     fireEvent.click(screen.getByRole('button', { name: /vault/i }));
     await waitFor(() => expect(screen.getByText('My Notes')).toBeInTheDocument());
-    expect(screen.getByText(/owner/i)).toBeInTheDocument();
+    // The component renders a "You" badge on the own-vault row (not "owner")
+    expect(screen.getByText('You')).toBeInTheDocument();
   });
 
   it('shared vault entries are listed', async () => {
