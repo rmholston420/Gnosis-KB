@@ -1,6 +1,8 @@
 /**
  * TagInput
  * ========
+ * Wraps with QueryClientProvider because TagInput calls useQuery for
+ * tag autocomplete suggestions.
  *
  * What we test (11 cases):
  *  1.  Renders existing tags as chips
@@ -18,8 +20,18 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 import TagInput from '../TagInput';
+
+// Mock api.listTags used by TagInput's autocomplete query
+vi.mock('../../services/api', () => ({
+  default: { listTags: vi.fn().mockResolvedValue([]) },
+}));
+
+function makeQC() {
+  return new QueryClient({ defaultOptions: { queries: { retry: false } } });
+}
 
 function renderTagInput(
   tags: string[] = [],
@@ -27,12 +39,14 @@ function renderTagInput(
   props: Record<string, unknown> = {},
 ) {
   return render(
-    <TagInput
-      tags={tags}
-      onChange={onChange}
-      placeholder="Add tags…"
-      {...props}
-    />,
+    <QueryClientProvider client={makeQC()}>
+      <TagInput
+        tags={tags}
+        onChange={onChange}
+        placeholder="Add tags…"
+        {...props}
+      />
+    </QueryClientProvider>,
   );
 }
 
@@ -108,9 +122,8 @@ describe('removing tags', () => {
   it('clicking × removes that tag', () => {
     const onChange = vi.fn();
     renderTagInput(['alpha', 'beta'], onChange);
-    // Find the remove button for 'alpha'
     const removeButtons = screen.getAllByRole('button');
-    fireEvent.click(removeButtons[0]); // first chip's × button
+    fireEvent.click(removeButtons[0]);
     expect(onChange).toHaveBeenCalledWith(['beta']);
   });
 
