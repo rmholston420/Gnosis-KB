@@ -1,39 +1,27 @@
 /**
- * api/search.ts — typed wrappers for the search endpoints.
+ * api/search.ts — typed API client for search endpoints.
  */
-import { apiGet } from './client';
-import type { SearchResult } from '../types';
+import type { SearchResult, SearchMode } from '../types';
 
-export type SearchMode = 'hybrid' | 'semantic' | 'fulltext' | 'keyword';
+const BASE = (import.meta as unknown as { env: Record<string, string> }).env?.VITE_API_URL ?? '';
 
-export interface SearchParams {
-  q:       string;
-  mode?:   SearchMode;
-  limit?:  number;
-  offset?: number;
-  tags?:   string[];
+async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    headers: { 'Content-Type': 'application/json' },
+    ...init,
+  });
+  if (!res.ok) throw new Error(`Search API ${res.status}: ${path}`);
+  return res.json() as Promise<T>;
 }
 
-export interface SearchResponse {
-  results: SearchResult[];
-  total:   number;
-  took_ms: number;
-}
+export const searchApi = {
+  search: (query: string, mode: SearchMode = 'hybrid') =>
+    req<SearchResult[]>(
+      `/api/search?q=${encodeURIComponent(query)}&mode=${mode}`
+    ),
 
-export async function searchNotes(params: SearchParams): Promise<SearchResponse> {
-  const qs = new URLSearchParams();
-  qs.set('q', params.q);
-  if (params.mode)   qs.set('mode',   params.mode);
-  if (params.limit)  qs.set('limit',  String(params.limit));
-  if (params.offset) qs.set('offset', String(params.offset));
-  if (params.tags?.length) qs.set('tags', params.tags.join(','));
-  return apiGet<SearchResponse>(`/search?${qs.toString()}`);
-}
+  getSimilar: (noteId: string) =>
+    req<SearchResult[]>(`/api/search/similar/${noteId}`),
+};
 
-export async function semanticSearch(q: string, limit = 10): Promise<SearchResponse> {
-  return searchNotes({ q, mode: 'semantic', limit });
-}
-
-export async function keywordSearch(q: string, limit = 20): Promise<SearchResponse> {
-  return searchNotes({ q, mode: 'keyword', limit });
-}
+export default searchApi;

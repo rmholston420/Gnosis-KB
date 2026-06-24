@@ -1,133 +1,103 @@
 /**
- * useNotes hooks — TanStack Query wrappers for the notes REST API.
- *
- * Both canonical names and test-expected aliases are exported.
+ * hooks/useNotes.ts — TanStack Query hooks for note data.
  */
-import {
-  useQuery,
-  useMutation,
-  useQueryClient,
-} from '@tanstack/react-query';
-import api from '../services/api';
-import type { Note, NoteCreate, NoteUpdate } from '../types';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { notesApi } from '../api/notes';
+import type { ListNotesParams } from '../api/notes';
+import type { Note, NoteCreate, NoteUpdate, Backlink } from '../types';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// List
-// ─────────────────────────────────────────────────────────────────────────────
+export const NOTES_KEY  = 'notes';
+export const NOTE_KEY   = 'note';
+export const BACKLINK_KEY = 'backlinks';
 
-export interface ListNotesParams {
-  folder?:    string;
-  tag?:       string;
-  note_type?: string;
-  q?:         string;
-  limit?:     number;
-  offset?:    number;
+// ── List ──────────────────────────────────────────────────────────────────────
+
+export function useNotes(params: ListNotesParams = {}) {
+  return useQuery({
+    queryKey: [NOTES_KEY, params],
+    queryFn:  () => notesApi.listNotes(params),
+  });
 }
+
+// ── Single note ───────────────────────────────────────────────────────────────
+
+export function useNote(id: string | null | undefined) {
+  return useQuery({
+    queryKey:  [NOTE_KEY, id],
+    queryFn:   () => notesApi.getNote(id!),
+    enabled:   Boolean(id),
+  });
+}
+
+// ── Backlinks ─────────────────────────────────────────────────────────────────
+
+export function useBacklinks(noteId: string | null | undefined) {
+  return useQuery({
+    queryKey: [BACKLINK_KEY, noteId],
+    queryFn:  () => notesApi.getBacklinks(noteId!),
+    enabled:  Boolean(noteId),
+    select:   (d): Backlink[] => d.backlinks,
+  });
+}
+
+// ── Daily note ────────────────────────────────────────────────────────────────
 
 /**
- * Fetch a (filtered) list of notes. Canonical name: useNotes.
- * @param params Optional filters forwarded to GET /api/notes/
+ * Fetches (or creates) today's daily journal note.
+ * Returns a query for the note and a mutation to create it if missing.
  */
-export function useNotes(params: ListNotesParams = {}) {
-  return useQuery<Note[]>({
-    queryKey: ['notes', params],
-    queryFn:  () => api.listNotes(params) as Promise<Note[]>,
+export function useDailyNote() {
+  const qc    = useQueryClient();
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const key   = [NOTE_KEY, 'daily', today];
+
+  const query = useQuery({
+    queryKey: key,
+    queryFn:  () =>
+      notesApi.listNotes({ note_type: 'journal', q: today, per_page: 1 })
+        .then(ns => ns[0] ?? null),
   });
+
+  const create = useMutation({
+    mutationFn: () =>
+      notesApi.createNote({
+        title:     `Daily Note — ${today}`,
+        body:      '',
+        note_type: 'journal',
+        folder:    'journal',
+      }),
+    onSuccess: (note) => qc.setQueryData(key, note),
+  });
+
+  return { query, create, today };
 }
 
-/** Alias expected by unit tests. */
-export const useNotesList = useNotes;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Single note
-// ─────────────────────────────────────────────────────────────────────────────
-
-export function useNote(noteId: string | null | undefined) {
-  return useQuery<Note>({
-    queryKey: ['note', noteId],
-    queryFn:  () => api.getNote(noteId!) as Promise<Note>,
-    enabled:  !!noteId,
-  });
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Create
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Create / Update / Delete ──────────────────────────────────────────────────
 
 export function useCreateNote() {
   const qc = useQueryClient();
-  return useMutation<Note, Error, NoteCreate>({
-    mutationFn: (payload) => api.createNote(payload) as Promise<Note>,
-    onSuccess:  () => { void qc.invalidateQueries({ queryKey: ['notes'] }); },
+  return useMutation({
+    mutationFn: (data: NoteCreate) => notesApi.createNote(data),
+    onSuccess:  () => qc.invalidateQueries({ queryKey: [NOTES_KEY] }),
   });
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Update
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface UpdateNoteVars {
-  id:      string;
-  payload: NoteUpdate;
-}
-
-/**
- * Update a note. Canonical usage: `const m = useUpdateNote(); m.mutateAsync({ id, payload });
- * Test-friendly overload: `const m = useUpdateNote(); m.mutateAsync({ id, payload })` — same shape.
- * An optional `noteId` arg is accepted for backward compat with tests that call
- * `useUpdateNote('note-001')` — the argument is ignored; callers must pass id in mutateAsync.
- */
-export function useUpdateNote(_noteId?: string) {
+export function useUpdateNote() {
   const qc = useQueryClient();
-  return useMutation<Note, Error, UpdateNoteVars>({
-    mutationFn: ({ id, payload }) => api.updateNote(id, payload) as Promise<Note>,
-    onSuccess:  (_, { id }) => {
-      void qc.invalidateQueries({ queryKey: ['note', id] });
-      void qc.invalidateQueries({ queryKey: ['notes'] });
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: NoteUpdate }) =>
+      notesApi.updateNote(id, data),
+    onSuccess:  (note: Note) => {
+      qc.setQueryData([NOTE_KEY, note.note_id], note);
+      qc.invalidateQueries({ queryKey: [NOTES_KEY] });
     },
   });
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Delete
-// ─────────────────────────────────────────────────────────────────────────────
 
 export function useDeleteNote() {
   const qc = useQueryClient();
-  return useMutation<void, Error, string>({
-    mutationFn: (id) => api.deleteNote(id),
-    onSuccess:  () => {
-      void qc.invalidateQueries({ queryKey: ['notes'] });
-      void qc.invalidateQueries({ queryKey: ['graph'] });
-    },
-  });
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Vault-level
-// ─────────────────────────────────────────────────────────────────────────────
-
-export function useTags() {
-  return useQuery<string[]>({
-    queryKey: ['tags'],
-    queryFn:  () => api.listTags() as Promise<string[]>,
-  });
-}
-
-export function useFolders() {
-  return useQuery<string[]>({
-    queryKey: ['folders'],
-    queryFn:  () => api.listFolders() as Promise<string[]>,
-  });
-}
-
-export function useVaultSync() {
-  const qc = useQueryClient();
-  return useMutation<void, Error, void>({
-    mutationFn: () => api.triggerVaultSync(),
-    onSuccess:  () => {
-      void qc.invalidateQueries({ queryKey: ['notes'] });
-      void qc.invalidateQueries({ queryKey: ['graph'] });
-    },
+  return useMutation({
+    mutationFn: (id: string) => notesApi.deleteNote(id),
+    onSuccess:  () => qc.invalidateQueries({ queryKey: [NOTES_KEY] }),
   });
 }

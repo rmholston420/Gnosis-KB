@@ -1,37 +1,27 @@
 /**
- * Graph API — typed wrappers around /api/v1/graph endpoints.
+ * api/graph.ts — typed API client for graph endpoints.
  */
-import client from './client';
-import type { GraphData, GraphStats, GraphPath } from '../types';
+import type { GraphData, GraphEntitySummary } from '../types';
 
-/** Get the full graph (all nodes + edges) for visualization. */
-export async function getFullGraph(): Promise<GraphData> {
-  const { data } = await client.get<GraphData>('/api/v1/graph');
-  return data;
-}
+const BASE = (import.meta as unknown as { env: Record<string, string> }).env?.VITE_API_URL ?? '';
 
-/** Get ego-graph: a note and its 1-hop neighbors. */
-export async function getNeighborhood(noteId: string, hops = 1): Promise<GraphData> {
-  const { data } = await client.get<GraphData>(`/api/v1/graph/neighborhood/${noteId}`, {
-    params: { hops },
+async function req<T>(path: string): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    headers: { 'Content-Type': 'application/json' },
   });
-  return data;
+  if (!res.ok) throw new Error(`Graph API ${res.status}: ${path}`);
+  return res.json() as Promise<T>;
 }
 
-/** Get shortest path between two notes (NetworkX). */
-export async function getPath(fromId: string, toId: string): Promise<GraphPath> {
-  const { data } = await client.get<GraphPath>(`/api/v1/graph/path/${fromId}/${toId}`);
-  return data;
-}
+export const graphApi = {
+  /** Full note-link graph (nodes + edges). */
+  getFullGraph:      () => req<GraphData>('/api/graph'),
 
-/** Get community clusters (Louvain algorithm). */
-export async function getClusters(): Promise<GraphData> {
-  const { data } = await client.get<GraphData>('/api/v1/graph/clusters');
-  return data;
-}
+  /** LightRAG knowledge graph (nodes + edges). */
+  getLightRagGraph:  () => req<GraphData>('/api/lightrag/graph'),
 
-/** Get graph statistics (density, avg degree, orphan count). */
-export async function getGraphStats(): Promise<GraphStats> {
-  const { data } = await client.get<GraphStats>('/api/v1/graph/stats');
-  return data;
-}
+  /** Named entity summaries from LightRAG. */
+  getGraphEntities:  () => req<GraphEntitySummary[]>('/api/lightrag/entities'),
+};
+
+export default graphApi;

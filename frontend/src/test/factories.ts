@@ -1,46 +1,51 @@
 /**
- * Test factories — create fully-typed domain objects for use in tests.
- * All required fields are present; callers can override with Partial<T>.
+ * test/factories.ts — Test data factories.
  */
-import type { Note, NoteListItem, SearchResult, NoteType, NoteStatus } from '../types';
+import type {
+  Note,
+  NoteListItem,
+  SearchResult,
+  NoteType,
+  NoteStatus,
+} from '../types';
 
 export function makeNote(overrides: Partial<Note> = {}): Note {
-  const id = overrides.note_id ?? overrides.id ?? 'note-001';
+  const note_id = overrides.note_id ?? overrides.id ?? 'note-001';
   return {
-    note_id:        id,
-    id,
-    title:          'Test Note',
-    slug:           'test-note',
-    body:           '# Test\n\nBody content.',
-    body_html:      '<h1>Test</h1><p>Body content.</p>',
-    note_type:      'permanent' as NoteType,
-    status:         'evergreen' as NoteStatus,
-    folder:         'inbox',
-    word_count:     10,
-    is_deleted:     false,
-    vector_indexed: false,
-    graph_indexed:  false,
-    frontmatter:    {},
-    tags:           [],
-    outgoing_links: [],
-    incoming_links: [],
+    note_id,
+    id:         note_id,
+    title:      'Test Note',
+    body:       '# Test\n\nBody text.',
+    note_type:  'permanent' as NoteType,
+    status:     'active'   as NoteStatus,
+    tags:       [],
+    folder:     'inbox',
+    word_count: 4,
+    created_at: '2025-01-01T00:00:00Z',
+    updated_at: '2025-01-01T00:00:00Z',
+    modified_at:'2025-01-01T00:00:00Z',
     ...overrides,
+    note_id,       // always equal to resolved note_id
+    id: note_id,   // always keep alias in sync
   };
 }
 
-export function makeListItem(overrides: Partial<NoteListItem> = {}): NoteListItem {
-  const id = overrides.note_id ?? overrides.id ?? 'note-001';
+export function makeNoteListItem(overrides: Partial<NoteListItem> = {}): NoteListItem {
+  const note_id = overrides.note_id ?? overrides.id ?? 'note-001';
   return {
-    note_id:   id,
-    id,
+    note_id,
+    id:        note_id,
     title:     'Test Note',
-    slug:      'test-note',
     note_type: 'permanent' as NoteType,
-    status:    'evergreen' as NoteStatus,
-    folder:    'inbox',
-    word_count: 10,
+    status:    'active'    as NoteStatus,
     tags:      [],
+    folder:    'inbox',
+    word_count: 4,
+    created_at: '2025-01-01T00:00:00Z',
+    updated_at: '2025-01-01T00:00:00Z',
     ...overrides,
+    note_id,
+    id: note_id,
   };
 }
 
@@ -48,8 +53,12 @@ export function makeSearchResult(overrides: Partial<SearchResult> = {}): SearchR
   return {
     note_id:  'note-001',
     title:    'Test Result',
-    slug:     'test-result',
+    excerpt:  'Test excerpt body.',
+    snippet:  'Test excerpt body.',
+    score:    0.9,
     folder:   'inbox',
+    tags:     [],
+    note_type:'permanent' as NoteType,
     ...overrides,
   };
 }

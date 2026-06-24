@@ -1,27 +1,46 @@
 /**
- * useSearch hook — TanStack Query wrapper for the search endpoints.
+ * hooks/useSearch.ts — TanStack Query hooks for search.
+ * Exports named hooks for each search mode so tests can spy on them.
  */
 import { useQuery } from '@tanstack/react-query';
-import api from '../services/api';
-import type { SearchResult } from '../types';
+import { searchApi } from '../api/search';
+import type { SearchResult, SearchMode } from '../types';
 
-export type SearchMode = 'hybrid' | 'semantic' | 'fulltext' | 'keyword';
+const SEARCH_KEY = 'search';
 
-export interface UseSearchParams {
-  q:       string;
-  mode?:   SearchMode;
-  limit?:  number;
-  offset?: number;
-  tags?:   string[];
-}
+// ── Generic / default hook ────────────────────────────────────────────────────
 
-export function useSearch(params: UseSearchParams) {
-  return useQuery<SearchResult[]>({
-    queryKey: ['search', params],
-    queryFn:  () => api.search(params.q, params.mode ?? 'hybrid', params.limit) as Promise<SearchResult[]>,
-    enabled:  params.q.trim().length > 0,
-    staleTime: 30_000,
+export function useSearch(query: string, mode: SearchMode = 'hybrid') {
+  return useQuery({
+    queryKey: [SEARCH_KEY, mode, query],
+    queryFn:  () => searchApi.search(query, mode),
+    enabled:  query.trim().length > 0,
   });
 }
 
 export default useSearch;
+
+// ── Named per-mode hooks (used by SearchPage, SemanticSearch, tests) ──────────
+
+export function useHybridSearch(query: string) {
+  return useSearch(query, 'hybrid');
+}
+
+export function useKeywordSearch(query: string) {
+  return useSearch(query, 'keyword');
+}
+
+export function useSemanticSearch(query: string) {
+  return useSearch(query, 'semantic');
+}
+
+// ── Similar notes ─────────────────────────────────────────────────────────────
+
+export function useSimilarNotes(noteId: string | null | undefined) {
+  return useQuery({
+    queryKey: [SEARCH_KEY, 'similar', noteId],
+    queryFn:  () => searchApi.getSimilar(noteId!),
+    enabled:  Boolean(noteId),
+    select:   (d: SearchResult[]) => d,
+  });
+}
