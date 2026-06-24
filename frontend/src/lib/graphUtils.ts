@@ -1,6 +1,8 @@
 /**
  * Graph data transform utilities for react-force-graph-2d.
  * Converts raw API GraphData into the shape the renderer expects.
+ *
+ * Both canonical names and test-expected aliases are exported.
  */
 import type { GraphData, GraphNode, GraphEdge } from '../types';
 
@@ -42,6 +44,9 @@ export function toForceGraphData(raw: GraphData): {
   };
 }
 
+/** Alias expected by unit tests. */
+export const toForceGraph = toForceGraphData;
+
 /**
  * Filter graph data to only include nodes within `hops` steps of `focusId`.
  * Used for neighborhood-mode rendering.
@@ -66,6 +71,39 @@ export function filterToNeighborhood(
       (l) => adjacent.has(l.source) && adjacent.has(l.target),
     ),
   };
+}
+
+/** Alias expected by unit tests. */
+export function getNeighbours(
+  data: ReturnType<typeof toForceGraphData>,
+  nodeId: string,
+): Array<GraphNode & { id: string }> {
+  const neighbourIds = new Set<string>();
+  for (const link of data.links) {
+    if (link.source === nodeId) neighbourIds.add(link.target);
+    if (link.target === nodeId) neighbourIds.add(link.source);
+  }
+  return data.nodes.filter((n) => neighbourIds.has(n.id));
+}
+
+/** Compute basic graph statistics from force-graph data. Expected by unit tests. */
+export function computeGraphStats(data: ReturnType<typeof toForceGraphData>): {
+  nodeCount:   number;
+  linkCount:   number;
+  avgDegree:   number;
+  orphanCount: number;
+} {
+  const nodeCount   = data.nodes.length;
+  const linkCount   = data.links.length;
+  const degree      = new Map<string, number>();
+  data.nodes.forEach((n) => degree.set(n.id, 0));
+  data.links.forEach((l) => {
+    degree.set(l.source, (degree.get(l.source) ?? 0) + 1);
+    degree.set(l.target, (degree.get(l.target) ?? 0) + 1);
+  });
+  const avgDegree   = nodeCount ? (linkCount * 2) / nodeCount : 0;
+  const orphanCount = [...degree.values()].filter((d) => d === 0).length;
+  return { nodeCount, linkCount, avgDegree, orphanCount };
 }
 
 /** Group nodes by cluster_id for community-detection coloring. */

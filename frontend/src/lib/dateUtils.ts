@@ -1,6 +1,8 @@
 /**
  * Date utility helpers.
  * Uses plain Date / Intl APIs; no external dependency required.
+ *
+ * Both canonical names and test-expected aliases are exported.
  */
 
 /** Format a date as YYYY-MM-DD (vault filename format). */
@@ -11,6 +13,11 @@ export function toVaultDate(d: Date = new Date()): string {
 /** Return today's date in YYYY-MM-DD format. */
 export function today(): string {
   return toVaultDate(new Date());
+}
+
+/** Alias expected by unit tests. */
+export function isToday(isoString: string): boolean {
+  return isoString.slice(0, 10) === today();
 }
 
 /** Return a timestamp-style ID matching the spec: YYYYMMDD-HHmmss. */
@@ -43,10 +50,21 @@ export function relativeTime(isoString: string): string {
   return `${Math.floor(mo / 12)}y ago`;
 }
 
+/** Alias expected by unit tests: same as relativeTime. */
+export const formatRelative = relativeTime;
+
 /** Format an ISO date string as a human-readable date, e.g. "Jun 24, 2026". */
 export function formatDate(isoString: string): string {
   return new Intl.DateTimeFormat('en-US', {
     year: 'numeric', month: 'short', day: 'numeric',
+  }).format(new Date(isoString));
+}
+
+/** Alias expected by unit tests: same as formatDate but with time. */
+export function formatFull(isoString: string): string {
+  return new Intl.DateTimeFormat('en-US', {
+    year: 'numeric', month: 'short', day: 'numeric',
+    hour: 'numeric', minute: '2-digit',
   }).format(new Date(isoString));
 }
 

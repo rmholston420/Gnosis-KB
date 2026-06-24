@@ -4,4 +4,4 @@
  * is useAppStore.ts. This file simply re-exports everything so both
  * import paths work without touching consumer files.
  */
-export { useAppStore, type AppState } from './useAppStore';
+export { useAppStore, type AppState, type AppStore } from './useAppStore';

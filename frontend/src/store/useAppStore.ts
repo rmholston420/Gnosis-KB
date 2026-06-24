@@ -1,8 +1,8 @@
 /**
- * useAppStore — Zustand store for global UI state.
+ * useAppStore — Zustand store for global UI state + auth.
  *
- * Exposes every slice consumed by AiChat, Sidebar, TopBar, and other
- * components, plus the full action surface expected by unit tests.
+ * Exposes every slice consumed by AiChat, Sidebar, TopBar, ProtectedRoute,
+ * and unit tests, plus the full action surface expected by unit tests.
  */
 import { create } from 'zustand';
 import type { ChatMessage } from '../types';
@@ -10,64 +10,90 @@ import type { ChatMessage } from '../types';
 export type RagMode    = 'hybrid' | 'local' | 'global';
 export type EditorMode = 'edit' | 'split' | 'preview';
 
-interface AppStore {
-  // ── Note selection ───────────────────────────────────────────────
+export interface UserRecord {
+  username: string;
+  email:    string;
+  role?:    string;
+}
+
+export interface AppState {
+  // ── Auth ─────────────────────────────────────────────────────────────
+  isAuthenticated: boolean;
+  user:            UserRecord | null;
+  setUser:         (user: UserRecord | null) => void;
+  logout:          () => void;
+
+  // ── Note selection ───────────────────────────────────────────────────
   activeNoteId:     string | null;
   setActiveNoteId:  (id: string | null) => void;
 
-  // ── Editor layout ────────────────────────────────────────────────
+  // ── Editor layout ────────────────────────────────────────────────────
   editorMode:       EditorMode;
   setEditorMode:    (mode: EditorMode) => void;
 
-  // ── Sidebar ──────────────────────────────────────────────────────
+  // ── Sidebar ──────────────────────────────────────────────────────────
+  sidebarOpen:         boolean;
   sidebarCollapsed:    boolean;
   setSidebarCollapsed: (v: boolean) => void;
   toggleSidebar:       () => void;
   activeFolder:        string | null;
   setActiveFolder:     (folder: string | null) => void;
 
-  // ── Search ───────────────────────────────────────────────────────
+  // ── Search ───────────────────────────────────────────────────────────
   searchQuery:    string;
   setSearchQuery: (q: string) => void;
 
-  // ── RAG mode (persisted choice) ──────────────────────────────────
+  // ── RAG mode (persisted choice) ──────────────────────────────────────
   ragMode:    RagMode;
   setRagMode: (mode: RagMode) => void;
 
-  // ── Chat (AiChat streaming panel) ────────────────────────────────
-  chatMessages:              ChatMessage[];
-  appendChatMessage:         (msg: ChatMessage) => void;
-  updateLastAssistantMessage:(content: string) => void;
-  clearChat:                 () => void;
-  sessionId:                 string | null;
-  setSessionId:              (id: string | null) => void;
+  // ── Chat (AiChat streaming panel) ────────────────────────────────────
+  chatMessages:               ChatMessage[];
+  appendChatMessage:          (msg: ChatMessage) => void;
+  updateLastAssistantMessage: (content: string) => void;
+  clearChat:                  () => void;
+  sessionId:                  string | null;
+  setSessionId:               (id: string | null) => void;
 }
 
-export const useAppStore = create<AppStore>((set) => ({
-  // ── Note selection ───────────────────────────────────────────────
+/** Alias kept for legacy imports: `import type { AppStore } from './useAppStore'` */
+export type AppStore = AppState;
+
+export const useAppStore = create<AppState>((set) => ({
+  // ── Auth ─────────────────────────────────────────────────────────────
+  isAuthenticated: false,
+  user:            null,
+  setUser: (user) => set({ user, isAuthenticated: user !== null }),
+  logout:  ()     => set({ user: null, isAuthenticated: false }),
+
+  // ── Note selection ───────────────────────────────────────────────────
   activeNoteId:    null,
   setActiveNoteId: (id) => set({ activeNoteId: id }),
 
-  // ── Editor layout ────────────────────────────────────────────────
+  // ── Editor layout ────────────────────────────────────────────────────
   editorMode:    'edit',
   setEditorMode: (mode) => set({ editorMode: mode }),
 
-  // ── Sidebar ──────────────────────────────────────────────────────
+  // ── Sidebar ──────────────────────────────────────────────────────────
+  sidebarOpen:         true,
   sidebarCollapsed:    false,
-  setSidebarCollapsed: (v) => set({ sidebarCollapsed: v }),
-  toggleSidebar:       () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+  setSidebarCollapsed: (v) => set({ sidebarCollapsed: v, sidebarOpen: !v }),
+  toggleSidebar:       () => set((s) => ({
+    sidebarCollapsed: !s.sidebarCollapsed,
+    sidebarOpen:      s.sidebarCollapsed,
+  })),
   activeFolder:        null,
   setActiveFolder:     (folder) => set({ activeFolder: folder }),
 
-  // ── Search ───────────────────────────────────────────────────────
+  // ── Search ───────────────────────────────────────────────────────────
   searchQuery:    '',
   setSearchQuery: (q) => set({ searchQuery: q }),
 
-  // ── RAG mode ─────────────────────────────────────────────────────
+  // ── RAG mode ─────────────────────────────────────────────────────────
   ragMode:    'hybrid',
   setRagMode: (mode) => set({ ragMode: mode }),
 
-  // ── Chat ─────────────────────────────────────────────────────────
+  // ── Chat ─────────────────────────────────────────────────────────────
   chatMessages: [],
   appendChatMessage: (msg) =>
     set((s) => ({ chatMessages: [...s.chatMessages, msg] })),
@@ -82,7 +108,7 @@ export const useAppStore = create<AppStore>((set) => ({
       }
       return { chatMessages: msgs };
     }),
-  clearChat:  () => set({ chatMessages: [], sessionId: null }),
-  sessionId:  null,
+  clearChat:   () => set({ chatMessages: [], sessionId: null }),
+  sessionId:   null,
   setSessionId: (id) => set({ sessionId: id }),
 }));

@@ -1,6 +1,8 @@
 /**
  * Markdown and wikilink utility functions.
  * These are pure functions with no DOM or React dependencies.
+ *
+ * Both canonical names and test-expected aliases are exported.
  */
 
 /** Regex that matches [[Title]] and [[Title|Alias]] wikilinks. */
@@ -31,6 +33,36 @@ export function extractWikilinks(body: string): ParsedWikilink[] {
     results.push({ raw, title: title.trim(), alias: (alias ?? title).trim(), index: match.index });
   }
   return results;
+}
+
+/** Alias expected by unit tests. */
+export const parseWikilinks = extractWikilinks;
+
+/**
+ * Extract #hashtag-style tags from a Markdown body string.
+ * Expected by unit tests as `extractTags`.
+ */
+export function extractTags(body: string): string[] {
+  const TAG_RE = /#([\w-]+)/g;
+  const tags: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = TAG_RE.exec(body)) !== null) {
+    tags.push(m[1]);
+  }
+  return [...new Set(tags)];
+}
+
+/**
+ * Build a URL-safe slug from a note title.
+ * Expected by unit tests as `buildSlug`.
+ */
+export function buildSlug(title: string): string {
+  return title
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, '')
+    .replace(/[\s_]+/g, '-')
+    .replace(/-{2,}/g, '-');
 }
 
 /**
@@ -66,7 +98,6 @@ export function parseFrontmatter(raw: string): FrontmatterResult {
   const yamlBlock = match[1];
   const body = raw.slice(match[0].length);
 
-  // Lightweight YAML scalar parser (no external dep for simple k:v)
   const frontmatter: Record<string, unknown> = {};
   for (const line of yamlBlock.split('\n')) {
     const colonIdx = line.indexOf(':');
@@ -74,7 +105,6 @@ export function parseFrontmatter(raw: string): FrontmatterResult {
     const key = line.slice(0, colonIdx).trim();
     const rawVal = line.slice(colonIdx + 1).trim();
     if (!key) continue;
-    // Handle inline arrays: [a, b, c]
     if (rawVal.startsWith('[') && rawVal.endsWith(']')) {
       frontmatter[key] = rawVal
         .slice(1, -1)
@@ -111,14 +141,14 @@ export function serializeFrontmatter(
 /** Strip markdown syntax to produce plain text (for previews/excerpts). */
 export function stripMarkdown(md: string): string {
   return md
-    .replace(/^#{1,6}\s+/gm, '')        // headings
-    .replace(/\*\*?|__?/g, '')           // bold / italic
-    .replace(/~~([^~]+)~~/g, '$1')       // strikethrough
-    .replace(/`[^`]+`/g, '')            // inline code
-    .replace(/```[\s\S]*?```/g, '')     // fenced code blocks
-    .replace(/!?\[([^\]]+)\]\([^)]*\)/g, '$1') // links / images
-    .replace(WIKILINK_RE, (_r, t, a) => a ?? t)  // wikilinks
-    .replace(/^[>\-*+]\s+/gm, '')      // blockquotes, lists
-    .replace(/\n{3,}/g, '\n\n')        // collapse whitespace
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\*\*?|__?/g, '')
+    .replace(/~~([^~]+)~~/g, '$1')
+    .replace(/`[^`]+`/g, '')
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/!?\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(WIKILINK_RE, (_r, t, a) => a ?? t)
+    .replace(/^[>\-*+]\s+/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
