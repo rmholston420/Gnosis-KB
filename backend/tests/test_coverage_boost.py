@@ -739,11 +739,11 @@ def test_lightrag_available_import_error():
 def test_lightrag_available_when_installed():
     """Lines 635-637: lightrag importable → returns True."""
     import sys
-    from unittest.mock import MagicMock as MM
+    from unittest.mock import MagicMock as MockMagic
 
     import gnosis.routers.ai as ai_mod
 
-    fake_lightrag = MM()
+    fake_lightrag = MockMagic()
     sys.modules["lightrag"] = fake_lightrag
     try:
         result = ai_mod._lightrag_available()
