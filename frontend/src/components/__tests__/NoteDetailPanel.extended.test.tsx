@@ -38,6 +38,7 @@ import type { Note } from '@/types';
 
 const NOTE: Note = {
   id: 'note-99',
+  note_id: 'note-99',
   title: 'Test Note Title',
   slug: 'test-note-title',
   body: 'Hello [[World]] and [[Dharma]]\n\nSome body text here.',
@@ -48,9 +49,9 @@ const NOTE: Note = {
   word_count: 8,
   is_deleted: false,
   vector_indexed: true,
-  graph_indexed: false,
   tags: ['buddhism', 'test'],
   created_at: '2026-01-01T00:00:00Z',
+  updated_at: '2026-06-01T00:00:00Z',
   modified_at: '2026-06-01T00:00:00Z',
   frontmatter: {},
   outgoing_links: [],

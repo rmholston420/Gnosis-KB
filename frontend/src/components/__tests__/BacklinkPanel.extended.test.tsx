@@ -12,10 +12,10 @@ vi.mock('react-router-dom', async (orig) => {
 import BacklinkPanel from '@/components/BacklinkPanel';
 
 const INC: import('@/types').LinkRef[] = [
-  { source_id: 'note-a', target_id: 'note-1', link_text: 'Note A', link_type: 'wiki' },
+  { note_id: 'note-a', title: 'Note A', source_id: 'note-a', target_id: 'note-1', link_text: 'Note A', link_type: 'wiki' },
 ];
 const _OUT: import('@/types').LinkRef[] = [
-  { source_id: 'note-1', target_id: 'note-b', link_text: 'Note B', link_type: 'wiki' },
+  { note_id: 'note-1', title: 'Note B', source_id: 'note-1', target_id: 'note-b', link_text: 'Note B', link_type: 'wiki' },
 ];
 
 function wrap(props: React.ComponentProps<typeof BacklinkPanel>) {

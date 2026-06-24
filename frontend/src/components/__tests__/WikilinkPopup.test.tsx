@@ -8,18 +8,19 @@ import type { NoteListItem } from '@/types';
 
 function makeNote(overrides: Partial<NoteListItem & { body?: string }> = {}): NoteListItem & { body?: string } {
   return {
-    id: 'n1',
-    title: 'Test Note',
-    slug: 'test-note',
-    note_type: 'permanent',
-    status: 'evergreen',
-    folder: overrides.folder ?? '',
-    word_count: 100,
+    note_id:    overrides.note_id    ?? 'n1',
+    id:         overrides.id         ?? 'n1',
+    title:      overrides.title      ?? 'Test Note',
+    slug:       overrides.slug       ?? 'test-note',
+    note_type:  overrides.note_type  ?? 'permanent',
+    status:     overrides.status     ?? 'evergreen',
+    folder:     overrides.folder     ?? '',
+    word_count: overrides.word_count ?? 100,
     created_at: overrides.created_at ?? '2024-01-01T00:00:00Z',
-    modified_at: overrides.modified_at ?? '2024-01-01T00:00:00Z',
-    tags: [],
-    body: overrides.body ?? 'Body',
-    ...overrides,
+    updated_at: overrides.updated_at ?? '2024-01-01T00:00:00Z',
+    modified_at:overrides.modified_at ?? '2024-01-01T00:00:00Z',
+    tags:       overrides.tags       ?? [],
+    body:       overrides.body       ?? 'Body',
   };
 }
 

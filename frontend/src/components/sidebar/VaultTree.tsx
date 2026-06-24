@@ -113,10 +113,9 @@ function TreeNodeRow({ node, depth, activeId }: TreeNodeRowProps) {
 
 /** VaultTree sidebar component. */
 export function VaultTree() {
-  const location  = useNavigate();
   const { pathname } = useLocation();
   const { data } = useNotes();
-  const notes = data?.items ?? [];
+  const notes = (data ?? []) as Note[];
 
   // Extract active note ID from path
   const activeId = pathname.startsWith('/notes/')

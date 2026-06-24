@@ -53,7 +53,7 @@ export function NoteCard({ note, onClick, compact = false }: NoteCardProps) {
         <div className="flex flex-wrap gap-1 min-w-0">
           {(note.tags ?? []).slice(0, 4).map((t) => <TagBadge key={t} tag={t} />)}
           {(note.tags ?? []).length > 4 && (
-            <span className="text-xs text-gnosis-muted flex items-center gap-0.5"><Tag size={10} /> +{note.tags.length - 4}</span>
+            <span className="text-xs text-gnosis-muted flex items-center gap-0.5"><Tag size={10} /> +{(note.tags?.length ?? 0) - 4}</span>
           )}
         </div>
         {note.created_at && (

@@ -235,7 +235,6 @@ export default function NoteEditorPage() {
       word_count:     0,
       is_deleted:     false,
       vector_indexed: false,
-      graph_indexed:  false,
       frontmatter:    {},
       tags:           fm.tags,
       outgoing_links: [],
@@ -259,124 +258,46 @@ export default function NoteEditorPage() {
         {/* Editor or Preview */}
         <div className="flex-1 overflow-hidden relative">
           {previewMode ? (
-            <div className="h-full overflow-y-auto p-4">
+            <div className="h-full overflow-y-auto px-4 py-3">
               <MarkdownPreview
-                content={bodyValue || blankNote.body || ''}
+                body={bodyValue}
+                notes={allNotes ?? []}
                 titleToId={titleToId}
-                className="gnosis-prose"
               />
             </div>
           ) : (
-            <>
-              <NoteEditor
-                note={blankNote}
-                onSave={saveHandler}
-                isLoading={isPending}
-                onBodyChange={setBodyValue}
-                textareaRef={textareaRef}
-              />
-              {wikilinkQuery !== null && (
-                <WikilinkAutocomplete
-                  anchorRect={new DOMRect()}
-                  query={wikilinkQuery}
-                  onSelect={(title: string) => insertWikilink(title)}
-                  onClose={() => insertWikilink('')}
-                />
-              )}
-            </>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // ---- New note flow -------------------------------------------------------
-  if (!id) {
-    return (
-      <div className="h-full flex flex-col" data-testid="new-note-page">
-        {showTemplateGallery && (
-          <NoteTemplateGallery
-            onSelect={handleTemplateSelect}
-            onClose={() => setShowTemplateGallery(false)}
-          />
-        )}
-
-        <div className="px-4 py-2 border-b border-border flex-shrink-0 flex items-center justify-between">
-          <button
-            onClick={() => navigate(-1)}
-            className="flex items-center gap-1 text-xs text-text-muted hover:text-text-primary"
-          >
-            <ArrowLeft size={13} /> Back
-          </button>
-          {chosenTemplate && (
-            <span className="text-xs text-text-muted">
-              Template: <strong>{chosenTemplate.name}</strong>
-              <button className="ml-2 underline" onClick={() => setShowTemplateGallery(true)}>change</button>
-            </span>
-          )}
-          <button
-            onClick={() => setShowRightPanel(!showRightPanel)}
-            className="p-1 text-text-muted hover:text-text-primary transition-colors"
-            aria-label={showRightPanel ? 'Hide sidebar' : 'Show sidebar'}
-          >
-            {showRightPanel ? <PanelRightClose size={14} /> : <PanelRight size={14} />}
-          </button>
-        </div>
-
-        <button
-          data-testid="save-btn"
-          className="sr-only"
-          aria-hidden="true"
-          onClick={() => {
-            createMutation.mutate({
-              title:     fm.title || 'Untitled',
-              body:      bodyValue,
-              folder:    fm.folder,
-              note_type: fm.note_type as NoteType,
-              tags:      fm.tags,
-            });
-          }}
-        />
-
-        <div className="flex-1 overflow-hidden">
-          {showRightPanel ? (
-            <SplitPane
-              left={editorArea(
-                async (body, title) => {
-                  await createMutation.mutateAsync({
-                    title: title || fm.title || 'Untitled',
-                    body,
-                    folder:    fm.folder,
-                    note_type: fm.note_type as NoteType,
-                    tags:      fm.tags,
-                  });
-                },
-                createMutation.isPending,
-              )}
-              right={rightPanel}
-              defaultSplit={0.62}
+            <NoteEditor
+              note={blankNote}
+              onSave={saveHandler}
+              isPending={isPending}
+              textareaRef={textareaRef}
+              value={bodyValue}
+              onChange={setBodyValue}
             />
-          ) : (
-            editorArea(
-              async (body, title) => {
-                await createMutation.mutateAsync({
-                  title: title || fm.title || 'Untitled',
-                  body,
-                  folder:    fm.folder,
-                  note_type: fm.note_type as NoteType,
-                  tags:      fm.tags,
-                });
-              },
-              createMutation.isPending,
-            )
+          )}
+
+          {/* Wikilink autocomplete */}
+          {wikilinkQuery && (
+            <WikilinkAutocomplete
+              query={wikilinkQuery}
+              onSelect={(title) => insertWikilink(title)}
+              onDismiss={() => {}}
+            />
           )}
         </div>
       </div>
     );
   }
 
-  // ---- Edit existing note --------------------------------------------------
-  if (!note) return <div className="p-6 text-accent-red">Note not found.</div>;
+  // ---- Template gallery overlay --------------------------------------------
+  if (showTemplateGallery) {
+    return (
+      <NoteTemplateGallery
+        onSelect={handleTemplateSelect}
+        onClose={() => setShowTemplateGallery(false)}
+      />
+    );
+  }
 
   return (
     <div className="h-full flex flex-col" data-testid="edit-note-page">
@@ -407,7 +328,7 @@ export default function NoteEditorPage() {
         {showRightPanel ? (
           <SplitPane
             left={editorArea(
-              async (body, title) => updateMutation.mutateAsync({ body, title }),
+              async (body, title) => { await updateMutation.mutateAsync({ body, title }); },
               updateMutation.isPending,
             )}
             right={rightPanel}
@@ -415,7 +336,7 @@ export default function NoteEditorPage() {
           />
         ) : (
           editorArea(
-            async (body, title) => updateMutation.mutateAsync({ body, title }),
+            async (body, title) => { await updateMutation.mutateAsync({ body, title }); },
             updateMutation.isPending,
           )
         )}

@@ -40,11 +40,11 @@ export default function AnalyticsPage() {
       <div className="flex-1 overflow-y-auto px-6 py-6">
         {/* KPI grid */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 mb-8">
-          <StatCard label="Total Notes"       value={stats.total_notes} />
-          <StatCard label="Total Links"       value={stats.total_links} />
-          <StatCard label="Orphan Notes"      value={stats.orphan_count} sub="no connections" />
+          <StatCard label="Total Notes"       value={stats.total_nodes} />
+          <StatCard label="Total Links"       value={stats.total_edges} />
+          <StatCard label="Orphan Notes"      value={stats.isolated_count} sub="no connections" />
           <StatCard label="Avg Degree"        value={stats.avg_degree.toFixed(2)} sub="links per note" />
-          <StatCard label="Graph Density"     value={(stats.density * 100).toFixed(2) + '%'} />
+          <StatCard label="Graph Clusters"    value={stats.cluster_count ?? 0} />
           <StatCard
             label="Most Connected"
             value={stats.most_connected[0]?.title ?? '—'}

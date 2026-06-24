@@ -38,7 +38,7 @@ export function NoteListItem({ note, selected, onSelect }: Props) {
     >
       {/* Type icon */}
       <span className="mt-0.5 shrink-0 text-gnosis-muted/60 group-hover:text-gnosis-muted">
-        {TYPE_ICON[note.note_type] ?? <FileText size={11} />}
+        {TYPE_ICON[note.note_type ?? ''] ?? <FileText size={11} />}
       </span>
 
       {/* Title + meta */}

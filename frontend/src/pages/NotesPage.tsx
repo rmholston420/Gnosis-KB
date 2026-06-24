@@ -17,7 +17,7 @@ export default function NotesPage() {
     api
       .listNotes(params)
       .then((data) => {
-        const resp = data as NoteListResponse;
+        const resp = data as unknown as NoteListResponse;
         // listNotes returns { items, total, ... } — extract items
         setNotes(resp.items as unknown as Note[]);
       })

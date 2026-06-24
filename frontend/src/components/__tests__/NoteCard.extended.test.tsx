@@ -9,19 +9,22 @@ vi.mock('react-router-dom', async (importOriginal) => ({
 }));
 
 import NoteCard from '@/components/NoteCard';
-import type { NoteListItem } from '@/types';
+import type { Note } from '@/types';
 
-const BASE: NoteListItem = {
-  id: 'n1',
-  title: 'My Note',
-  slug: 'my-note',
-  note_type: 'permanent',
-  status: 'evergreen',
-  folder: '',
-  tags: ['alpha', 'beta'],
+const BASE: Note = {
+  note_id:    'n1',
+  id:         'n1',
+  title:      'My Note',
+  body:       '',
+  slug:       'my-note',
+  note_type:  'permanent',
+  status:     'evergreen',
+  folder:     '',
+  tags:       ['alpha', 'beta'],
   word_count: 42,
   created_at: '2026-01-01T00:00:00Z',
-  modified_at: '2026-06-01T00:00:00Z',
+  updated_at: '2026-06-01T00:00:00Z',
+  modified_at:'2026-06-01T00:00:00Z',
 };
 
 function wrap(node: React.ReactNode) {

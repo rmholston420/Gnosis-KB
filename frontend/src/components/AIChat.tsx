@@ -19,7 +19,11 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api
 type RagSource = 'lightrag' | 'vector' | 'hybrid' | 'naive';
 type ChatMode  = 'hybrid' | 'lightrag' | 'vector' | 'naive';
 
-interface MetaPayload { rag_source: RagSource; mode: ChatMode; }
+interface MetaPayload {
+  rag_source: RagSource;
+  mode: ChatMode;
+  [key: string]: unknown;
+}
 
 const SOURCE_BADGE: Record<RagSource, { label: string; className: string }> = {
   lightrag: { label: 'LightRAG', className: 'bg-purple-500/20 text-purple-300 border-purple-500/30' },
@@ -79,128 +83,124 @@ export default function AIChat() {
         if (done) break;
 
         buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop() ?? '';
 
-        // SSE lines end with \n\n
-        const parts = buf.split('\n\n');
-        buf = parts.pop() ?? '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim();
+          if (raw === '[DONE]') continue;
 
-        for (const part of parts) {
-          for (const line of part.split('\n')) {
-            if (!line.startsWith('data: ')) continue;
-            const payload = line.slice(6).trim();
-            if (payload === '[DONE]') continue;
-            try {
-              const parsed = JSON.parse(payload) as
-                | { token: string }
-                | { meta: MetaPayload }
-                | { error: string };
+          try {
+            const parsed = JSON.parse(raw) as Record<string, unknown>;
 
-              if ('error' in parsed) {
-                accumulated += `\n\n*Error: ${parsed.error}*`;
-              } else if ('meta' in parsed) {
-                // Meta arrives just before [DONE] — attach to the message
-                setMessages((prev) =>
-                  prev.map((m, i) =>
-                    i === assistantIdx ? { ...m, meta: parsed.meta } : m
-                  )
-                );
-              } else if ('token' in parsed) {
-                accumulated += parsed.token;
-                setMessages((prev) =>
-                  prev.map((m, i) =>
-                    i === assistantIdx ? { ...m, content: accumulated } : m
-                  )
-                );
-                bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-              }
-            } catch {
-              // ignore non-JSON lines
+            // Meta event
+            if (parsed.meta) {
+              setMessages((prev) => {
+                const copy = [...prev];
+                const last = copy[copy.length - 1];
+                if (last?.role === 'assistant') {
+                  copy[copy.length - 1] = { ...last, meta: parsed.meta as MetaPayload };
+                }
+                return copy;
+              });
+              continue;
             }
+
+            // Text delta
+            const delta = (parsed.choices as Array<{ delta?: { content?: string } }>)?.[0]?.delta?.content ?? '';
+            if (!delta) continue;
+            accumulated += delta;
+            const snap = accumulated;
+            setMessages((prev) => {
+              const copy = [...prev];
+              copy[assistantIdx] = { role: 'assistant', content: snap };
+              return copy;
+            });
+          } catch {
+            // ignore malformed JSON lines
           }
         }
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
-      setMessages((prev) =>
-        prev.map((m, i) =>
-          i === assistantIdx
-            ? { ...m, content: `*Failed to get response: ${msg}*` }
-            : m
-        )
-      );
+      setMessages((prev) => {
+        const copy = [...prev];
+        copy[assistantIdx] = {
+          role: 'assistant',
+          content: `Error: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        };
+        return copy;
+      });
     } finally {
       setLoading(false);
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+      requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }));
     }
   }
 
-  return (
-    <div className="flex h-full flex-col bg-bg-primary text-text-primary">
+  const MODE_OPTIONS: { value: ChatMode; label: string; icon: React.ReactNode }[] = [
+    { value: 'hybrid',   label: 'Hybrid',   icon: <Zap      size={12} /> },
+    { value: 'lightrag', label: 'LightRAG', icon: <Cpu      size={12} /> },
+    { value: 'vector',   label: 'Vector',   icon: <BookOpen size={12} /> },
+    { value: 'naive',    label: 'Naive',    icon: <Bot      size={12} /> },
+  ];
 
+  return (
+    <div className="flex flex-col h-full bg-gnosis-bg">
       {/* Mode selector */}
-      <div className="flex items-center gap-2 border-b border-border-default px-4 py-2">
-        <span className="text-xs text-text-muted">Mode:</span>
-        {(['hybrid', 'lightrag', 'vector', 'naive'] as ChatMode[]).map((m) => (
+      <div className="flex-shrink-0 flex gap-1 px-3 pt-3 pb-2">
+        {MODE_OPTIONS.map((opt) => (
           <button
-            key={m}
-            onClick={() => setMode(m)}
-            className={`rounded px-2 py-0.5 text-xs transition-colors ${
-              mode === m
-                ? 'bg-accent-teal text-white'
-                : 'text-text-muted hover:bg-bg-elevated'
+            key={opt.value}
+            onClick={() => setMode(opt.value)}
+            className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
+              mode === opt.value
+                ? 'bg-gnosis-accent/20 text-gnosis-accent border border-gnosis-accent/30'
+                : 'text-gnosis-muted hover:bg-gnosis-hover'
             }`}
           >
-            {m}
+            {opt.icon}{opt.label}
           </button>
         ))}
       </div>
 
       {/* Message list */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+      <div className="flex-1 overflow-y-auto px-3 space-y-3 pb-3">
         {messages.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full gap-3 text-text-muted">
-            <Bot size={40} className="opacity-30" />
-            <p className="text-sm">Ask anything about your knowledge base</p>
+          <div className="flex flex-col items-center justify-center h-full text-gnosis-muted gap-2 py-8">
+            <Bot size={28} />
+            <p className="text-sm">Ask anything about your vault…</p>
           </div>
         )}
         {messages.map((msg, i) => (
-          <div key={i} className={`flex gap-3 ${ msg.role === 'user' ? 'justify-end' : 'justify-start' }`}>
+          <div key={i} className={`flex gap-2 ${ msg.role === 'user' ? 'justify-end' : 'justify-start' }`}>
             {msg.role === 'assistant' && (
-              <div className="flex-shrink-0 w-7 h-7 rounded-full bg-accent-teal/20 flex items-center justify-center">
-                <Cpu size={14} className="text-accent-teal" />
+              <div className="w-6 h-6 rounded-full bg-gnosis-accent/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <Bot size={12} className="text-gnosis-accent" />
               </div>
             )}
-            <div className={`max-w-[75%] ${ msg.role === 'user' ? 'order-first' : '' }`}>
-              <div
-                className={`rounded-lg px-3 py-2 text-sm leading-relaxed ${
-                  msg.role === 'user'
-                    ? 'bg-accent-teal text-white ml-auto'
-                    : 'bg-bg-secondary text-text-primary'
-                }`}
-              >
-                {msg.content || (
-                  <span className="inline-flex gap-1">
-                    <span className="animate-bounce" style={{ animationDelay: '0ms'   }}>·</span>
-                    <span className="animate-bounce" style={{ animationDelay: '150ms' }}>·</span>
-                    <span className="animate-bounce" style={{ animationDelay: '300ms' }}>·</span>
-                  </span>
-                )}
+            <div className={`max-w-[85%] ${ msg.role === 'user' ? 'order-first' : '' }`}>
+              <div className={`rounded-xl px-3 py-2 text-sm leading-relaxed ${
+                msg.role === 'user'
+                  ? 'bg-gnosis-accent/20 text-gnosis-fg ml-auto'
+                  : 'bg-gnosis-surface text-gnosis-fg'
+              }`}>
+                {msg.content || (loading && msg.role === 'assistant' ? (
+                  <Loader2 size={14} className="animate-spin text-gnosis-muted" />
+                ) : null)}
               </div>
-              {msg.role === 'assistant' && msg.meta && (() => {
-                const badge = SOURCE_BADGE[msg.meta.rag_source];
-                return badge ? (
-                  <div className="mt-1 flex items-center gap-1.5">
-                    <span className={`rounded border px-1.5 py-0.5 text-xs font-medium ${badge.className}`}>
-                      {badge.label}
-                    </span>
-                    <span className="text-xs text-text-faint capitalize">{msg.meta.mode} mode</span>
-                  </div>
-                ) : null;
-              })()}
+              {msg.role === 'assistant' && msg.meta && (
+                <div className="mt-1 flex gap-1">
+                  <span className={`text-xs px-1.5 py-0.5 rounded border ${
+                    SOURCE_BADGE[msg.meta.rag_source]?.className ?? 'bg-gray-500/20 text-gray-300 border-gray-500/30'
+                  }`}>
+                    {SOURCE_BADGE[msg.meta.rag_source]?.label ?? msg.meta.rag_source}
+                  </span>
+                </div>
+              )}
             </div>
             {msg.role === 'user' && (
-              <div className="flex-shrink-0 w-7 h-7 rounded-full bg-bg-tertiary flex items-center justify-center">
-                <User size={14} className="text-text-muted" />
+              <div className="w-6 h-6 rounded-full bg-gnosis-muted/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <User size={12} className="text-gnosis-muted" />
               </div>
             )}
           </div>
@@ -209,30 +209,26 @@ export default function AIChat() {
       </div>
 
       {/* Input */}
-      <div className="border-t border-border-default px-4 py-3">
-        <div className="flex items-end gap-2">
+      <div className="flex-shrink-0 px-3 pb-3">
+        <div className="flex gap-2 items-end bg-gnosis-surface border border-gnosis-border rounded-xl px-3 py-2">
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); }
+              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
             }}
-            placeholder="Ask your knowledge base…"
+            placeholder="Ask about your notes…"
             rows={1}
-            className="flex-1 resize-none rounded-lg bg-bg-secondary px-3 py-2 text-sm focus:outline-none border border-border-default min-h-[36px] max-h-[120px]"
-            style={{ height: 'auto' }}
+            className="flex-1 resize-none bg-transparent text-sm text-gnosis-fg placeholder:text-gnosis-muted outline-none min-h-[1.5rem] max-h-32"
           />
           <button
-            onClick={() => void send()}
+            onClick={send}
             disabled={loading || !input.trim()}
-            className="flex-shrink-0 rounded-lg bg-accent-teal p-2 text-white hover:bg-accent-teal/80 disabled:opacity-50 transition-colors"
+            className="p-1.5 rounded-lg bg-gnosis-accent/90 text-white hover:bg-gnosis-accent disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0"
+            aria-label="Send"
           >
-            {loading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+            {loading ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
           </button>
-        </div>
-        <div className="mt-1.5 flex items-center gap-1 text-xs text-text-faint">
-          <Zap size={10} />
-          <span>Powered by LightRAG · <BookOpen size={10} className="inline" /> references your vault</span>
         </div>
       </div>
     </div>

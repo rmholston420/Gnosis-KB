@@ -53,99 +53,124 @@ export function NoteTemplateGallery({ onSelect, onClose }: Props) {
   useEffect(() => {
     api.listTemplates()
       .then((data) => {
-        setTemplates(data as NoteTemplate[]);
-        if ((data as NoteTemplate[]).length > 0) {
-          setActiveId((data as NoteTemplate[])[0].id);
+        const tpls = (data as unknown as NoteTemplate[]);
+        setTemplates(tpls);
+        if ((data as unknown as NoteTemplate[]).length > 0) {
+          setActiveId((data as unknown as NoteTemplate[])[0].id);
         }
       })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to load templates'));
   }, []);
 
-  // Close on Escape; trap focus inside modal
+  // Focus trap
   useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
-    }
-    window.addEventListener('keydown', onKey);
-    dialogRef.current?.focus();
-    return () => window.removeEventListener('keydown', onKey);
+    const el = dialogRef.current;
+    if (!el) return;
+    const focusable = el.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    focusable[0]?.focus();
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { onClose(); return; }
+      if (e.key !== 'Tab') return;
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last  = focusable[focusable.length - 1];
+      if (e.shiftKey) {
+        if (document.activeElement === first) { e.preventDefault(); last.focus(); }
+      } else {
+        if (document.activeElement === last)  { e.preventDefault(); first.focus(); }
+      }
+    };
+    el.addEventListener('keydown', handleKey);
+    return () => el.removeEventListener('keydown', handleKey);
   }, [onClose]);
 
-  const activeTemplate = templates.find((t) => t.id === activeId) ?? null;
+  const active = templates.find((t) => t.id === activeId) ?? null;
 
   return (
-    <div className="ntg-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div
-        className="ntg-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Choose a note template"
-        ref={dialogRef}
-        tabIndex={-1}
-      >
-        <div className="ntg-header">
-          <h2 className="ntg-heading">Choose a Template</h2>
-          <button className="ntg-close" onClick={onClose} aria-label="Close template gallery">×</button>
-        </div>
-
-        <div className="ntg-body">
-          <aside className="ntg-sidebar" role="list">
-            {loading && <p className="ntg-loading">Loading templates…</p>}
-            {error && <p className="ntg-error">{error}</p>}
-            {templates.map((tpl) => (
-              <button
-                key={tpl.id}
-                role="listitem"
-                className={`ntg-item ${activeId === tpl.id ? 'ntg-item--active' : ''}`}
-                onClick={() => setActiveId(tpl.id)}
-                onDoubleClick={() => onSelect(tpl)}
-              >
-                <span className="ntg-item-icon" aria-hidden="true">
-                  {ICON_MAP[tpl.icon] ?? '\u{1F4C4}'}
-                </span>
-                <span className="ntg-item-label">{tpl.name}</span>
-              </button>
-            ))}
-          </aside>
-
-          <main className="ntg-preview">
-            {activeTemplate ? (
-              <>
-                <div className="ntg-preview-header">
-                  <span className="ntg-preview-icon" aria-hidden="true">
-                    {ICON_MAP[activeTemplate.icon] ?? '\u{1F4C4}'}
-                  </span>
-                  <div>
-                    <h3 className="ntg-preview-title">{activeTemplate.name}</h3>
-                    <p className="ntg-preview-desc">{activeTemplate.description}</p>
-                    <div className="ntg-preview-meta">
-                      <span className="ntg-badge">{activeTemplate.note_type}</span>
-                      <span className="ntg-badge ntg-badge--folder">{activeTemplate.folder}</span>
-                    </div>
-                  </div>
-                </div>
-                <pre className="ntg-body-preview">{activeTemplate.body || '(Blank)'}</pre>
-              </>
-            ) : (
-              !loading && <p className="ntg-no-preview">Select a template to preview</p>
-            )}
-          </main>
-        </div>
-
-        <div className="ntg-footer">
-          <button className="ntg-btn ntg-btn--ghost" onClick={onClose}>Cancel</button>
+    <div
+      className="template-gallery-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Choose a note template"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div ref={dialogRef} className="template-gallery-dialog">
+        {/* Header */}
+        <div className="template-gallery-header">
+          <h2 className="template-gallery-title">Choose a template</h2>
           <button
-            className="ntg-btn ntg-btn--primary"
-            disabled={!activeTemplate}
-            onClick={() => activeTemplate && onSelect(activeTemplate)}
-          >
-            Use Template
-          </button>
+            className="template-gallery-close"
+            onClick={onClose}
+            aria-label="Close template gallery"
+          >×</button>
         </div>
+
+        {loading && <p className="template-gallery-loading">Loading templates…</p>}
+        {error   && <p className="template-gallery-error">{error}</p>}
+
+        {!loading && !error && (
+          <div className="template-gallery-body">
+            {/* Sidebar: template list */}
+            <ul className="template-gallery-list" role="listbox" aria-label="Templates">
+              {templates.map((t) => (
+                <li key={t.id}
+                  role="option"
+                  aria-selected={t.id === activeId}
+                  className={`template-gallery-list-item${ t.id === activeId ? ' active' : '' }`}
+                  onClick={() => setActiveId(t.id)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setActiveId(t.id); }}
+                  tabIndex={0}
+                >
+                  <span className="template-gallery-icon" aria-hidden="true">
+                    {ICON_MAP[t.icon] ?? '\u{1F4C4}'}
+                  </span>
+                  {t.name}
+                </li>
+              ))}
+            </ul>
+
+            {/* Preview panel */}
+            <div className="template-gallery-preview">
+              {active ? (
+                <>
+                  <p className="template-gallery-preview-desc">{active.description}</p>
+                  <pre className="template-gallery-preview-body">{active.body}</pre>
+                  <button
+                    className="template-gallery-use-btn"
+                    onClick={() => onSelect(active)}
+                  >
+                    Use this template
+                  </button>
+                </>
+              ) : (
+                <p className="template-gallery-preview-empty">Select a template to preview it.</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Blank note fallback */}
+        {!loading && !error && (
+          <div className="template-gallery-footer">
+            <button
+              className="template-gallery-blank-btn"
+              onClick={() => onSelect({
+                id: '__blank__',
+                name: 'Blank',
+                description: 'Start with an empty note.',
+                note_type: 'permanent',
+                folder: '10-zettelkasten',
+                body: '',
+                icon: 'file',
+              })}
+            >
+              Start blank
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
 }
-
-export default NoteTemplateGallery;

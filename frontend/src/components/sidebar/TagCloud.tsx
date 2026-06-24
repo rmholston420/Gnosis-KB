@@ -1,5 +1,5 @@
 /**
- * TagCloud — sidebar widget showing the vault’s top tags as clickable chips.
+ * TagCloud — sidebar widget showing the vault's top tags as clickable chips.
  * Clicking a tag navigates to the tags page filtered by that tag.
  */
 import React, { useMemo } from 'react';
@@ -39,7 +39,7 @@ function fontSize(count: number, max: number): string {
 export function TagCloud() {
   const navigate = useNavigate();
   const { data } = useNotes();
-  const notes  = data?.items ?? [];
+  const notes  = (data ?? []) as Array<{ tags?: string[] }>;
   const tags   = useMemo(() => buildTagCounts(notes), [notes]);
   const maxCnt = tags[0]?.count ?? 1;
 
