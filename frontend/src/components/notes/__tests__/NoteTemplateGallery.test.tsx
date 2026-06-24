@@ -7,7 +7,7 @@
  * so tests are fully synchronous / deterministic.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import NoteTemplateGallery from '../NoteTemplateGallery';
 
 // ---------- mock api ----------
@@ -31,24 +31,29 @@ function renderGallery(onSelect = vi.fn(), onClose = vi.fn()) {
   return render(<NoteTemplateGallery onSelect={onSelect} onClose={onClose} />);
 }
 
+/** Wait for templates to load and return the sidebar element. */
+async function waitForSidebar() {
+  const sidebar = screen.getByRole('list');
+  await waitFor(() => within(sidebar).getByText('Project Plan'));
+  return sidebar;
+}
+
 describe('NoteTemplateGallery', () => {
   it('renders the gallery heading', async () => {
     renderGallery();
-    // Use getByRole to be specific — the <h2> heading element
     expect(screen.getByRole('heading', { name: /choose a template/i })).toBeInTheDocument();
   });
 
   it('renders at least one template card', async () => {
     renderGallery();
-    // Wait for async load
-    await waitFor(() => screen.getByText('Project Plan'));
+    await waitForSidebar();
+    // Sidebar list-item buttons plus footer buttons
     const cards = screen.getAllByRole('button');
     expect(cards.length).toBeGreaterThan(0);
   });
 
   it('renders a Close button in the header', () => {
     renderGallery();
-    // The ×  header button has aria-label="Close template gallery"
     expect(screen.getByRole('button', { name: /close template gallery/i })).toBeInTheDocument();
   });
 
@@ -74,19 +79,19 @@ describe('NoteTemplateGallery', () => {
   it('calls onSelect with the template object when Use Template is clicked', async () => {
     const onSelect = vi.fn();
     renderGallery(onSelect);
-    await waitFor(() => screen.getByText('Project Plan'));
-    // Click the first template card to select it
-    fireEvent.click(screen.getByText('Project Plan'));
-    // Click Use Template
+    const sidebar = await waitForSidebar();
+    // Click the sidebar item (not the preview h3 — which also shows the name)
+    fireEvent.click(within(sidebar).getByText('Project Plan'));
     fireEvent.click(screen.getByRole('button', { name: /use template/i }));
     expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ id: 't1' }));
   });
 
   it('renders template names as text', async () => {
     renderGallery();
-    await waitFor(() => screen.getByText('Project Plan'));
-    expect(screen.getByText('Project Plan')).toBeInTheDocument();
-    expect(screen.getByText('Daily Journal')).toBeInTheDocument();
-    expect(screen.getByText('Blank Note')).toBeInTheDocument();
+    const sidebar = await waitForSidebar();
+    // Scope assertions to the sidebar list so duplicate preview-h3 text is irrelevant
+    expect(within(sidebar).getByText('Project Plan')).toBeInTheDocument();
+    expect(within(sidebar).getByText('Daily Journal')).toBeInTheDocument();
+    expect(within(sidebar).getByText('Blank Note')).toBeInTheDocument();
   });
 });

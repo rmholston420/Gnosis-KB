@@ -2,13 +2,13 @@
  * AiChat.test.tsx
  * ===============
  * Tests for the streaming AI chat panel component.
- * AiChat uses useAppStore for messages so we seed/inspect the store directly.
+ * We mock the global EventSource (SSE) so the component can open connections
+ * without a real server.  fetch is also stubbed for URL-building paths.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import AiChat from '../AiChat';
-import { useAppStore } from '../../../store/useAppStore';
 
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async () => {
@@ -16,14 +16,40 @@ vi.mock('react-router-dom', async () => {
   return { ...actual, useNavigate: () => mockNavigate };
 });
 
+// ---------------------------------------------------------------------------
+// EventSource stub — controls SSE lifecycle in tests
+// ---------------------------------------------------------------------------
+class MockEventSource {
+  url: string;
+  onmessage: ((e: MessageEvent) => void) | null = null;
+  onerror:   ((e: Event) => void) | null = null;
+  onopen:    ((e: Event) => void) | null = null;
+  readyState = 0;
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSED = 2;
+  static instances: MockEventSource[] = [];
+
+  constructor(url: string) {
+    this.url = url;
+    MockEventSource.instances.push(this);
+  }
+  close() { this.readyState = MockEventSource.CLOSED; }
+  addEventListener = vi.fn();
+  removeEventListener = vi.fn();
+  dispatchEvent = vi.fn();
+}
+
 function renderChat() {
   return render(<MemoryRouter><AiChat /></MemoryRouter>);
 }
 
 beforeEach(() => {
-  useAppStore.setState({ chatMessages: [], sessionId: null, ragMode: 'hybrid' });
   mockNavigate.mockReset();
   vi.restoreAllMocks();
+  MockEventSource.instances = [];
+  // @ts-expect-error — replace global EventSource with test stub
+  global.EventSource = MockEventSource;
 });
 
 describe('AiChat', () => {
@@ -54,19 +80,19 @@ describe('AiChat', () => {
     expect(screen.getByText(/hybrid/i)).toBeInTheDocument();
   });
 
-  it('shows empty state when no messages', () => {
+  it('shows empty chat state when no messages', () => {
     renderChat();
-    expect(screen.queryByRole('article')).not.toBeInTheDocument();
+    // The bot-icon empty state is shown; no assistant message div yet
+    expect(screen.getByText(/ask anything/i)).toBeInTheDocument();
   });
 
-  it('shows user message in store after sending', async () => {
-    // EventSource is not available in jsdom; just verify store mutation
+  it('shows user message bubble after sending', async () => {
     renderChat();
     const input = screen.getByPlaceholderText(/ask/i);
     fireEvent.change(input, { target: { value: 'What is emptiness?' } });
     fireEvent.click(screen.getByRole('button', { name: /send/i }));
     await waitFor(() =>
-      expect(useAppStore.getState().chatMessages.some((m) => m.role === 'user')).toBe(true)
+      expect(screen.getByText('What is emptiness?')).toBeInTheDocument()
     );
   });
 
@@ -78,16 +104,28 @@ describe('AiChat', () => {
     await waitFor(() => expect(input.value).toBe(''));
   });
 
-  it('renders Clear button when messages exist', () => {
-    useAppStore.setState({ chatMessages: [{ role: 'user', content: 'hi' }] });
+  it('opens an EventSource connection after sending', async () => {
     renderChat();
-    expect(screen.getByRole('button', { name: /clear/i })).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText(/ask/i), {
+      target: { value: 'What is karma?' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /send/i }));
+    await waitFor(() => expect(MockEventSource.instances.length).toBeGreaterThan(0));
+    expect(MockEventSource.instances[0].url).toContain('stream/chat');
   });
 
-  it('Clear button clears chat messages', () => {
-    useAppStore.setState({ chatMessages: [{ role: 'user', content: 'hi' }] });
+  it('EventSource URL contains the message query param', async () => {
     renderChat();
-    fireEvent.click(screen.getByRole('button', { name: /clear/i }));
-    expect(useAppStore.getState().chatMessages).toHaveLength(0);
+    fireEvent.change(screen.getByPlaceholderText(/ask/i), {
+      target: { value: 'explain shunyata' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /send/i }));
+    await waitFor(() => expect(MockEventSource.instances.length).toBeGreaterThan(0));
+    expect(MockEventSource.instances[0].url).toContain('message=explain+shunyata');
+  });
+
+  it('renders Clear button', () => {
+    renderChat();
+    expect(screen.getByRole('button', { name: /clear/i })).toBeInTheDocument();
   });
 });

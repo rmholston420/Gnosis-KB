@@ -1,109 +1,123 @@
 /**
  * LightRagNodePanel.test.tsx
  * ==========================
- * Tests for the graph node detail side-panel.
+ * Tests for the graph entity detail side-panel.
  *
- * The panel is driven by a nodeId prop + api.getGraphNode().
- * We mock the api module so tests control the resolved data.
+ * The real component accepts synchronous props:
+ *   entity: LightRagEntity | null
+ *   relations: LightRagRelation[]
+ *   notes: NoteListItem[]
+ *   onClose: () => void
+ *   onNavigateToNote: (noteId: string) => void
+ *
+ * No async API calls — everything is driven via props.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
-import LightRagNodePanel from '../LightRagNodePanel';
+import { render, screen, fireEvent } from '@testing-library/react';
+import LightRagNodePanel, {
+  type LightRagEntity,
+  type LightRagRelation,
+  type NoteListItem,
+} from '../LightRagNodePanel';
 
-const mockNavigate = vi.fn();
-vi.mock('react-router-dom', async () => {
-  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
-  return { ...actual, useNavigate: () => mockNavigate };
-});
-
-const mockGetGraphNode = vi.fn();
-vi.mock('../../../services/api', () => ({
-  default: {
-    getGraphNode: (...args: unknown[]) => mockGetGraphNode(...args),
-  },
-}));
-
-const sampleNodeData = {
+const sampleEntity: LightRagEntity = {
   id: 'node-1',
-  title: 'Dependent Origination',
+  label: 'Dependent Origination',
   description: 'The teaching of interdependent causation.',
-  neighbours: [
-    { id: 'node-2', title: 'Emptiness', weight: 0.9 },
-    { id: 'node-3', title: 'Karma',     weight: 0.7 },
-  ],
-  edges: [],
+  source_note_ids: ['note-a'],
 };
 
-function renderPanel(nodeId = 'node-1', onClose = vi.fn()) {
+const sampleRelations: LightRagRelation[] = [
+  { source: 'node-1', target: 'node-2', label: 'related to', weight: 0.9 },
+  { source: 'node-3', target: 'node-1', label: 'causes',     weight: 0.7 },
+];
+
+const sampleNotes: NoteListItem[] = [
+  { id: 'note-a', title: 'Introduction to Pratītyasamutpāda', folder: 'buddhism' },
+];
+
+function renderPanel(
+  entity: LightRagEntity | null = sampleEntity,
+  relations: LightRagRelation[] = sampleRelations,
+  notes: NoteListItem[] = sampleNotes,
+  onClose = vi.fn(),
+  onNavigateToNote = vi.fn(),
+) {
   return render(
-    <MemoryRouter>
-      <LightRagNodePanel nodeId={nodeId} onClose={onClose} />
-    </MemoryRouter>
+    <LightRagNodePanel
+      entity={entity}
+      relations={relations}
+      notes={notes}
+      onClose={onClose}
+      onNavigateToNote={onNavigateToNote}
+    />
   );
 }
 
 beforeEach(() => {
-  mockGetGraphNode.mockReset();
-  mockNavigate.mockReset();
-  mockGetGraphNode.mockResolvedValue(sampleNodeData);
+  // nothing async to reset
 });
 
 describe('LightRagNodePanel', () => {
-  it('shows loading state initially', () => {
-    mockGetGraphNode.mockReturnValue(new Promise(() => {}));
+  it('renders nothing when entity is null', () => {
+    const { container } = renderPanel(null);
+    expect(container.firstChild).toBeNull();
+  });
+
+  it('renders the entity title', () => {
     renderPanel();
-    expect(screen.getByText(/loading/i)).toBeInTheDocument();
+    expect(screen.getByText('Dependent Origination')).toBeInTheDocument();
   });
 
-  it('renders node title after loading', async () => {
+  it('renders the entity description', () => {
     renderPanel();
-    await waitFor(() =>
-      expect(screen.getByText('Dependent Origination')).toBeInTheDocument()
-    );
+    expect(screen.getByText(/interdependent causation/i)).toBeInTheDocument();
   });
 
-  it('renders node description', async () => {
+  it('renders incident relations', () => {
     renderPanel();
-    await waitFor(() =>
-      expect(screen.getByText(/interdependent causation/i)).toBeInTheDocument()
-    );
+    // Both relations involve node-1 (source or target)
+    expect(screen.getByText('related to')).toBeInTheDocument();
+    expect(screen.getByText('causes')).toBeInTheDocument();
   });
 
-  it('renders neighbour nodes', async () => {
+  it('renders source note links', () => {
     renderPanel();
-    await waitFor(() => {
-      expect(screen.getByText('Emptiness')).toBeInTheDocument();
-      expect(screen.getByText('Karma')).toBeInTheDocument();
-    });
+    expect(
+      screen.getByText(/Pratītyasamutpāda/i)
+    ).toBeInTheDocument();
   });
 
-  it('calls api.getGraphNode with nodeId', async () => {
-    renderPanel('node-1');
-    await waitFor(() => expect(mockGetGraphNode).toHaveBeenCalledWith('node-1'));
+  it('calls onNavigateToNote when a source note is clicked', () => {
+    const onNavigateToNote = vi.fn();
+    renderPanel(sampleEntity, sampleRelations, sampleNotes, vi.fn(), onNavigateToNote);
+    fireEvent.click(screen.getByText(/Pratītyasamutpāda/i));
+    expect(onNavigateToNote).toHaveBeenCalledWith('note-a');
   });
 
-  it('clicking a neighbour navigates to that node', async () => {
-    renderPanel();
-    await waitFor(() => screen.getByText('Emptiness'));
-    fireEvent.click(screen.getByText('Emptiness'));
-    expect(mockNavigate).toHaveBeenCalledWith(expect.stringContaining('node-2'));
-  });
-
-  it('renders Close button and calls onClose', async () => {
+  it('calls onClose when Close button is clicked', () => {
     const onClose = vi.fn();
-    renderPanel('node-1', onClose);
-    await waitFor(() => screen.getByText('Dependent Origination'));
-    const closeBtn = screen.getByRole('button', { name: /close/i });
-    fireEvent.click(closeBtn);
-    expect(onClose).toHaveBeenCalled();
+    renderPanel(sampleEntity, sampleRelations, sampleNotes, onClose);
+    fireEvent.click(screen.getByRole('button', { name: /close entity panel/i }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('shows error state when getGraphNode rejects', async () => {
-    mockGetGraphNode.mockRejectedValue(new Error('not found'));
+  it('calls onClose when Escape is pressed', () => {
+    const onClose = vi.fn();
+    renderPanel(sampleEntity, sampleRelations, sampleNotes, onClose);
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('panel has correct ARIA role and label', () => {
     renderPanel();
-    await waitFor(() =>
-      expect(screen.getByText(/error|failed|not found/i)).toBeInTheDocument()
-    );
+    const panel = screen.getByRole('complementary');
+    expect(panel).toHaveAttribute('aria-label', expect.stringMatching(/entity panel/i));
+  });
+
+  it('shows empty state when entity has no description or relations', () => {
+    const sparse: LightRagEntity = { id: 'x', label: 'Unknown' };
+    renderPanel(sparse, [], []);
+    expect(screen.getByText(/no additional information/i)).toBeInTheDocument();
   });
 });
