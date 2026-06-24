@@ -23,7 +23,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import React from 'react';
 import { useVaultStore } from '../../store/useVaultStore';
@@ -47,12 +47,16 @@ const mockGrants = [
   { grantId: 8, ownerId: 10, label: "Bob's Vault", permission: 'read', pending: true },
 ];
 
-function renderSwitcher() {
-  return render(
-    <MemoryRouter>
-      <VaultSwitcher />
-    </MemoryRouter>,
-  );
+async function renderSwitcher() {
+  let result: ReturnType<typeof render>;
+  await act(async () => {
+    result = render(
+      <MemoryRouter>
+        <VaultSwitcher />
+      </MemoryRouter>,
+    );
+  });
+  return result!;
 }
 
 beforeEach(() => {
@@ -64,24 +68,24 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe('VaultSwitcher', () => {
-  it('renders the switcher trigger button', () => {
-    renderSwitcher();
+  it('renders the switcher trigger button', async () => {
+    await renderSwitcher();
     expect(screen.getByRole('button', { name: /vault/i })).toBeInTheDocument();
   });
 
-  it('dropdown is closed by default', () => {
-    renderSwitcher();
+  it('dropdown is closed by default', async () => {
+    await renderSwitcher();
     expect(screen.queryByText("Alice's Vault")).not.toBeInTheDocument();
   });
 
   it('clicking trigger opens the dropdown', async () => {
-    renderSwitcher();
+    await renderSwitcher();
     fireEvent.click(screen.getByRole('button', { name: /vault/i }));
     await waitFor(() => expect(screen.getByText("Alice's Vault")).toBeInTheDocument());
   });
 
   it('own-vault entry is shown with You badge', async () => {
-    renderSwitcher();
+    await renderSwitcher();
     fireEvent.click(screen.getByRole('button', { name: /vault/i }));
     await waitFor(() => expect(screen.getByText('My Notes')).toBeInTheDocument());
     // The component renders a "You" badge on the own-vault row (not "owner")
@@ -89,7 +93,7 @@ describe('VaultSwitcher', () => {
   });
 
   it('shared vault entries are listed', async () => {
-    renderSwitcher();
+    await renderSwitcher();
     fireEvent.click(screen.getByRole('button', { name: /vault/i }));
     await waitFor(() => {
       expect(screen.getByText("Alice's Vault")).toBeInTheDocument();
@@ -98,13 +102,13 @@ describe('VaultSwitcher', () => {
   });
 
   it('pending grant shows an Accept button', async () => {
-    renderSwitcher();
+    await renderSwitcher();
     fireEvent.click(screen.getByRole('button', { name: /vault/i }));
     await waitFor(() => expect(screen.getByRole('button', { name: /accept/i })).toBeInTheDocument());
   });
 
   it('clicking Accept calls acceptVaultGrant with correct grantId', async () => {
-    renderSwitcher();
+    await renderSwitcher();
     fireEvent.click(screen.getByRole('button', { name: /vault/i }));
     await waitFor(() => screen.getByRole('button', { name: /accept/i }));
     fireEvent.click(screen.getByRole('button', { name: /accept/i }));
@@ -112,9 +116,8 @@ describe('VaultSwitcher', () => {
   });
 
   it('clicking own-vault sets activeVaultOwnerId to null', async () => {
-    // Start in a foreign vault
     useVaultStore.setState({ activeVaultOwnerId: 9 });
-    renderSwitcher();
+    await renderSwitcher();
     fireEvent.click(screen.getByRole('button', { name: /vault/i }));
     await waitFor(() => screen.getByText('My Notes'));
     fireEvent.click(screen.getByText('My Notes'));
@@ -122,7 +125,7 @@ describe('VaultSwitcher', () => {
   });
 
   it('clicking shared vault sets activeVaultOwnerId', async () => {
-    renderSwitcher();
+    await renderSwitcher();
     fireEvent.click(screen.getByRole('button', { name: /vault/i }));
     await waitFor(() => screen.getByText("Alice's Vault"));
     fireEvent.click(screen.getByText("Alice's Vault"));
@@ -130,7 +133,7 @@ describe('VaultSwitcher', () => {
   });
 
   it('dropdown closes after a vault is selected', async () => {
-    renderSwitcher();
+    await renderSwitcher();
     fireEvent.click(screen.getByRole('button', { name: /vault/i }));
     await waitFor(() => screen.getByText("Alice's Vault"));
     fireEvent.click(screen.getByText("Alice's Vault"));

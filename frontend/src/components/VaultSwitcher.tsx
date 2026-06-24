@@ -66,7 +66,7 @@ function GrantRow({
 }) {
   const [accepting, setAccepting] = useState(false);
 
-  const handleAccept = async (e: React.MouseEvent) => {
+  const handleAccept = async (e: React.MouseEvent | React.KeyboardEvent) => {
     e.stopPropagation();
     if (grant.grantId === null) return;
     setAccepting(true);
@@ -102,16 +102,26 @@ function GrantRow({
       {/* Label */}
       <span className="min-w-0 flex-1 truncate font-medium">{grant.label}</span>
 
-      {/* Right slot: chip or accept button */}
+      {/* Right slot: accept control (not a <button> — we're already inside one)
+          or permission chip */}
       {grant.pending ? (
-        <button
+        <span
+          role="button"
+          aria-label="Accept"
+          aria-disabled={accepting}
+          tabIndex={accepting ? -1 : 0}
           onClick={handleAccept}
-          disabled={accepting}
-          className="ml-auto flex shrink-0 items-center gap-1 rounded bg-teal-600 px-2 py-0.5 text-xs font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleAccept(e);
+            }
+          }}
+          className="ml-auto flex shrink-0 cursor-pointer items-center gap-1 rounded bg-teal-600 px-2 py-0.5 text-xs font-semibold text-white hover:bg-teal-700 aria-disabled:opacity-60"
         >
           {accepting && <Loader2 size={10} className="animate-spin" />}
           Accept
-        </button>
+        </span>
       ) : (
         <PermChip perm={grant.permission} />
       )}
