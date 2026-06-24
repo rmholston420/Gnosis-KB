@@ -72,10 +72,12 @@ async def get_accessible_owner_ids(
     # Fetch SharedVault records that this user is a member of in a single join query.
     # Returns SharedVault ORM objects so .owner_id is accessible on each result.
     result = await session.execute(
-        select(SharedVault).join(
+        select(SharedVault)
+        .join(
             SharedVaultMember,
             SharedVaultMember.vault_id == SharedVault.id,
-        ).where(
+        )
+        .where(
             SharedVaultMember.member_id == current_user.id,
         )
     )

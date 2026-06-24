@@ -176,9 +176,11 @@ async def list_notes(
     if tags:
         # Filter by tag name: join through the tags table to match by name (not raw tag_id int)
         for tag_name in tags:
-            tag_subq = select(NoteTag.c.note_id).join(
-                Tag, Tag.id == NoteTag.c.tag_id
-            ).where(Tag.name == tag_name)
+            tag_subq = (
+                select(NoteTag.c.note_id)
+                .join(Tag, Tag.id == NoteTag.c.tag_id)
+                .where(Tag.name == tag_name)
+            )
             query = query.where(Note.id.in_(tag_subq))
     if q:
         query = query.where(
@@ -307,9 +309,7 @@ async def get_note_graph(
     from gnosis.models.link import Link
 
     notes_stmt = scoped_note_stmt(
-        select(Note.id, Note.title, Note.folder, Note.note_type).where(
-            Note.is_deleted.is_(False)
-        ),
+        select(Note.id, Note.title, Note.folder, Note.note_type).where(Note.is_deleted.is_(False)),
         owner_ids,
     )
     notes_rows = (await db.execute(notes_stmt)).all()
@@ -320,7 +320,9 @@ async def get_note_graph(
 
     links_stmt = select(Link.source_id, Link.target_id, Link.link_type)
     links_rows = (await db.execute(links_stmt)).all()
-    edges = [{"source": r.source_id, "target": r.target_id, "type": r.link_type} for r in links_rows]
+    edges = [
+        {"source": r.source_id, "target": r.target_id, "type": r.link_type} for r in links_rows
+    ]
 
     return {"nodes": nodes, "edges": edges}
 
@@ -352,12 +354,17 @@ async def search_notes(
     )
     total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
     rows = (
-        await db.execute(
-            base.order_by(Note.modified_at.desc())
-            .offset((page - 1) * page_size)
-            .limit(page_size)
+        (
+            await db.execute(
+                base.order_by(Note.modified_at.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
         )
-    ).scalars().unique().all()
+        .scalars()
+        .unique()
+        .all()
+    )
     items = [
         NoteListItem(
             id=n.id,

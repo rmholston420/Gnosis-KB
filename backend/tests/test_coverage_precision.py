@@ -158,9 +158,7 @@ async def test_review_unenroll_note(async_client):
         f"/api/v1/review/{note_id}/enroll",
         json={"note_id": note_id, "due_today": True},
     )
-    assert enroll.status_code in (200, 201), (
-        f"Enroll failed: {enroll.status_code} {enroll.text}"
-    )
+    assert enroll.status_code in (200, 201), f"Enroll failed: {enroll.status_code} {enroll.text}"
 
     unenroll = await async_client.delete(f"/api/v1/review/{note_id}")
     assert unenroll.status_code in (200, 204), (

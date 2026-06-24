@@ -47,7 +47,7 @@ class User(Base):
     vault_display_name: Mapped[str | None] = mapped_column(
         String(200),
         nullable=True,
-        comment="Human-readable vault name shown in the UI (e.g. 'Ryan\'s KB')",
+        comment="Human-readable vault name shown in the UI (e.g. 'Ryan's KB')",
     )
 
     # Relationships
