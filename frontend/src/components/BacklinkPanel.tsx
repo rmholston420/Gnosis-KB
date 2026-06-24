@@ -1,154 +1,86 @@
 /**
  * BacklinkPanel
  * =============
- * Shows all notes that link TO the currently open note ([[backlinks]])
- * and all notes the current note links OUT TO.
+ * Shows all notes that link TO the current note (incoming)
+ * and all notes the current note links TO (outgoing).
  *
- * Appears as a collapsible sidebar panel below the editor.
- * Clicking any entry navigates to that note.
+ * Used in the right-side drawer on note detail / editor pages.
+ *
+ * Props:
+ *   noteId        — the currently viewed note id (used by parent; kept for API
+ *                    symmetry)
+ *   incomingLinks — list of notes that reference this one
+ *   outgoingLinks — list of notes this one references
+ *   noteTitlesById — id → title lookup for rendering link chips
  */
 
-import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Link2, ArrowRight, ArrowLeft, ChevronDown, ChevronRight } from 'lucide-react';
-import type { LinkRef } from '../types';
+import { ArrowLeft, ArrowRight, Link2 } from 'lucide-react';
+import type { NoteListItem } from '../types';
 
 interface BacklinkPanelProps {
   noteId: string;
-  incomingLinks: LinkRef[];
-  outgoingLinks: LinkRef[];
-  /** Map of note id → title for display */
-  noteTitlesById: Map<string, string>;
-}
-
-interface LinkRowProps {
-  noteId: string;
-  title: string;
-  context?: string;
-  direction: 'in' | 'out';
-  onClick: () => void;
-}
-
-function LinkRow({ title, context, direction, onClick }: LinkRowProps) {
-  return (
-    <button
-      onClick={onClick}
-      className="w-full text-left px-3 py-2 rounded hover:bg-bg-elevated group flex items-start gap-2 transition-colors"
-    >
-      <span className="mt-0.5 flex-shrink-0 text-text-faint">
-        {direction === 'in' ? <ArrowRight size={13} /> : <ArrowLeft size={13} />}
-      </span>
-      <div className="flex-1 min-w-0">
-        <div className="text-sm text-text-primary group-hover:text-teal-400 truncate transition-colors">
-          {title}
-        </div>
-        {context && (
-          <div className="text-xs text-text-faint mt-0.5 line-clamp-1 italic">
-            &ldquo;{context}&rdquo;
-          </div>
-        )}
-      </div>
-    </button>
-  );
-}
-
-function Section({
-  label,
-  count,
-  children,
-  defaultOpen = true,
-}: {
-  label: string;
-  count: number;
-  children: React.ReactNode;
-  defaultOpen?: boolean;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div className="mb-3">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-text-muted hover:text-text-primary transition-colors"
-      >
-        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-        {label}
-        <span className="ml-auto tabular-nums text-text-faint">{count}</span>
-      </button>
-      {open && <div className="mt-0.5">{children}</div>}
-    </div>
-  );
+  incomingLinks: NoteListItem[];
+  outgoingLinks: NoteListItem[];
+  noteTitlesById?: Record<string, string>;
 }
 
 export default function BacklinkPanel({
-  noteId,
+  noteId: _noteId,
   incomingLinks,
   outgoingLinks,
   noteTitlesById,
 }: BacklinkPanelProps) {
   const navigate = useNavigate();
-  const [panelOpen, setPanelOpen] = useState(true);
 
-  const totalLinks = incomingLinks.length + outgoingLinks.length;
-
-  if (totalLinks === 0) {
+  function NoteChip({ note }: { note: NoteListItem }) {
     return (
-      <div className="border-t border-border px-4 py-3">
-        <div className="flex items-center gap-1.5 text-xs text-text-faint">
-          <Link2 size={12} />
-          <span>No links</span>
-        </div>
-      </div>
+      <button
+        onClick={() => navigate(`/notes/${note.id}`)}
+        className="flex items-center gap-1.5 rounded-md bg-bg-elevated px-2.5 py-1.5 text-xs text-text-muted hover:bg-bg-tertiary hover:text-text-primary transition-colors w-full text-left"
+        title={note.title}
+      >
+        <Link2 size={10} className="flex-shrink-0 text-text-faint" />
+        <span className="truncate">{noteTitlesById?.[note.id] ?? note.title}</span>
+      </button>
     );
   }
 
   return (
-    <div className="border-t border-border">
-      {/* Panel toggle header */}
-      <button
-        onClick={() => setPanelOpen((v) => !v)}
-        className="w-full flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium text-text-muted hover:text-text-primary transition-colors"
-      >
-        <Link2 size={12} />
-        <span>Links</span>
-        <span className="ml-1 tabular-nums text-text-faint">{totalLinks}</span>
-        <span className="ml-auto">
-          {panelOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-        </span>
-      </button>
-
-      {panelOpen && (
-        <div className="pb-2">
-          {incomingLinks.length > 0 && (
-            <Section label="Linked here" count={incomingLinks.length}>
-              {incomingLinks.map((link) => (
-                <LinkRow
-                  key={`${link.source_id}-${link.target_id}`}
-                  noteId={link.source_id}
-                  title={noteTitlesById.get(link.source_id) ?? link.source_id}
-                  context={link.context}
-                  direction="in"
-                  onClick={() => navigate(`/notes/${link.source_id}`)}
-                />
-              ))}
-            </Section>
-          )}
-
-          {outgoingLinks.length > 0 && (
-            <Section label="Links out" count={outgoingLinks.length} defaultOpen={true}>
-              {outgoingLinks.map((link) => (
-                <LinkRow
-                  key={`${link.source_id}-${link.target_id}`}
-                  noteId={link.target_id}
-                  title={noteTitlesById.get(link.target_id) ?? link.target_id}
-                  context={link.context}
-                  direction="out"
-                  onClick={() => navigate(`/notes/${link.target_id}`)}
-                />
-              ))}
-            </Section>
-          )}
+    <div className="flex flex-col gap-4 p-3">
+      {/* Incoming links */}
+      <section>
+        <div className="mb-2 flex items-center gap-1.5">
+          <ArrowLeft size={12} className="text-text-faint" />
+          <span className="text-xs font-medium text-text-muted uppercase tracking-wide">
+            Linked here ({incomingLinks.length})
+          </span>
         </div>
-      )}
+        {incomingLinks.length === 0 ? (
+          <p className="text-xs text-text-faint pl-1">No notes link here yet.</p>
+        ) : (
+          <div className="flex flex-col gap-1">
+            {incomingLinks.map((n) => <NoteChip key={n.id} note={n} />)}
+          </div>
+        )}
+      </section>
+
+      {/* Outgoing links */}
+      <section>
+        <div className="mb-2 flex items-center gap-1.5">
+          <ArrowRight size={12} className="text-text-faint" />
+          <span className="text-xs font-medium text-text-muted uppercase tracking-wide">
+            Links to ({outgoingLinks.length})
+          </span>
+        </div>
+        {outgoingLinks.length === 0 ? (
+          <p className="text-xs text-text-faint pl-1">This note has no outgoing links.</p>
+        ) : (
+          <div className="flex flex-col gap-1">
+            {outgoingLinks.map((n) => <NoteChip key={n.id} note={n} />)}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

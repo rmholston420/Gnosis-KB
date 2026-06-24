@@ -1,28 +1,21 @@
 /**
  * WikilinkPopup
  * =============
- * Floating card that appears when the user hovers a resolved [[wikilink]].
- *
- * Shows:
- *   - Note title
- *   - Folder badge
- *   - First ~200 chars of plain-text body
- *   - Word count
- *   - "Open note" action
+ * Floating card that appears when hovering a resolved [[wikilink]]
+ * inside WikilinkPreview or the note editor.
  *
  * Usage:
- *   Managed entirely by WikilinkPreview via mouseenter/mouseleave on
- *   .wikilink-exists elements. This component is portal-rendered so it
- *   escapes any overflow:hidden parents.
+ *   <WikilinkPopup state={popup} onClose={scheduleHide} />
+ *
+ * The parent is responsible for computing `state` (bounding rect + note)
+ * and calling `onClose` when the mouse leaves both the anchor and this popup.
  */
 
-import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { ArrowUpRight, FileText } from 'lucide-react';
+import { ExternalLink, FileText } from 'lucide-react';
 import type { NoteListItem } from '../types';
 
-interface PopupState {
+export interface PopupState {
   note: NoteListItem;
   anchorRect: DOMRect;
 }
@@ -33,117 +26,77 @@ interface WikilinkPopupProps {
 }
 
 // Strip markdown syntax for the snippet
-function stripMarkdown(md: string): string {
+function _stripMarkdown(md: string): string {
   return md
     .replace(/```[\s\S]*?```/g, '')
     .replace(/`[^`]+`/g, '')
     .replace(/!?\[[^\]]*\]\([^)]*\)/g, '')
-    .replace(/\[\[[^\]]+\]\]/g, '')
-    .replace(/[#*_~>]/g, '')
-    .replace(/\s+/g, ' ')
+    .replace(/#+\s/g, '')
+    .replace(/[*_]{1,2}([^*_]+)[*_]{1,2}/g, '$1')
+    .replace(/\[\[([^\]]+)\]\]/g, '$1')
     .trim();
 }
 
 export default function WikilinkPopup({ state, onClose }: WikilinkPopupProps) {
   const navigate = useNavigate();
-  const popupRef = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState({ top: 0, left: 0 });
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    if (!state) {
-      setVisible(false);
-      return;
-    }
-
-    const { anchorRect } = state;
-    const POPUP_W = 300;
-    const POPUP_H = 160; // approximate
-    const GAP = 8;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-
-    let top = anchorRect.bottom + GAP + window.scrollY;
-    let left = anchorRect.left + window.scrollX;
-
-    // Flip above if it would overflow the bottom
-    if (anchorRect.bottom + POPUP_H + GAP > vh) {
-      top = anchorRect.top - POPUP_H - GAP + window.scrollY;
-    }
-    // Clamp left so it doesn't overflow right edge
-    if (left + POPUP_W > vw) {
-      left = vw - POPUP_W - 8;
-    }
-
-    setPosition({ top, left });
-    // Tiny delay so the first render doesn't flash at 0,0
-    requestAnimationFrame(() => setVisible(true));
-  }, [state]);
 
   if (!state) return null;
 
-  const { note } = state;
+  const { note, anchorRect } = state;
 
-  function handleOpen(e: React.MouseEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    onClose();
-    navigate(`/notes/${note.id}`);
-  }
+  // Position: prefer below the anchor; fall back to above if near bottom
+  const spaceBelow = window.innerHeight - anchorRect.bottom;
+  const popupHeight = 140;
+  const top = spaceBelow > popupHeight + 8
+    ? anchorRect.bottom + window.scrollY + 6
+    : anchorRect.top    + window.scrollY - popupHeight - 6;
 
-  return createPortal(
+  const left = Math.min(
+    anchorRect.left + window.scrollX,
+    window.innerWidth - 300 - 8,
+  );
+
+  const snippet = note.body
+    ? note.body.slice(0, 160).replace(/\n/g, ' ') + (note.body.length > 160 ? '…' : '')
+    : 'No preview available.';
+
+  return (
     <div
-      ref={popupRef}
-      role="tooltip"
       className="wikilink-popup"
       style={{
         position: 'absolute',
-        top: position.top,
-        left: position.left,
+        top,
+        left,
         width: 300,
-        zIndex: 9999,
-        opacity: visible ? 1 : 0,
-        transform: visible ? 'translateY(0)' : 'translateY(-4px)',
-        transition: 'opacity 120ms ease, transform 120ms ease',
-        pointerEvents: visible ? 'auto' : 'none',
+        zIndex: 9000,
+        pointerEvents: 'auto',
       }}
-      // Keep popup open when mouse moves into it
-      onMouseEnter={() => setVisible(true)}
+      onMouseEnter={onClose ? () => { /* cancel hide */ } : undefined}
       onMouseLeave={onClose}
     >
-      <div className="wikilink-popup-inner">
-        {/* Header */}
-        <div className="wikilink-popup-header">
-          <FileText size={12} className="wikilink-popup-icon" />
-          <span className="wikilink-popup-title">{note.title}</span>
+      <div className="rounded-lg border border-border-default bg-bg-elevated shadow-lg p-3">
+        <div className="flex items-start justify-between gap-2 mb-1.5">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <FileText size={12} className="text-text-faint flex-shrink-0" />
+            <span className="text-xs font-semibold text-text-primary truncate">{note.title}</span>
+          </div>
           <button
-            className="wikilink-popup-open"
-            onClick={handleOpen}
+            onClick={() => navigate(`/notes/${note.id}`)}
+            className="flex-shrink-0 text-text-faint hover:text-accent-blue transition-colors"
             title="Open note"
-            aria-label={`Open note: ${note.title}`}
           >
-            <ArrowUpRight size={13} />
+            <ExternalLink size={11} />
           </button>
         </div>
-
-        {/* Folder badge */}
-        <div className="wikilink-popup-meta">
-          <span className="wikilink-popup-folder">{note.folder}</span>
-          <span className="wikilink-popup-words">{note.word_count}w</span>
-        </div>
-
-        {/* Tags */}
         {note.tags.length > 0 && (
-          <div className="wikilink-popup-tags">
-            {note.tags.slice(0, 4).map((t) => (
-              <span key={t} className="wikilink-popup-tag">{t}</span>
+          <div className="flex flex-wrap gap-1 mb-1.5">
+            {note.tags.slice(0, 3).map((t) => (
+              <span key={t} className="rounded-full bg-bg-tertiary px-1.5 py-0.5 text-xs text-text-faint">#{t}</span>
             ))}
           </div>
         )}
+        <p className="text-xs text-text-muted leading-relaxed line-clamp-3">{snippet}</p>
       </div>
-    </div>,
-    document.body,
+    </div>
   );
 }
-
-export type { PopupState };

@@ -60,7 +60,7 @@ describe('toast helpers', () => {
 describe('toast auto-remove', () => {
   it('removes after duration using fake timers', async () => {
     // Real async timer test — use a very short duration
-    const id = toast.success('temp', { duration: 50 });
+    const id = toast.success('temp', 50);
     expect(_store.get(id)).toBeDefined();
     await new Promise((r) => setTimeout(r, 100));
     expect(_store.get(id)).toBeUndefined();

@@ -90,6 +90,7 @@ function MarkdownWithWikilinks({
               </button>
             );
           },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } as any)}
       >
         {processed}

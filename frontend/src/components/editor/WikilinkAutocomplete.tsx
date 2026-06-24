@@ -1,129 +1,117 @@
 /**
  * WikilinkAutocomplete
  * ====================
- * Floating suggestion dropdown that appears when the user types [[ in any
- * <textarea> or CodeMirror editor.  Wire it with:
+ * Floating dropdown that appears while typing [[...]] in the note editor.
  *
- *   <WikilinkAutocomplete
- *     anchorRef={textareaRef}
- *     query={wikilinkQuery}          // text after [[ up to cursor
- *     onSelect={(note) => void}       // called with the matched NoteListItem
- *     onClose={() => void}
- *   />
+ * Behaviour:
+ *  - Detects when the cursor is inside an open [[  ]] wikilink token.
+ *  - Fetches /api/v1/notes/?search=<query> to get matching notes.
+ *  - Renders a floating list anchored below the cursor.
+ *  - Arrow keys navigate, Enter/Tab inserts, Escape closes.
+ *  - Clicking an item inserts the full [[Note Title]] token.
  *
- * The parent must track `wikilinkQuery` by parsing the textarea value + caret
+ * The component is kept thin — all cursor/caret detection lives in the
  * position (see useWikilinkDetector hook below the component).
  */
 
-import React, { useEffect, useRef, useState, KeyboardEvent } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import api from '../../services/api';
 
 interface NoteListItem {
   id: string;
   title: string;
-  slug: string;
-  folder?: string;
 }
 
-interface Props {
-  /** Ref to the textarea/editor element — used for positioning the popup. */
-  anchorRef: React.RefObject<HTMLTextAreaElement | HTMLDivElement | null>;
-  /** Text fragment after [[ (up to cursor). */
-  query: string;
-  onSelect: (note: NoteListItem) => void;
+interface WikilinkAutocompleteProps {
+  query: string;           // Text typed after [[
+  anchorRect: DOMRect;     // Bounding rect of [[ token for positioning
+  onSelect: (title: string) => void;
   onClose: () => void;
 }
 
-export function WikilinkAutocomplete({ anchorRef, query, onSelect, onClose }: Props) {
-  const [results, setResults] = useState<NoteListItem[]>([]);
-  const [activeIdx, setActiveIdx] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [position, setPosition] = useState({ top: 0, left: 0 });
-  const listRef = useRef<HTMLUListElement | null>(null);
+export default function WikilinkAutocomplete({
+  query,
+  anchorRect,
+  onSelect,
+  onClose,
+}: WikilinkAutocompleteProps) {
+  const [items,       setItems]       = useState<NoteListItem[]>([]);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const listRef = useRef<HTMLUListElement>(null);
 
-  // Debounced search
+  // Fetch matching notes
   useEffect(() => {
-    if (!query) {
-      setResults([]);
-      return;
-    }
-    const timeout = setTimeout(async () => {
-      setLoading(true);
-      try {
-        const res = await api.searchNoteByTitle(query) as { items: NoteListItem[] };
-        setResults(res.items ?? []);
-        setActiveIdx(0);
-      } catch {
-        setResults([]);
-      } finally {
-        setLoading(false);
-      }
-    }, 160);
-    return () => clearTimeout(timeout);
+    if (!query && query !== '') { setItems([]); return; }
+    let cancelled = false;
+    api.listNotes({ search: query, limit: 8 })
+      .then((res) => {
+        if (!cancelled) {
+          const notes = (res as { items?: NoteListItem[]; data?: NoteListItem[] } | NoteListItem[]);
+          if (Array.isArray(notes)) setItems(notes);
+          else if (notes.items) setItems(notes.items);
+          else if (notes.data) setItems(notes.data);
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, [query]);
 
-  // Position popup below / near the anchor
-  useEffect(() => {
-    const el = anchorRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    setPosition({
-      top: rect.bottom + window.scrollY + 4,
-      left: rect.left + window.scrollX,
-    });
-  }, [anchorRef, query]);
-
-  // Keyboard navigation (Tab / Enter / Escape / Arrow)
+  // Keyboard navigation
   useEffect(() => {
     function handleKey(e: globalThis.KeyboardEvent) {
-      if (e.key === 'Escape') { onClose(); return; }
-      if (!results.length) return;
       if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setActiveIdx((i) => (i + 1) % results.length);
+        setActiveIndex((i) => Math.min(i + 1, items.length - 1));
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
-        setActiveIdx((i) => (i - 1 + results.length) % results.length);
+        setActiveIndex((i) => Math.max(i - 1, 0));
       } else if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault();
-        onSelect(results[activeIdx]);
+        if (items[activeIndex]) onSelect(items[activeIndex].title);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
       }
     }
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [results, activeIdx, onSelect, onClose]);
+  }, [items, activeIndex, onSelect, onClose]);
 
-  if (!query && !loading) return null;
+  if (items.length === 0) return null;
+
+  // Position below anchor
+  const top  = anchorRect.bottom + window.scrollY + 4;
+  const left = anchorRect.left   + window.scrollX;
 
   return (
     <ul
       ref={listRef}
       role="listbox"
-      style={{ top: position.top, left: position.left }}
-      className="wikilink-autocomplete"
+      style={{
+        position: 'absolute',
+        top,
+        left,
+        zIndex: 9999,
+        minWidth: 220,
+        maxWidth: 360,
+        maxHeight: 240,
+        overflowY: 'auto',
+      }}
+      className="rounded-lg border border-border-default bg-bg-elevated shadow-lg py-1"
     >
-      {loading && (
-        <li className="wac-loading" role="option" aria-selected={false}>
-          <span className="wac-spinner" />
-          Searching…
-        </li>
-      )}
-      {!loading && results.length === 0 && query && (
-        <li className="wac-empty" role="option" aria-selected={false}>
-          No notes matching “{query}”
-        </li>
-      )}
-      {results.map((note, i) => (
+      {items.map((item, i) => (
         <li
-          key={note.id}
+          key={item.id}
           role="option"
-          aria-selected={i === activeIdx}
-          className={`wac-item ${i === activeIdx ? 'wac-item--active' : ''}`}
-          onMouseEnter={() => setActiveIdx(i)}
-          onClick={() => onSelect(note)}
+          aria-selected={i === activeIndex}
+          onClick={() => onSelect(item.title)}
+          className={`px-3 py-1.5 text-sm cursor-pointer ${
+            i === activeIndex
+              ? 'bg-bg-tertiary text-text-primary'
+              : 'text-text-muted hover:bg-bg-tertiary hover:text-text-primary'
+          }`}
         >
-          <span className="wac-title">{note.title}</span>
-          {note.folder && <span className="wac-folder">{note.folder}</span>}
+          {item.title}
         </li>
       ))}
     </ul>
@@ -132,58 +120,70 @@ export function WikilinkAutocomplete({ anchorRef, query, onSelect, onClose }: Pr
 
 /**
  * useWikilinkDetector
- * ===================
- * Call inside a component that owns a <textarea> ref.  Returns the current
- * wikilink query string (text after [[ up to cursor) or null when no open
- * wikilink bracket exists.
+ *
+ * Detects when the textarea cursor is inside an open [[ token and returns
+ * the current query string + bounding rect for the autocomplete dropdown.
  *
  * Usage:
  *   const { wikilinkQuery, insertWikilink } = useWikilinkDetector(textareaRef, value, onChange);
  */
+// eslint-disable-next-line react-refresh/only-export-components
 export function useWikilinkDetector(
   ref: React.RefObject<HTMLTextAreaElement | null>,
   value: string,
   onChange: (v: string) => void
 ) {
   const [wikilinkQuery, setWikilinkQuery] = useState<string | null>(null);
-  const [bracketStart, setBracketStart] = useState<number>(-1);
+  const [anchorRect,    setAnchorRect]    = useState<DOMRect | null>(null);
 
-  function detectQuery() {
+  useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const pos = el.selectionStart ?? 0;
-    const before = value.slice(0, pos);
-    const match = before.match(/\[\[([^\]]*)$/);
-    if (match) {
-      setWikilinkQuery(match[1]);
-      setBracketStart(pos - match[1].length - 2);
-    } else {
-      setWikilinkQuery(null);
-      setBracketStart(-1);
-    }
-  }
 
-  /** Called when the user selects a note from the autocomplete. */
-  function insertWikilink(note: { title: string; id: string }) {
+    function detectWikilink() {
+      if (!el) return;
+      const pos  = el.selectionStart ?? 0;
+      const text = el.value.slice(0, pos);
+      const match = text.match(/\[\[([^\][]*)$/);
+      if (match) {
+        setWikilinkQuery(match[1]);
+        // Get caret rect
+        const rect = el.getBoundingClientRect();
+        setAnchorRect(new DOMRect(rect.left, rect.bottom, 0, 0));
+      } else {
+        setWikilinkQuery(null);
+        setAnchorRect(null);
+      }
+    }
+
+    el.addEventListener('keyup', detectWikilink);
+    el.addEventListener('click', detectWikilink);
+    return () => {
+      el.removeEventListener('keyup', detectWikilink);
+      el.removeEventListener('click', detectWikilink);
+    };
+  }, [ref]);
+
+  function insertWikilink(title: string) {
     const el = ref.current;
-    if (!el || bracketStart < 0) return;
-    const pos = el.selectionStart ?? 0;
-    const before = value.slice(0, bracketStart);
-    const after = value.slice(pos);
-    const inserted = `[[${note.title}]]`;
-    const newVal = before + inserted + after;
-    onChange(newVal);
+    if (!el) return;
+    const pos   = el.selectionStart ?? 0;
+    const text  = el.value;
+    const before = text.slice(0, pos);
+    const after  = text.slice(pos);
+    const openIdx = before.lastIndexOf('[[');
+    if (openIdx === -1) return;
+    const newValue = before.slice(0, openIdx) + `[[${title}]]` + after;
+    onChange(newValue);
     setWikilinkQuery(null);
-    setBracketStart(-1);
-    // Restore focus + caret after React re-render
+    setAnchorRect(null);
+    // Move cursor after the inserted wikilink
     requestAnimationFrame(() => {
-      el.focus();
-      const newPos = before.length + inserted.length;
+      const newPos = openIdx + title.length + 4; // [[  ]] = 4 chars
       el.setSelectionRange(newPos, newPos);
+      el.focus();
     });
   }
 
-  return { wikilinkQuery, detectQuery, insertWikilink, closeAutocomplete: () => setWikilinkQuery(null) };
+  return { wikilinkQuery, anchorRect, insertWikilink };
 }
-
-export default WikilinkAutocomplete;

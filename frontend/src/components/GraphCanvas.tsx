@@ -13,11 +13,15 @@ import type { GraphData, NoteType } from '../types';
 cytoscape.use(fcose);
 
 const NOTE_TYPE_COLORS: Record<NoteType | 'default', string> = {
-  fleeting:  '#f59e0b',
-  permanent: '#4f9cf9',
-  map:       '#a855f7',
-  template:  '#6b7280',
-  default:   '#9ca3af',
+  fleeting:   '#f59e0b',
+  permanent:  '#4f9cf9',
+  literature: '#10b981',
+  journal:    '#f472b6',
+  map:        '#a855f7',
+  reference:  '#fb923c',
+  project:    '#38bdf8',
+  template:   '#6b7280',
+  default:    '#9ca3af',
 };
 
 interface GraphCanvasProps {
