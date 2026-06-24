@@ -1,7 +1,7 @@
 /**
  * hooks/useAI.ts — TanStack Query + Mutation hooks for AI features.
  */
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { aiApi } from '../api/ai';
 import type {
   SummarizeResult,
@@ -9,30 +9,30 @@ import type {
   LinkSuggestResult,
   TagSuggestResult,
 } from '../api/ai';
+import type { ChatMessage, ChatSource } from '../types';
 
-// ── Note Summary ──────────────────────────────────────────────────────────────
+// ── Note Summary (mutation — user triggers on demand) ────────────────────────
 
-/**
- * Returns a mutation so the caller can trigger summarisation on demand
- * via `mutate(noteId)` / `mutateAsync(noteId)`.
- */
-export function useNoteSummary(noteId: string | null | undefined) {
-  return useMutation({
-    mutationFn: (id?: string) => aiApi.summarizeNote((id ?? noteId)!),
+export function useNoteSummary(noteId?: string | null) {
+  return useMutation<SummarizeResult, Error, string | undefined>({
+    mutationFn: (id) => aiApi.summarizeNote((id ?? noteId)!),
   });
 }
 
 // ── Note Critique ─────────────────────────────────────────────────────────────
 
-export function useNoteCritique(noteId: string | null | undefined) {
-  return useMutation({
-    mutationFn: (id?: string): Promise<CritiqueResult> => aiApi.critiqueNote((id ?? noteId)!),
+export function useNoteCritique(noteId?: string | null) {
+  return useMutation<CritiqueResult, Error, string | undefined>({
+    mutationFn: (id) => aiApi.critiqueNote((id ?? noteId)!),
   });
 }
 
+/** Alias used by older test imports */
+export const useCritiqueNote = useNoteCritique;
+
 // ── Link Suggestions ──────────────────────────────────────────────────────────
 
-export function useLinkSuggestions(noteId: string | null | undefined) {
+export function useLinkSuggestions(noteId?: string | null) {
   return useQuery({
     queryKey: ['ai', 'link-suggestions', noteId],
     queryFn:  (): Promise<LinkSuggestResult> => aiApi.suggestLinks(noteId!),
@@ -42,7 +42,7 @@ export function useLinkSuggestions(noteId: string | null | undefined) {
 
 // ── Tag Suggestions ───────────────────────────────────────────────────────────
 
-export function useTagSuggestions(noteId: string | null | undefined) {
+export function useTagSuggestions(noteId?: string | null) {
   return useQuery({
     queryKey: ['ai', 'tag-suggestions', noteId],
     queryFn:  (): Promise<TagSuggestResult> => aiApi.suggestTags(noteId!),
@@ -50,5 +50,26 @@ export function useTagSuggestions(noteId: string | null | undefined) {
   });
 }
 
-// ── Re-exports of result types for convenience ────────────────────────────────
+// ── AI Chat ───────────────────────────────────────────────────────────────────
+
+export interface AiChatState {
+  messages:   ChatMessage[];
+  sources:    ChatSource[];
+  isStreaming: boolean;
+  streamText:  string;
+}
+
+export function useAIChat() {
+  const qc = useQueryClient();
+  const send = useMutation<void, Error, string>({
+    mutationFn: async (query: string) => {
+      void qc; // qc available for cache invalidation if needed
+      return new Promise<void>((resolve) => {
+        aiApi.streamQuery(query, undefined, resolve);
+      });
+    },
+  });
+  return send;
+}
+
 export type { SummarizeResult, CritiqueResult, LinkSuggestResult, TagSuggestResult };

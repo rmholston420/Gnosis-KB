@@ -22,23 +22,18 @@ export interface TagSuggestResult  { suggestions: TagSuggestion[] }
 export const aiApi = {
   summarizeNote:  (id: string) =>
     req<SummarizeResult>(`/api/ai/summarize/${id}`, { method: 'POST' }),
-
   critiqueNote:   (id: string) =>
     req<CritiqueResult>(`/api/ai/critique/${id}`, { method: 'POST' }),
-
   suggestLinks:   (id: string) =>
     req<LinkSuggestResult>(`/api/ai/suggest-links/${id}`, { method: 'POST' }),
-
   suggestTags:    (id: string) =>
     req<TagSuggestResult>(`/api/ai/suggest-tags/${id}`, { method: 'POST' }),
-
-  /** Streaming RAG chat — calls `onChunk` for each SSE token, `onDone` when finished. */
   streamQuery: (
     query: string,
     onChunk?: (token: string) => void,
     onDone?:  () => void,
   ) => {
-    const url = `${BASE}/api/ai/query`;
+    const url  = `${BASE}/api/ai/query`;
     const ctrl = new AbortController();
     fetch(url, {
       method: 'POST',
@@ -46,7 +41,7 @@ export const aiApi = {
       body: JSON.stringify({ query }),
       signal: ctrl.signal,
     }).then(async res => {
-      const reader = res.body?.getReader();
+      const reader  = res.body?.getReader();
       const decoder = new TextDecoder();
       if (!reader) { onDone?.(); return; }
       while (true) {
@@ -61,3 +56,6 @@ export const aiApi = {
 };
 
 export default aiApi;
+
+// ── Standalone named export used by LinkSuggestions.tsx ─────────────────────
+export const suggestLinks = aiApi.suggestLinks;

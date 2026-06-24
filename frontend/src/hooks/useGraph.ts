@@ -1,38 +1,56 @@
 /**
- * useGraph hooks — TanStack Query wrappers for graph endpoints.
- *
- * Both canonical names and test-expected aliases are exported.
+ * hooks/useGraph.ts — TanStack Query hooks for graph data.
  */
 import { useQuery } from '@tanstack/react-query';
-import api from '../services/api';
-import type { GraphData } from '../types';
+import { graphApi } from '../api/graph';
+import type { GraphData, GraphStats } from '../types';
 
-/** Fetch the full vault knowledge graph. Canonical name: useFullGraph. */
+const GRAPH_KEY = 'graph';
+
 export function useFullGraph() {
-  return useQuery<GraphData>({
-    queryKey: ['graph', 'full'],
-    queryFn:  () => api.getGraph() as Promise<GraphData>,
-    staleTime: 60_000,
+  return useQuery({
+    queryKey: [GRAPH_KEY, 'full'],
+    queryFn:  (): Promise<GraphData> => graphApi.getFullGraph(),
   });
 }
 
-/** Alias expected by unit tests. */
+/** Named alias used by GraphView2D and tests */
 export const useGraphData = useFullGraph;
 
-/** Fetch the LightRAG-specific graph overlay. */
 export function useLightRagGraph() {
-  return useQuery<GraphData>({
-    queryKey: ['graph', 'lightrag'],
-    queryFn:  () => api.getLightRagGraph() as Promise<GraphData>,
-    staleTime: 60_000,
+  return useQuery({
+    queryKey: [GRAPH_KEY, 'lightrag'],
+    queryFn:  (): Promise<GraphData> => graphApi.getLightRagGraph(),
   });
 }
 
-/** Fetch a single node’s entity summary from the LightRAG graph. */
-export function useLightRagNode(nodeId: string) {
+/**
+ * Graph statistics — derived client-side from the full graph if no
+ * dedicated backend endpoint exists.
+ */
+export function useGraphStats() {
   return useQuery({
-    queryKey: ['graph', 'lightrag', 'node', nodeId],
-    queryFn:  () => api.getLightRagNode(nodeId),
-    enabled:  !!nodeId,
+    queryKey: [GRAPH_KEY, 'stats'],
+    queryFn:  async (): Promise<GraphStats> => {
+      const data = await graphApi.getFullGraph();
+      const degree = new Map<string, number>();
+      for (const e of data.edges) {
+        const src = e.source_id;
+        const tgt = e.target_id;
+        degree.set(src, (degree.get(src) ?? 0) + 1);
+        degree.set(tgt, (degree.get(tgt) ?? 0) + 1);
+      }
+      const sorted = data.nodes
+        .map(n => ({ note_id: n.note_id, title: n.title, degree: degree.get(n.note_id) ?? 0 }))
+        .sort((a, b) => b.degree - a.degree);
+      const totalDeg = [...degree.values()].reduce((s, v) => s + v, 0);
+      return {
+        total_nodes:    data.nodes.length,
+        total_edges:    data.edges.length,
+        avg_degree:     data.nodes.length ? totalDeg / data.nodes.length : 0,
+        most_connected: sorted.slice(0, 10),
+        isolated_count: sorted.filter(n => n.degree === 0).length,
+      };
+    },
   });
 }

@@ -6,8 +6,8 @@ import { notesApi } from '../api/notes';
 import type { ListNotesParams } from '../api/notes';
 import type { Note, NoteCreate, NoteUpdate, Backlink } from '../types';
 
-export const NOTES_KEY  = 'notes';
-export const NOTE_KEY   = 'note';
+export const NOTES_KEY    = 'notes';
+export const NOTE_KEY     = 'note';
 export const BACKLINK_KEY = 'backlinks';
 
 // ── List ──────────────────────────────────────────────────────────────────────
@@ -18,6 +18,9 @@ export function useNotes(params: ListNotesParams = {}) {
     queryFn:  () => notesApi.listNotes(params),
   });
 }
+
+/** Alias kept for any callers that use the old name */
+export const useNotesList = useNotes;
 
 // ── Single note ───────────────────────────────────────────────────────────────
 
@@ -41,17 +44,16 @@ export function useBacklinks(noteId: string | null | undefined) {
 }
 
 // ── Daily note ────────────────────────────────────────────────────────────────
-
 /**
- * Fetches (or creates) today's daily journal note.
- * Returns a query for the note and a mutation to create it if missing.
+ * Returns { data, isLoading, create, today } so DailyNoteWidget can
+ * destructure data/isLoading directly (not nested under .query).
  */
 export function useDailyNote() {
   const qc    = useQueryClient();
-  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const today = new Date().toISOString().slice(0, 10);
   const key   = [NOTE_KEY, 'daily', today];
 
-  const query = useQuery({
+  const { data, isLoading, isError } = useQuery<Note | null>({
     queryKey: key,
     queryFn:  () =>
       notesApi.listNotes({ note_type: 'journal', q: today, per_page: 1 })
@@ -69,7 +71,7 @@ export function useDailyNote() {
     onSuccess: (note) => qc.setQueryData(key, note),
   });
 
-  return { query, create, today };
+  return { data, isLoading, isError, create, today };
 }
 
 // ── Create / Update / Delete ──────────────────────────────────────────────────

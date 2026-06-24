@@ -1,5 +1,7 @@
 /**
  * api/notes.ts — typed API client for note-related endpoints.
+ * Exports both the notesApi object AND standalone named functions
+ * so pages can do: import { getNote, createNote, ... } from '../api/notes'
  */
 import type {
   Note,
@@ -7,6 +9,7 @@ import type {
   NoteUpdate,
   TagRow,
   Backlink,
+  NoteTemplate,
 } from '../types';
 
 export interface ListNotesParams extends Record<string, unknown> {
@@ -32,13 +35,15 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-/** Normalise a raw note so `note.id` always equals `note.note_id`. */
 function normalise(n: Note): Note {
-  return { ...n, id: n.note_id ?? (n as unknown as { id: string }).id };
+  const id = n.note_id ?? (n as unknown as { id: string }).id;
+  return { ...n, note_id: id, id };
 }
 
+// ── Object API ────────────────────────────────────────────────────────────────
+
 export const notesApi = {
-  listNotes:   (params: ListNotesParams = {}) => {
+  listNotes: (params: ListNotesParams = {}) => {
     const qs = new URLSearchParams(
       Object.fromEntries(
         Object.entries(params)
@@ -49,31 +54,28 @@ export const notesApi = {
     return req<Note[]>(`/api/notes${qs ? `?${qs}` : ''}`).then(ns => ns.map(normalise));
   },
 
-  getNote:     (id: string) =>
-    req<Note>(`/api/notes/${id}`).then(normalise),
-
+  getNote:     (id: string) => req<Note>(`/api/notes/${id}`).then(normalise),
   createNote:  (data: NoteCreate) =>
     req<Note>('/api/notes', { method: 'POST', body: JSON.stringify(data) }).then(normalise),
-
   updateNote:  (id: string, data: NoteUpdate) =>
     req<Note>(`/api/notes/${id}`, { method: 'PATCH', body: JSON.stringify(data) }).then(normalise),
-
-  deleteNote:  (id: string) =>
-    req<void>(`/api/notes/${id}`, { method: 'DELETE' }),
-
+  deleteNote:  (id: string) => req<void>(`/api/notes/${id}`, { method: 'DELETE' }),
   ingestNote:  (id: string) =>
     req<{ status: string }>(`/api/notes/${id}/ingest`, { method: 'POST' }),
-
-  /** Returns backlinks for a given note. */
   getBacklinks: (id: string) =>
     req<{ backlinks: Backlink[]; count: number }>(`/api/notes/${id}/backlinks`),
-
-  /** List all tags with usage counts. */
   listTags:    () => req<TagRow[]>('/api/tags'),
-
-  listFolders:    () => req<string[]>('/api/folders'),
-  listTemplates:  () => req<string[]>('/api/templates'),
+  listFolders: () => req<string[]>('/api/folders'),
+  listTemplates: () => req<NoteTemplate[]>('/api/templates'),
   triggerVaultSync: () => req<{ status: string }>('/api/vault/sync', { method: 'POST' }),
 };
 
 export default notesApi;
+
+// ── Standalone named exports (used by NoteEditorPage destructured imports) ───
+
+export const getNote      = notesApi.getNote;
+export const createNote   = notesApi.createNote;
+export const updateNote   = notesApi.updateNote;
+export const listNotes    = notesApi.listNotes;
+export const deleteNote   = notesApi.deleteNote;
