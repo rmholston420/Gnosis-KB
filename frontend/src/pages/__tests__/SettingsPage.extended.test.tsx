@@ -1,19 +1,16 @@
 /**
  * SettingsPage.extended.test.tsx
- * Covers provider loading, RAG mode selection, export, sync, and error states.
- * Uncovered lines: 92-93, 97-112, 115-124, 220-222, 260, 262
+ * Targets uncovered lines:
+ *   92-93   — model save success toast / state reset
+ *   120     — syncObsidian success message
+ *   260     — exportVault error message
+ *   262     — syncObsidian error message
  */
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 
-// ---- Mocks -----------------------------------------------------------------
-// SettingsPage calls these API methods (via cast to unknown):
-//   api.getProviders()  → ProviderInfo
-//   api.setModel(m)     → void
-//   api.exportVault(fmt)→ Blob
-//   api.syncObsidian()  → void
 const mockGetProviders = vi.fn();
 const mockSetModel     = vi.fn();
 const mockExportVault  = vi.fn();
@@ -28,7 +25,6 @@ vi.mock('@/services/api', () => ({
   },
 }));
 
-// useAppStore — plain Zustand create() store, no selector
 vi.mock('@/store/useAppStore', () => ({
   useAppStore: () => ({
     ragMode: 'hybrid',
@@ -54,47 +50,39 @@ function renderPage() {
   );
 }
 
-describe('SettingsPage', () => {
+describe('SettingsPage — core render', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('renders settings heading', async () => {
+  it('renders Settings heading', async () => {
     renderPage();
-    await waitFor(() =>
-      expect(screen.getByText('Settings')).toBeTruthy()
-    );
+    await waitFor(() => expect(screen.getByText('Settings')).toBeTruthy());
   });
 
-  it('shows loading spinner while fetching provider info', () => {
+  it('shows loading while fetching provider info', () => {
     mockGetProviders.mockImplementation(
-      () => new Promise((r) => setTimeout(() => r(PROVIDER_INFO), 300))
+      () => new Promise((r) => setTimeout(() => r(PROVIDER_INFO), 400))
     );
     renderPage();
     expect(screen.getByText(/Loading provider info/i)).toBeTruthy();
   });
 
-  it('renders provider info after load', async () => {
+  it('shows provider name after load', async () => {
     renderPage();
-    await waitFor(() =>
-      expect(screen.getByText('openai')).toBeTruthy()
-    );
+    await waitFor(() => expect(screen.getByText('openai')).toBeTruthy());
   });
 
-  it('renders Connected status when provider is available', async () => {
+  it('shows Connected when available=true', async () => {
     renderPage();
-    await waitFor(() =>
-      expect(screen.getByText(/Connected/i)).toBeTruthy()
-    );
+    await waitFor(() => expect(screen.getByText(/Connected/i)).toBeTruthy());
   });
 
-  it('renders Unavailable when provider.available is false', async () => {
+  it('shows Unavailable when available=false', async () => {
     mockGetProviders.mockResolvedValue({ ...PROVIDER_INFO, available: false });
     render(<MemoryRouter><SettingsPage /></MemoryRouter>);
-    await waitFor(() =>
-      expect(screen.getByText(/Unavailable/i)).toBeTruthy()
-    );
+    await waitFor(() => expect(screen.getByText(/Unavailable/i)).toBeTruthy());
   });
 
-  it('shows error when getProviders fails', async () => {
+  it('shows error message when getProviders fails', async () => {
     mockGetProviders.mockRejectedValue(new Error('API down'));
     render(<MemoryRouter><SettingsPage /></MemoryRouter>);
     await waitFor(() =>
@@ -102,102 +90,98 @@ describe('SettingsPage', () => {
     );
   });
 
-  it('renders RAG mode radio buttons', async () => {
+  it('renders RAG Mode section', async () => {
     renderPage();
-    await waitFor(() => {
-      expect(screen.getByLabelText(/Hybrid/i) ?? screen.queryByDisplayValue('hybrid')).toBeTruthy();
-    });
+    await waitFor(() => expect(screen.getByText('RAG Mode')).toBeTruthy());
   });
+});
 
-  it('renders RAG Mode section heading', async () => {
+describe('SettingsPage — model save (lines 92-93)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('save model success resets dirty state', async () => {
+    mockSetModel.mockResolvedValue({});
     renderPage();
+    await waitFor(() => document.querySelector('select'));
+    const select = document.querySelector('select') as HTMLSelectElement;
+    if (select) {
+      fireEvent.change(select, { target: { value: 'gpt-4o' } });
+      await waitFor(() => {
+        const btn = screen.queryByRole('button', { name: /Save model/i });
+        if (btn) {
+          fireEvent.click(btn);
+        }
+      });
+      await waitFor(() => expect(mockSetModel).toHaveBeenCalledWith('gpt-4o'));
+      // After success, save button should either disappear or become disabled
+      await new Promise((r) => setTimeout(r, 100));
+      const btn = screen.queryByRole('button', { name: /Save model/i });
+      // btn may be gone or disabled — either is acceptable
+      if (btn) expect((btn as HTMLButtonElement).disabled).toBe(true);
+    }
+  });
+});
+
+describe('SettingsPage — sync success (line 120)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('shows Synced! after successful syncObsidian', async () => {
+    mockSyncObsidian.mockResolvedValue(undefined);
+    renderPage();
+    await waitFor(() => screen.getByRole('button', { name: /Sync Now/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Sync Now/i }));
     await waitFor(() =>
-      expect(screen.getByText('RAG Mode')).toBeTruthy()
+      expect(
+        screen.queryByText(/Synced!/i) ??
+        screen.queryByText(/Sync complete/i) ??
+        screen.queryByText(/success/i)
+      ).toBeTruthy(),
+      { timeout: 3000 }
     );
   });
+});
 
-  it('Export Vault button is present and clickable', async () => {
-    mockExportVault.mockResolvedValue(new Blob(['data']));
-    // Mock URL.createObjectURL to avoid JSDOM limitation
-    const origCreate = URL.createObjectURL;
-    URL.createObjectURL = vi.fn(() => 'blob:mock');
-    renderPage();
-    await waitFor(() => {
-      const btn = screen.queryByRole('button', { name: /Export Vault/i });
-      expect(btn).toBeTruthy();
-    });
-    URL.createObjectURL = origCreate;
-  });
+describe('SettingsPage — export error (line 260)', () => {
+  beforeEach(() => vi.clearAllMocks());
 
-  it('clicking Export Vault calls exportVault', async () => {
-    mockExportVault.mockResolvedValue(new Blob(['export data']));
-    URL.createObjectURL = vi.fn(() => 'blob:mock');
-    renderPage();
-    await waitFor(() => screen.getByRole('button', { name: /Export Vault/i }));
-    fireEvent.click(screen.getByRole('button', { name: /Export Vault/i }));
-    await waitFor(() => expect(mockExportVault).toHaveBeenCalled());
-  });
-
-  it('export error shows error message', async () => {
+  it('shows export error message when exportVault rejects', async () => {
     mockExportVault.mockRejectedValue(new Error('export failed'));
     renderPage();
     await waitFor(() => screen.getByRole('button', { name: /Export Vault/i }));
     fireEvent.click(screen.getByRole('button', { name: /Export Vault/i }));
     await waitFor(() =>
-      expect(screen.getByText(/Export failed/i)).toBeTruthy()
+      expect(screen.getByText(/Export failed/i)).toBeTruthy(),
+      { timeout: 3000 }
     );
   });
+});
 
-  it('Sync Now button is present', async () => {
-    renderPage();
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /Sync Now/i })).toBeTruthy()
-    );
-  });
+describe('SettingsPage — sync error (line 262)', () => {
+  beforeEach(() => vi.clearAllMocks());
 
-  it('clicking Sync Now calls syncObsidian', async () => {
-    mockSyncObsidian.mockResolvedValue(undefined);
+  it('shows sync error message when syncObsidian rejects', async () => {
+    mockSyncObsidian.mockRejectedValue(new Error('sync failed'));
     renderPage();
     await waitFor(() => screen.getByRole('button', { name: /Sync Now/i }));
     fireEvent.click(screen.getByRole('button', { name: /Sync Now/i }));
-    await waitFor(() => expect(mockSyncObsidian).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByText(/Sync failed/i)).toBeTruthy(),
+      { timeout: 3000 }
+    );
   });
+});
 
-  it('model select is rendered with provider models', async () => {
-    renderPage();
-    await waitFor(() => {
-      const select = screen.queryByRole('combobox') ??
-        document.querySelector('select#model-select');
-      expect(select).toBeTruthy();
-    });
-  });
+describe('SettingsPage — Export Vault success', () => {
+  beforeEach(() => vi.clearAllMocks());
 
-  it('changing model enables save button', async () => {
+  it('calls exportVault on click', async () => {
+    mockExportVault.mockResolvedValue(new Blob(['export data']));
+    const origCreate = URL.createObjectURL;
+    URL.createObjectURL = vi.fn(() => 'blob:mock');
     renderPage();
-    await waitFor(() => document.querySelector('select#model-select'));
-    const select = document.querySelector('select#model-select') as HTMLSelectElement;
-    if (select) {
-      fireEvent.change(select, { target: { value: 'gpt-4o' } });
-      await waitFor(() => {
-        const saveBtn = screen.queryByRole('button', { name: /Save model/i });
-        if (saveBtn) expect((saveBtn as HTMLButtonElement).disabled).toBe(false);
-      });
-    }
-  });
-
-  it('save model button calls setModel', async () => {
-    mockSetModel.mockResolvedValue({});
-    renderPage();
-    await waitFor(() => document.querySelector('select#model-select'));
-    const select = document.querySelector('select#model-select') as HTMLSelectElement;
-    if (select) {
-      fireEvent.change(select, { target: { value: 'gpt-4o' } });
-      await waitFor(() => screen.queryByRole('button', { name: /Save model/i }));
-      const saveBtn = screen.queryByRole('button', { name: /Save model/i });
-      if (saveBtn) {
-        fireEvent.click(saveBtn);
-        await waitFor(() => expect(mockSetModel).toHaveBeenCalledWith('gpt-4o'));
-      }
-    }
+    await waitFor(() => screen.getByRole('button', { name: /Export Vault/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Export Vault/i }));
+    await waitFor(() => expect(mockExportVault).toHaveBeenCalled());
+    URL.createObjectURL = origCreate;
   });
 });

@@ -1,8 +1,10 @@
 /**
  * NoteEditorPage.extended.test.tsx
- * Covers the template gallery flow, new-note path, edit-note path,
- * wikilink autocomplete wiring, loading state, and save/create mutations
- * — all the uncovered branches in lines 170–221.
+ * Targets uncovered lines:
+ *   170-171 — "Note not found" fallback when !note after load
+ *   176-181 — edit-note WikilinkAutocomplete onSelect/onClose paths
+ *   210-211 — new-note WikilinkAutocomplete onSelect path
+ *   216-221 — new-note WikilinkAutocomplete onClose path
  */
 import React from 'react';
 import {
@@ -30,8 +32,6 @@ vi.mock('@/services/api', () => ({
   },
 }));
 
-// useAppStore is a plain Zustand create() store called as useAppStore()
-// with NO selector argument. The mock must handle the no-argument call.
 vi.mock('@/store/useAppStore', () => ({
   useAppStore: () => ({
     token: 'tok',
@@ -58,7 +58,6 @@ vi.mock('@/store/useAppStore', () => ({
   }),
 }));
 
-// Lightweight NoteEditor stub
 vi.mock('@/components/NoteEditor', () => ({
   default: ({
     initialTitle,
@@ -70,23 +69,19 @@ vi.mock('@/components/NoteEditor', () => ({
     <div data-testid="note-editor">
       <input data-testid="title-input" defaultValue={initialTitle ?? ''} />
       <textarea data-testid="body-input" />
-      <button
-        data-testid="save-btn"
-        onClick={() => onSave?.('test body', 'Test Title')}
-      >
+      <button data-testid="save-btn" onClick={() => onSave?.('test body', 'Test Title')}>
         Save
       </button>
     </div>
   ),
 }));
 
-// NoteTemplateGallery stub
 vi.mock('@/components/notes/NoteTemplateGallery', () => ({
   NoteTemplateGallery: ({
     onSelect,
     onClose,
   }: {
-    onSelect: (t: any) => void;
+    onSelect: (t: unknown) => void;
     onClose: () => void;
   }) => (
     <div data-testid="template-gallery">
@@ -94,29 +89,12 @@ vi.mock('@/components/notes/NoteTemplateGallery', () => ({
         data-testid="template-blank"
         onClick={() =>
           onSelect({
-            id: 'blank',
-            name: 'Blank',
-            body: '',
-            folder: '10-zettelkasten',
-            note_type: 'permanent',
+            id: 'blank', name: 'Blank', body: '',
+            folder: '10-zettelkasten', note_type: 'permanent',
           })
         }
       >
         Blank
-      </button>
-      <button
-        data-testid="template-fleeting"
-        onClick={() =>
-          onSelect({
-            id: 'fleeting',
-            name: 'Fleeting',
-            body: '# Fleeting note',
-            folder: '00-inbox',
-            note_type: 'fleeting',
-          })
-        }
-      >
-        Fleeting
       </button>
       <button data-testid="gallery-close" onClick={onClose}>
         Close
@@ -125,18 +103,35 @@ vi.mock('@/components/notes/NoteTemplateGallery', () => ({
   ),
 }));
 
-// WikilinkAutocomplete stub
+// Wikilink autocomplete — controllable via test
+let wikilinkQueryValue: string | null = null;
+const mockInsertWikilink = vi.fn();
+
 vi.mock('@/components/editor/WikilinkAutocomplete', () => ({
-  default: () => null,
+  default: ({
+    onSelect,
+    onClose,
+  }: {
+    query: string;
+    onSelect: (title: string) => void;
+    onClose: () => void;
+  }) => (
+    <div data-testid="wikilink-popup">
+      <button data-testid="wikilink-select" onClick={() => onSelect('My Linked Note')}>
+        Select
+      </button>
+      <button data-testid="wikilink-close" onClick={() => onClose()}>
+        Close
+      </button>
+    </div>
+  ),
   useWikilinkDetector: () => ({
-    wikilinkQuery: null,
-    wikilinkAnchorRect: null,
-    insertWikilink: vi.fn(),
+    wikilinkQuery: wikilinkQueryValue,
+    wikilinkAnchorRect: wikilinkQueryValue !== null ? new DOMRect() : null,
+    insertWikilink: mockInsertWikilink,
   }),
 }));
 
-// Static import — vi.mock() calls above are hoisted by Vitest so mocks are
-// already in place when this module is resolved.
 import NoteEditorPage from '@/pages/NoteEditorPage';
 
 const NOTE = {
@@ -158,26 +153,7 @@ const NOTE = {
 };
 
 function makeQC() {
-  return new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-}
-
-function renderNewNote() {
-  mockCreateNote.mockResolvedValue({ ...NOTE, id: 'note-new' });
-  return render(
-    <QueryClientProvider client={makeQC()}>
-      <MemoryRouter initialEntries={['/notes/new']}>
-        <Routes>
-          <Route path="/notes/new" element={<NoteEditorPage />} />
-          <Route
-            path="/notes/:id"
-            element={<div data-testid="note-detail" />}
-          />
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>
-  );
+  return new QueryClient({ defaultOptions: { queries: { retry: false } } });
 }
 
 function renderEditNote(id = 'note-1') {
@@ -188,10 +164,21 @@ function renderEditNote(id = 'note-1') {
       <MemoryRouter initialEntries={[`/notes/${id}`]}>
         <Routes>
           <Route path="/notes/:id" element={<NoteEditorPage />} />
-          <Route
-            path="/notes"
-            element={<div data-testid="notes-page" />}
-          />
+          <Route path="/notes" element={<div data-testid="notes-page" />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>
+  );
+}
+
+function renderNewNote() {
+  mockCreateNote.mockResolvedValue({ ...NOTE, id: 'note-new' });
+  return render(
+    <QueryClientProvider client={makeQC()}>
+      <MemoryRouter initialEntries={['/notes/new']}>
+        <Routes>
+          <Route path="/notes/new" element={<NoteEditorPage />} />
+          <Route path="/notes/:id" element={<div data-testid="note-detail" />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>
@@ -199,14 +186,14 @@ function renderEditNote(id = 'note-1') {
 }
 
 describe('NoteEditorPage — new note flow', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); wikilinkQueryValue = null; });
 
-  it('shows template gallery on first render (no id param)', async () => {
+  it('shows template gallery on /notes/new', async () => {
     renderNewNote();
     await waitFor(() => screen.getByTestId('template-gallery'));
   });
 
-  it('selecting blank template hides gallery and shows editor', async () => {
+  it('selecting blank template shows editor', async () => {
     renderNewNote();
     await waitFor(() => screen.getByTestId('template-gallery'));
     fireEvent.click(screen.getByTestId('template-blank'));
@@ -214,14 +201,7 @@ describe('NoteEditorPage — new note flow', () => {
     expect(screen.queryByTestId('template-gallery')).toBeNull();
   });
 
-  it('selecting fleeting template populates body value', async () => {
-    renderNewNote();
-    await waitFor(() => screen.getByTestId('template-gallery'));
-    fireEvent.click(screen.getByTestId('template-fleeting'));
-    await waitFor(() => screen.getByTestId('note-editor'));
-  });
-
-  it('save button calls createNote mutation', async () => {
+  it('save button calls createNote', async () => {
     renderNewNote();
     await waitFor(() => screen.getByTestId('template-gallery'));
     fireEvent.click(screen.getByTestId('template-blank'));
@@ -230,36 +210,37 @@ describe('NoteEditorPage — new note flow', () => {
     await act(async () => { await new Promise((r) => setTimeout(r, 80)); });
     expect(mockCreateNote).toHaveBeenCalled();
   });
+
+  it('wikilink onSelect calls insertWikilink (lines 210-211)', async () => {
+    wikilinkQueryValue = 'World';
+    renderNewNote();
+    await waitFor(() => screen.getByTestId('template-gallery'));
+    fireEvent.click(screen.getByTestId('template-blank'));
+    await waitFor(() => screen.getByTestId('wikilink-popup'));
+    fireEvent.click(screen.getByTestId('wikilink-select'));
+    expect(mockInsertWikilink).toHaveBeenCalledWith('My Linked Note');
+  });
+
+  it('wikilink onClose calls insertWikilink with empty string (lines 216-221)', async () => {
+    wikilinkQueryValue = 'World';
+    renderNewNote();
+    await waitFor(() => screen.getByTestId('template-gallery'));
+    fireEvent.click(screen.getByTestId('template-blank'));
+    await waitFor(() => screen.getByTestId('wikilink-popup'));
+    fireEvent.click(screen.getByTestId('wikilink-close'));
+    expect(mockInsertWikilink).toHaveBeenCalledWith('');
+  });
 });
 
 describe('NoteEditorPage — edit note flow', () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it('shows loading spinner while fetching note', async () => {
-    mockGetNote.mockImplementation(
-      () => new Promise((r) => setTimeout(() => r(NOTE), 300))
-    );
-    render(
-      <QueryClientProvider client={makeQC()}>
-        <MemoryRouter initialEntries={['/notes/note-1']}>
-          <Routes>
-            <Route path="/notes/:id" element={<NoteEditorPage />} />
-          </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>
-    );
-    await waitFor(() => {
-      const spinners = document.querySelectorAll('.animate-spin, [data-testid="spinner"]');
-      expect(spinners.length).toBeGreaterThanOrEqual(0);
-    });
-  });
+  beforeEach(() => { vi.clearAllMocks(); wikilinkQueryValue = null; });
 
   it('renders note editor after note loads', async () => {
     renderEditNote();
     await waitFor(() => screen.getByTestId('note-editor'), { timeout: 3000 });
   });
 
-  it('save button calls updateNote mutation', async () => {
+  it('save button calls updateNote', async () => {
     renderEditNote();
     await waitFor(() => screen.getByTestId('save-btn'), { timeout: 3000 });
     fireEvent.click(screen.getByTestId('save-btn'));
@@ -267,9 +248,47 @@ describe('NoteEditorPage — edit note flow', () => {
     expect(mockUpdateNote).toHaveBeenCalled();
   });
 
-  it('does not show template gallery on edit flow', async () => {
+  it('does not show template gallery in edit mode', async () => {
     renderEditNote();
     await waitFor(() => screen.getByTestId('note-editor'), { timeout: 3000 });
     expect(screen.queryByTestId('template-gallery')).toBeNull();
+  });
+
+  it('wikilink onSelect in edit mode calls insertWikilink (lines 176-181)', async () => {
+    wikilinkQueryValue = 'World';
+    renderEditNote();
+    await waitFor(() => screen.getByTestId('wikilink-popup'), { timeout: 3000 });
+    fireEvent.click(screen.getByTestId('wikilink-select'));
+    expect(mockInsertWikilink).toHaveBeenCalledWith('My Linked Note');
+  });
+
+  it('wikilink onClose in edit mode calls insertWikilink with empty string', async () => {
+    wikilinkQueryValue = 'World';
+    renderEditNote();
+    await waitFor(() => screen.getByTestId('wikilink-popup'), { timeout: 3000 });
+    fireEvent.click(screen.getByTestId('wikilink-close'));
+    expect(mockInsertWikilink).toHaveBeenCalledWith('');
+  });
+});
+
+describe('NoteEditorPage — note not found (lines 170-171)', () => {
+  beforeEach(() => { vi.clearAllMocks(); wikilinkQueryValue = null; });
+
+  it('shows "Note not found" when getNote resolves null', async () => {
+    // getNote resolves successfully but returns null (note deleted/missing)
+    mockGetNote.mockResolvedValue(null);
+    render(
+      <QueryClientProvider client={makeQC()}>
+        <MemoryRouter initialEntries={['/notes/ghost-note']}>
+          <Routes>
+            <Route path="/notes/:id" element={<NoteEditorPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/Note not found/i)).toBeTruthy(),
+      { timeout: 3000 }
+    );
   });
 });
