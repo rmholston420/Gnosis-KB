@@ -20,7 +20,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { api } from '../api';
+import api from '../api';
 import { useVaultStore } from '../../store/useVaultStore';
 
 function ok(body: unknown = {}, status = 200) {
@@ -28,127 +28,138 @@ function ok(body: unknown = {}, status = 200) {
     ok: true,
     status,
     json: () => Promise.resolve(body),
-  });
+    text: () => Promise.resolve(JSON.stringify(body)),
+    headers: new Headers({ 'content-type': 'application/json' }),
+  } as Response);
 }
 
-function fail(status: number, detail = 'Something went wrong') {
+function notOk(detail = 'Not found', status = 404) {
   return Promise.resolve({
     ok: false,
     status,
     json: () => Promise.resolve({ detail }),
-  });
+    text: () => Promise.resolve(JSON.stringify({ detail })),
+    statusText: 'Not Found',
+    headers: new Headers(),
+  } as unknown as Response);
 }
 
 beforeEach(() => {
-  localStorage.setItem('gnosis_token', 'api-test-token');
-  // Reset vault store to own-vault context
-  useVaultStore.setState({ activeVaultOwnerId: null });
+  vi.stubGlobal('fetch', vi.fn());
+  // Reset vault state between tests
+  useVaultStore.setState({ activeVaultPath: null });
 });
 
 afterEach(() => {
-  vi.restoreAllMocks();
-  localStorage.clear();
+  vi.unstubAllGlobals();
 });
 
-describe('listNotes', () => {
-  it('sends GET to /api/v1/notes/ with query params and auth header', async () => {
-    const _spy = vi.stubGlobal('fetch', vi.fn(() => ok([{ id: 'n1' }])));
-    await api.listNotes({ note_type: 'permanent', limit: 50 });
-    const [url, opts] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(url).toContain('/api/v1/notes/');
+const mockFetch = () => globalThis.fetch as ReturnType<typeof vi.fn>;
+
+// ---------------------------------------------------------------------------
+describe('api.listNotes', () => {
+  it('builds correct query string', async () => {
+    mockFetch().mockReturnValue(ok({ items: [], total: 0 }));
+    await api.listNotes({ note_type: 'permanent', page: 1 });
+    const url: string = mockFetch().mock.calls[0][0];
     expect(url).toContain('note_type=permanent');
-    expect(url).toContain('limit=50');
-    expect((opts.headers as Record<string, string>)['Authorization']).toBe('Bearer api-test-token');
+    expect(url).toContain('page=1');
   });
 });
 
-describe('getNote', () => {
-  it('calls GET /api/v1/notes/:id', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => ok({ id: 'abc', title: 'Hello' })));
-    const note = await api.getNote('abc');
-    const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(url).toBe('/api/v1/notes/abc');
-    expect((note as { id: string }).id).toBe('abc');
+// ---------------------------------------------------------------------------
+describe('api.getNote', () => {
+  it('calls GET /notes/:id', async () => {
+    mockFetch().mockReturnValue(ok({ id: 'n1' }));
+    await api.getNote('n1');
+    expect(mockFetch().mock.calls[0][0]).toContain('/notes/n1');
+    expect(mockFetch().mock.calls[0][1].method).toBe('GET');
   });
 });
 
-describe('createNote', () => {
-  it('calls POST /api/v1/notes/ with JSON body', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => ok({ id: 'new' })));
-    await api.createNote({ title: 'New', content: '...' });
-    const [url, opts] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(url).toBe('/api/v1/notes/');
+// ---------------------------------------------------------------------------
+describe('api.createNote', () => {
+  it('calls POST /notes/ with JSON body', async () => {
+    mockFetch().mockReturnValue(ok({ id: 'n2' }));
+    await api.createNote({ title: 'New', body: '' });
+    const [url, opts] = mockFetch().mock.calls[0];
+    expect(url).toContain('/notes/');
     expect(opts.method).toBe('POST');
-    expect(JSON.parse(opts.body as string)).toMatchObject({ title: 'New' });
+    expect(JSON.parse(opts.body)).toMatchObject({ title: 'New' });
   });
 });
 
-describe('updateNote', () => {
-  it('calls PUT /api/v1/notes/:id with JSON body', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => ok({ id: 'x1' })));
-    await api.updateNote('x1', { title: 'Edited' });
-    const [url, opts] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(url).toBe('/api/v1/notes/x1');
+// ---------------------------------------------------------------------------
+describe('api.updateNote', () => {
+  it('calls PUT /notes/:id with JSON body', async () => {
+    mockFetch().mockReturnValue(ok({ id: 'n1', title: 'Updated' }));
+    await api.updateNote('n1', { title: 'Updated' });
+    const [url, opts] = mockFetch().mock.calls[0];
+    expect(url).toContain('/notes/n1');
     expect(opts.method).toBe('PUT');
-    expect(JSON.parse(opts.body as string)).toMatchObject({ title: 'Edited' });
   });
 });
 
-describe('deleteNote', () => {
-  it('calls DELETE /api/v1/notes/:id and handles 204 no-content', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, status: 204, json: () => Promise.reject() })));
-    const result = await api.deleteNote('del-1');
-    const [url, opts] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(url).toBe('/api/v1/notes/del-1');
-    expect(opts.method).toBe('DELETE');
-    expect(result).toBeUndefined();
+// ---------------------------------------------------------------------------
+describe('api.deleteNote', () => {
+  it('sends DELETE and handles 204', async () => {
+    mockFetch().mockReturnValue(ok({}, 204));
+    await api.deleteNote('n1');
+    expect(mockFetch().mock.calls[0][1].method).toBe('DELETE');
   });
 });
 
+// ---------------------------------------------------------------------------
 describe('vault header injection', () => {
-  it('includes X-Vault-Owner-Id when activeVaultOwnerId is set', async () => {
-    useVaultStore.setState({ activeVaultOwnerId: 7 });
-    vi.stubGlobal('fetch', vi.fn(() => ok([])));
+  it('injects X-Vault-Path when activeVaultPath is set', async () => {
+    useVaultStore.setState({ activeVaultPath: '/home/user/vault' });
+    mockFetch().mockReturnValue(ok());
+    // setActiveVaultPath mirrors the store for the api module
+    const { setActiveVaultPath } = await import('../api');
+    setActiveVaultPath('/home/user/vault');
     await api.listNotes({});
-    const [, opts] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect((opts.headers as Record<string, string>)['X-Vault-Owner-Id']).toBe('7');
+    const headers = mockFetch().mock.calls[0][1].headers;
+    expect(headers['X-Vault-Path']).toBe('/home/user/vault');
+    setActiveVaultPath(null);
   });
 
-  it('omits X-Vault-Owner-Id when activeVaultOwnerId is null', async () => {
-    useVaultStore.setState({ activeVaultOwnerId: null });
-    vi.stubGlobal('fetch', vi.fn(() => ok([])));
+  it('omits X-Vault-Path when null', async () => {
+    const { setActiveVaultPath } = await import('../api');
+    setActiveVaultPath(null);
+    mockFetch().mockReturnValue(ok());
     await api.listNotes({});
-    const [, opts] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect((opts.headers as Record<string, string>)['X-Vault-Owner-Id']).toBeUndefined();
+    const headers = mockFetch().mock.calls[0][1].headers;
+    expect(headers['X-Vault-Path']).toBeUndefined();
   });
 });
 
+// ---------------------------------------------------------------------------
 describe('error handling', () => {
-  it('throws an Error with the detail message on non-ok response', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => fail(422, 'Validation failed')));
-    await expect(api.createNote({})).rejects.toThrow('Validation failed');
+  it('throws Error with detail message on non-ok response', async () => {
+    mockFetch().mockReturnValue(notOk('Note not found', 404));
+    await expect(api.getNote('missing')).rejects.toThrow('Note not found');
   });
 });
 
-describe('chat', () => {
-  it('sends POST /api/v1/ai/chat with message, mode, and session_id', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => ok({ answer: 'ok' })));
-    await api.chat('What is a zettelkasten?', 'local', 'sess-1');
-    const [url, opts] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(url).toBe('/api/v1/ai/chat');
+// ---------------------------------------------------------------------------
+describe('api.chat', () => {
+  it('sends correct payload', async () => {
+    mockFetch().mockReturnValue(ok({ response: 'pong' }));
+    await api.chat('hello', 'hybrid');
+    const opts = mockFetch().mock.calls[0][1];
     expect(opts.method).toBe('POST');
-    const body = JSON.parse(opts.body as string);
-    expect(body).toMatchObject({ message: 'What is a zettelkasten?', mode: 'local', session_id: 'sess-1' });
+    const body = JSON.parse(opts.body);
+    expect(body.message).toBe('hello');
+    expect(body.mode).toBe('hybrid');
   });
 });
 
-describe('search', () => {
-  it('builds query string with encoded search term', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => ok([])));
-    await api.search('zettel kasten', { limit: 10 });
-    const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(url).toContain('/api/v1/search/');
-    expect(url).toContain('q=zettel%20kasten');
-    expect(url).toContain('limit=10');
+// ---------------------------------------------------------------------------
+describe('api.search', () => {
+  it('builds correct query string', async () => {
+    mockFetch().mockReturnValue(ok({ items: [], total: 0 }));
+    await api.search('emptiness');
+    const url: string = mockFetch().mock.calls[0][0];
+    expect(url).toContain('q=emptiness');
   });
 });

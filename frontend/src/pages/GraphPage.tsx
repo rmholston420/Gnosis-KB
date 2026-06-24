@@ -2,15 +2,6 @@
  * GraphPage.tsx
  * ============
  * Full-screen Cytoscape.js knowledge-graph visualisation.
- *
- * Features
- * --------
- * - Renders all notes as nodes coloured by note_type
- * - Edges from outgoing_links stored in the graph
- * - Click node → slide-in NoteDetailPanel
- * - Double-tap node → open LightRAG entity panel
- * - Toolbar: layout picker, search / jump-to-node, stats badge
- * - Responsive: fills 100 % of the viewport below the app header
  */
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
@@ -44,7 +35,6 @@ type LayoutName = typeof LAYOUTS[number];
 // Component
 // ---------------------------------------------------------------------------
 interface GraphPageProps {
-  /** injected in tests via render(<GraphPage api={mockApi} />) */
   api?: typeof import('../services/api').default;
 }
 
@@ -56,24 +46,22 @@ export default function GraphPage(_props: GraphPageProps) {
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState<string | null>(null);
 
-  // Selected node id for info panel
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
-  // LightRAG panel state
   const [lightRagOpen,    setLightRagOpen]    = useState(false);
   const [lightRagNode,    setLightRagNode]    = useState<{ entity: LightRagEntity; relations: LightRagRelation[] } | null>(null);
   const [lightRagLoading, setLightRagLoading] = useState(false);
   const [lightRagError,   setLightRagError]   = useState<string | null>(null);
 
-  const [layout, setLayout]   = useState<LayoutName>('cose');
-  const [search, setSearch]   = useState('');
+  const [layout, setLayout] = useState<LayoutName>('cose');
+  const [search, setSearch] = useState('');
 
   // -------------------------------------------------------------------------
   // Data fetch
   // -------------------------------------------------------------------------
   useEffect(() => {
     api.getGraph()
-      .then((d: GraphData) => { setData(d); setLoading(false); })
+      .then((d: unknown) => { setData(d as GraphData); setLoading(false); })
       .catch((e: unknown) => { setError(String(e)); setLoading(false); });
   }, []);
 
@@ -83,19 +71,18 @@ export default function GraphPage(_props: GraphPageProps) {
     const nodes = (data.nodes ?? []).map((n: GraphNode) => ({
       data: {
         id:    n.id,
-        label: n.label ?? n.id,
+        label: n.title,
         color: NOTE_TYPE_COLORS[n.note_type ?? ''] ?? DEFAULT_COLOR,
         type:  n.note_type ?? 'unknown',
-        slug:  n.slug ?? '',
       },
     }));
 
     const edges = (data.edges ?? []).map((e: GraphEdge) => ({
       data: {
-        id:     e.id ?? `${e.source}-${e.target}`,
+        id:     `${e.source}-${e.target}`,
         source: e.source,
         target: e.target,
-        label:  e.label ?? '',
+        label:  e.link_text ?? '',
       },
     }));
 
@@ -108,7 +95,6 @@ export default function GraphPage(_props: GraphPageProps) {
   useEffect(() => {
     if (!data || !containerRef.current) return;
 
-    // Destroy previous instance
     if (cyRef.current) {
       cyRef.current.destroy();
       cyRef.current = null;
@@ -121,20 +107,20 @@ export default function GraphPage(_props: GraphPageProps) {
         {
           selector: 'node',
           style: {
-            'background-color':   'data(color)',
-            'width':              '28px',
-            'height':             '28px',
-            'label':              'data(label)',
-            'font-size':          '10px',
-            'color':              '#28251d',
-            'text-valign':        'bottom' as const,
-            'text-halign':        'center' as const,
-            'text-margin-y':      4,
-            'text-outline-color': '#f7f6f2',
-            'text-outline-width': 2,
-            'border-width':       1.5,
-            'border-color':       'data(color)',
-            'border-opacity':     0.6,
+            'background-color':    'data(color)',
+            'width':               '28px',
+            'height':              '28px',
+            'label':               'data(label)',
+            'font-size':           '10px',
+            'color':               '#28251d',
+            'text-valign':         'bottom' as const,
+            'text-halign':         'center' as const,
+            'text-margin-y':       4,
+            'text-outline-color':  '#f7f6f2',
+            'text-outline-width':  2,
+            'border-width':        1.5,
+            'border-color':        'data(color)',
+            'border-opacity':      0.6,
             'transition-property': 'background-color, border-color, width, height',
             'transition-duration': '200ms',
           } as unknown as cytoscape.Css.Node,
@@ -142,10 +128,10 @@ export default function GraphPage(_props: GraphPageProps) {
         {
           selector: 'node:selected',
           style: {
-            'width':         '38px',
-            'height':        '38px',
-            'border-width':  3,
-            'border-color':  '#01696f',
+            'width':        '38px',
+            'height':       '38px',
+            'border-width': 3,
+            'border-color': '#01696f',
           },
         },
         {
@@ -155,44 +141,38 @@ export default function GraphPage(_props: GraphPageProps) {
         {
           selector: 'edge',
           style: {
-            'width':                1.5,
-            'line-color':           '#dcd9d5',
-            'target-arrow-color':   '#dcd9d5',
-            'target-arrow-shape':   'triangle' as const,
-            'curve-style':          'bezier' as const,
-            'arrow-scale':          0.8,
-            'transition-property':  'line-color, width',
-            'transition-duration':  '200ms',
+            'width':               1.5,
+            'line-color':          '#dcd9d5',
+            'target-arrow-color':  '#dcd9d5',
+            'target-arrow-shape':  'triangle' as const,
+            'curve-style':         'bezier' as const,
+            'arrow-scale':         0.8,
+            'transition-property': 'line-color, width',
+            'transition-duration': '200ms',
           } as unknown as cytoscape.Css.Edge,
         },
         {
           selector: 'edge:selected',
           style: {
-            'line-color':          '#01696f',
-            'target-arrow-color':  '#01696f',
-            'width':               2.5,
+            'line-color':         '#01696f',
+            'target-arrow-color': '#01696f',
+            'width':              2.5,
           },
         },
       ],
-      layout: {
-        name:     layout,
-        animate:  false,
-        padding:  40,
-      },
-      minZoom:   0.1,
-      maxZoom:   4,
+      layout: { name: layout, animate: false, padding: 40 },
+      minZoom: 0.1,
+      maxZoom: 4,
       wheelSensitivity: 0.3,
     });
 
     cyRef.current = cy;
 
-    // Node click → select
     cy.on('tap', 'node', (evt: EventObject) => {
       const node = evt.target;
       setSelectedNodeId(node.id());
     });
 
-    // Double-tap → LightRAG
     cy.on('tap', 'node', (evt: EventObject) => {
       if ((evt.type as string) === 'dblTap') {
         const node = evt.target;
@@ -200,7 +180,6 @@ export default function GraphPage(_props: GraphPageProps) {
       }
     });
 
-    // Background tap → deselect
     cy.on('tap', (evt: EventObject) => {
       if (evt.target === cy) setSelectedNodeId(null);
     });
@@ -255,7 +234,7 @@ export default function GraphPage(_props: GraphPageProps) {
   }, []);
 
   // -------------------------------------------------------------------------
-  // Selected node → full Note for side panel
+  // Selected node
   // -------------------------------------------------------------------------
   const selectedNode = selectedNodeId
     ? (data?.nodes ?? []).find((n: GraphNode) => n.id === selectedNodeId)
@@ -291,7 +270,6 @@ export default function GraphPage(_props: GraphPageProps) {
     <div className="graph-page">
       {/* Toolbar */}
       <div className="graph-page__toolbar" role="toolbar" aria-label="Graph controls">
-        {/* Layout picker */}
         <div className="graph-page__toolbar-group">
           {LAYOUTS.map((l) => (
             <button
@@ -307,7 +285,6 @@ export default function GraphPage(_props: GraphPageProps) {
           ))}
         </div>
 
-        {/* Search */}
         <input
           className="graph-page__search"
           type="search"
@@ -317,7 +294,6 @@ export default function GraphPage(_props: GraphPageProps) {
           aria-label="Search nodes"
         />
 
-        {/* Stats */}
         <span className="graph-page__stats" aria-label={`${nodeCount} nodes, ${edgeCount} edges`}>
           {nodeCount} nodes · {edgeCount} edges
         </span>
@@ -338,16 +314,14 @@ export default function GraphPage(_props: GraphPageProps) {
           >
             ×
           </button>
-          <div className="graph-page__side-panel-title">{selectedNode.label ?? selectedNode.id}</div>
-          {selectedNode.slug && (
-            <button
-              className="graph-page__lightrag-btn"
-              onClick={() => handleLightRagOpen(selectedNode.id)}
-              aria-label="Open LightRAG panel"
-            >
-              Open in LightRAG
-            </button>
-          )}
+          <div className="graph-page__side-panel-title">{selectedNode.title}</div>
+          <button
+            className="graph-page__lightrag-btn"
+            onClick={() => handleLightRagOpen(selectedNode.id)}
+            aria-label="Open LightRAG panel"
+          >
+            Open in LightRAG
+          </button>
         </div>
       )}
 
