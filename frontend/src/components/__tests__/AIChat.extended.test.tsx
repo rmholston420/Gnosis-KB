@@ -5,6 +5,10 @@
  *   101-106 — meta payload → SOURCE_BADGE render
  *   117-118 — error token in SSE stream
  *   190-199 — catch block: HTTP error / network failure
+ *
+ * NOTE: The Send button in this version of AIChat has no aria-label,
+ * so its accessible name is "". We select it as the last button in the
+ * toolbar using getAllByRole('button').at(-1).
  */
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
@@ -21,7 +25,6 @@ function makeStream(chunks: string[]): ReadableStream<Uint8Array> {
     },
   });
 }
-
 function mockFetchOk(chunks: string[]) {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: makeStream(chunks), status: 200 }));
 }
@@ -34,9 +37,13 @@ function sseChunk(payload: unknown) {
 
 import AIChat from '@/components/AIChat';
 
-/** Click the Send button (aria-label="Send" — the icon-only submit button). */
-function clickSend() {
-  fireEvent.click(screen.getByRole('button', { name: /send/i }));
+/**
+ * The Send button is the LAST button rendered (after the 4 mode buttons).
+ * It has no aria-label in the current source so we can't use { name }.
+ */
+function getSendButton(): HTMLElement {
+  const buttons = screen.getAllByRole('button');
+  return buttons[buttons.length - 1];
 }
 
 describe('AIChat — SSE streaming (lines 99-118)', () => {
@@ -51,7 +58,7 @@ describe('AIChat — SSE streaming (lines 99-118)', () => {
     ]);
     render(<AIChat />);
     fireEvent.change(screen.getByPlaceholderText(/Ask your knowledge base/i), { target: { value: 'test query' } });
-    clickSend();
+    fireEvent.click(getSendButton());
     await waitFor(() => expect(screen.queryByText(/Hello world/i)).toBeTruthy(), { timeout: 3000 });
   });
 
@@ -63,7 +70,7 @@ describe('AIChat — SSE streaming (lines 99-118)', () => {
     ]);
     render(<AIChat />);
     fireEvent.change(screen.getByPlaceholderText(/Ask your knowledge base/i), { target: { value: 'meta test' } });
-    clickSend();
+    fireEvent.click(getSendButton());
     await waitFor(() => expect(screen.queryByText(/LightRAG/i)).toBeTruthy(), { timeout: 3000 });
   });
 
@@ -74,7 +81,7 @@ describe('AIChat — SSE streaming (lines 99-118)', () => {
     ]);
     render(<AIChat />);
     fireEvent.change(screen.getByPlaceholderText(/Ask your knowledge base/i), { target: { value: 'error test' } });
-    clickSend();
+    fireEvent.click(getSendButton());
     await waitFor(() => expect(screen.queryByText(/Error: Backend exploded/i)).toBeTruthy(), { timeout: 3000 });
   });
 });
@@ -87,7 +94,7 @@ describe('AIChat — HTTP error path (lines 190-199)', () => {
     mockFetchError(503);
     render(<AIChat />);
     fireEvent.change(screen.getByPlaceholderText(/Ask your knowledge base/i), { target: { value: 'fail test' } });
-    clickSend();
+    fireEvent.click(getSendButton());
     await waitFor(() => expect(screen.queryByText(/Failed to get response/i)).toBeTruthy(), { timeout: 3000 });
   });
 
@@ -95,7 +102,7 @@ describe('AIChat — HTTP error path (lines 190-199)', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network down')));
     render(<AIChat />);
     fireEvent.change(screen.getByPlaceholderText(/Ask your knowledge base/i), { target: { value: 'network fail' } });
-    clickSend();
+    fireEvent.click(getSendButton());
     await waitFor(() => expect(screen.queryByText(/Failed to get response/i)).toBeTruthy(), { timeout: 3000 });
   });
 });
@@ -106,8 +113,9 @@ describe('AIChat — mode selector + keyboard send', () => {
 
   it('changes mode when a mode button is clicked', () => {
     render(<AIChat />);
-    fireEvent.click(screen.getByRole('button', { name: /vector/i }));
-    expect(screen.getByRole('button', { name: /vector/i })).toBeTruthy();
+    // The 4 mode buttons: hybrid[0] lightrag[1] vector[2] naive[3]
+    fireEvent.click(screen.getAllByRole('button')[2]); // vector
+    expect(screen.getByText('vector')).toBeTruthy();
   });
 
   it('sends on Enter keydown (not Shift+Enter)', async () => {
