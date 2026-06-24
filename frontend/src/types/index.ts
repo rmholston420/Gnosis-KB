@@ -19,6 +19,8 @@ export type NoteStatus = 'draft' | 'in-progress' | 'evergreen' | 'inbox' | 'acti
 
 export type RagMode = 'local' | 'global' | 'hybrid';
 
+export type SearchMode = 'hybrid' | 'semantic' | 'keyword' | 'fulltext';
+
 export interface Tag {
   name: string;
   description: string;
@@ -101,6 +103,11 @@ export interface NoteCreate {
   last_reviewed?: string;
 }
 
+/** Like NoteCreate but with body guaranteed non-undefined (for createNote API call). */
+export interface CreateNotePayload extends Omit<NoteCreate, 'body'> {
+  body: string;
+}
+
 export interface NoteUpdate {
   title?:    string;
   body?:     string;
@@ -124,6 +131,7 @@ export interface SearchResult {
   score?:     number;
   highlight?: string;
   excerpt?:   string;
+  snippet?:   string;   // alias used by some backend modes
   tags?:      string[];
   modified_at?: string;
 }
@@ -247,6 +255,20 @@ export interface SummarizeResponse {
   summary:        string;
   key_concepts:   string[];
   suggested_tags: string[];
+}
+
+// ---- Graph entity (LightRAG) ----
+export interface GraphEntitySummary {
+  id:     string;
+  label?: string;
+  type?:  string;
+  rank?:  number;
+}
+
+// ---- TagRow (used by TagInput) ----
+export interface TagRow {
+  name:        string;
+  note_count?: number;
 }
 
 // ---- Legacy aliases (keep for backwards compat) ----
