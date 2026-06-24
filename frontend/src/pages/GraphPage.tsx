@@ -1,17 +1,18 @@
 /**
  * GraphPage.tsx
  * =============
- * Tab-based knowledge-graph page.
+ * Tab-based knowledge-graph page using TanStack Query for data fetching.
  *
- * Tab 1 — Wikilinks:       react-force-graph-2d visualisation of vault link graph
- * Tab 2 — LightRAG Knowledge: flat entity list from the LightRAG knowledge graph
+ * Tab 1 — Wikilinks:           react-force-graph-2d visualisation
+ * Tab 2 — LightRAG Knowledge:  flat entity list from the LightRAG graph
  *
- * API calls:
- *   api.getFullGraph()      → { nodes, edges }   (wikilinks graph)
- *   api.getGraphEntities()  → { entities }        (LightRAG entity list)
+ * IMPORTANT: heading, tab bar and toolbar are rendered OUTSIDE the
+ * loading/error/content conditional so they appear immediately in the
+ * DOM — required by the synchronous test assertions in GraphPage.test.tsx.
  */
 
-import React, { useEffect, useState, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useCallback, lazy, Suspense } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { GraphData, GraphNode } from '../types';
 import api from '../services/api';
 import type { GraphEntitySummary } from '../services/api';
@@ -34,93 +35,65 @@ interface LightRagData {
 // Component
 // ---------------------------------------------------------------------------
 export default function GraphPage() {
-  // ── Wikilinks graph ──────────────────────────────────────────────────────
-  const [graphData,    setGraphData]    = useState<GraphData | null>(null);
-  const [graphLoading, setGraphLoading] = useState(true);
-  const [graphError,   setGraphError]   = useState<string | null>(null);
-
-  // ── LightRAG entities ────────────────────────────────────────────────────
-  const [lrData,    setLrData]    = useState<LightRagData | null>(null);
-  const [lrLoading, setLrLoading] = useState(false);
-  const [lrError,   setLrError]   = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
   // ── UI state ─────────────────────────────────────────────────────────────
-  const [activeTab,     setActiveTab]     = useState<Tab>('wikilinks');
-  const [nodeFilter,    setNodeFilter]    = useState('');
-  const [entityFilter,  setEntityFilter]  = useState('');
-  const [selectedNode,  setSelectedNode]  = useState<GraphNode | null>(null);
-  const [syncing,       setSyncing]       = useState(false);
+  const [activeTab,    setActiveTab]    = useState<Tab>('wikilinks');
+  const [nodeFilter,   setNodeFilter]   = useState('');
+  const [entityFilter, setEntityFilter] = useState('');
+  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [syncing,      setSyncing]      = useState(false);
 
-  // ── Fetch wikilinks graph on mount ───────────────────────────────────────
-  useEffect(() => {
-    setGraphLoading(true);
-    api.getFullGraph()
-      .then((d: unknown) => {
-        setGraphData(d as GraphData);
-        setGraphLoading(false);
-      })
-      .catch((e: unknown) => {
-        setGraphError(String(e));
-        setGraphLoading(false);
-      });
-  }, []);
+  // ── Wikilinks graph query ─────────────────────────────────────────────────
+  const {
+    data: graphData,
+    isLoading: graphLoading,
+    isError: graphIsError,
+    error: graphError,
+  } = useQuery<GraphData>({
+    queryKey: ['graph'],
+    queryFn: () => api.getFullGraph() as Promise<GraphData>,
+    retry: false,
+  });
 
-  // ── Fetch LightRAG entities when tab switches ────────────────────────────
-  useEffect(() => {
-    if (activeTab !== 'lightrag') return;
-    setLrLoading(true);
-    setLrError(null);
-    api.getGraphEntities()
-      .then((d: unknown) => {
-        setLrData(d as LightRagData);
-        setLrLoading(false);
-      })
-      .catch((e: unknown) => {
-        setLrError(String(e));
-        setLrLoading(false);
-      });
-  }, [activeTab]);
+  // ── LightRAG entities query (only when tab is active) ─────────────────────
+  const {
+    data: lrData,
+    isLoading: lrLoading,
+    isError: lrIsError,
+    error: lrError,
+  } = useQuery<LightRagData>({
+    queryKey: ['graph-entities'],
+    queryFn: () => api.getGraphEntities() as Promise<LightRagData>,
+    enabled: activeTab === 'lightrag',
+    retry: false,
+  });
 
-  // ── Refresh handler ──────────────────────────────────────────────────────
+  // ── Refresh handler ───────────────────────────────────────────────────────
   const handleRefresh = useCallback(() => {
-    setGraphLoading(true);
-    setGraphError(null);
-    api.getFullGraph()
-      .then((d: unknown) => {
-        setGraphData(d as GraphData);
-        setGraphLoading(false);
-      })
-      .catch((e: unknown) => {
-        setGraphError(String(e));
-        setGraphLoading(false);
-      });
+    queryClient.invalidateQueries({ queryKey: ['graph'] });
     if (activeTab === 'lightrag') {
-      setLrLoading(true);
-      api.getGraphEntities()
-        .then((d: unknown) => { setLrData(d as LightRagData); setLrLoading(false); })
-        .catch((e: unknown) => { setLrError(String(e)); setLrLoading(false); });
+      queryClient.invalidateQueries({ queryKey: ['graph-entities'] });
     }
-  }, [activeTab]);
+  }, [queryClient, activeTab]);
 
-  // ── Sync vault handler ───────────────────────────────────────────────────
+  // ── Sync vault handler ────────────────────────────────────────────────────
   const handleSyncVault = useCallback(async () => {
     setSyncing(true);
     try {
       await api.triggerVaultSync();
-      // Re-fetch after sync
-      const d = await api.getFullGraph();
-      setGraphData(d as GraphData);
+      queryClient.invalidateQueries({ queryKey: ['graph'] });
     } catch (_e) {
       // non-fatal
     } finally {
       setSyncing(false);
     }
-  }, []);
+  }, [queryClient]);
 
-  // ── Derived ──────────────────────────────────────────────────────────────
-  const allNodes   = graphData?.nodes ?? [];
-  const nodeCount  = allNodes.length;
-  const edgeCount  = graphData?.edges?.length ?? 0;
+  // ── Derived ───────────────────────────────────────────────────────────────
+  const allNodes  = graphData?.nodes ?? [];
+  const nodeCount = allNodes.length;
+  const edgeCount = graphData?.edges?.length ?? 0;
 
   const filteredNodes = nodeFilter.trim()
     ? allNodes.filter((n) =>
@@ -128,11 +101,11 @@ export default function GraphPage() {
       )
     : allNodes;
 
-  const allEntities  = lrData?.entities ?? [];
+  const allEntities = lrData?.entities ?? [];
   const filteredEntities = entityFilter.trim()
     ? allEntities.filter((e) =>
-        e.label?.toLowerCase().includes(entityFilter.toLowerCase()) ||
-        e.id?.toLowerCase().includes(entityFilter.toLowerCase())
+        e.id?.toLowerCase().includes(entityFilter.toLowerCase()) ||
+        e.label?.toLowerCase().includes(entityFilter.toLowerCase())
       )
     : allEntities;
 
@@ -141,33 +114,15 @@ export default function GraphPage() {
     links: (graphData?.edges ?? []).map((e) => ({ source: e.source, target: e.target })),
   };
 
-  // ── Loading state ─────────────────────────────────────────────────────────
-  if (graphLoading) {
-    return (
-      <div className="graph-page graph-page--loading">
-        <span className="graph-page__spinner" aria-label="Loading graph" />
-      </div>
-    );
-  }
-
-  // ── Error state ───────────────────────────────────────────────────────────
-  if (graphError) {
-    return (
-      <div className="graph-page graph-page--error" role="alert">
-        <p>Failed to load graph: {graphError}</p>
-        <button onClick={handleRefresh}>Retry</button>
-      </div>
-    );
-  }
-
-  // ── Main render ───────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="graph-page">
-      {/* ── Page heading ── */}
+
+      {/* ── Permanent header: always in DOM, never behind a loading gate ── */}
       <div className="graph-page__header">
         <h1 className="graph-page__title">Knowledge Graph</h1>
 
-        {/* ── Tab bar ── */}
+        {/* Tab bar */}
         <div className="graph-page__tabs" role="tablist">
           <button
             role="tab"
@@ -187,7 +142,7 @@ export default function GraphPage() {
           </button>
         </div>
 
-        {/* ── Toolbar ── */}
+        {/* Toolbar */}
         <div className="graph-page__toolbar" role="toolbar" aria-label="Graph controls">
           {activeTab === 'wikilinks' && (
             <input
@@ -222,7 +177,20 @@ export default function GraphPage() {
       {/* ── Wikilinks tab ── */}
       {activeTab === 'wikilinks' && (
         <div className="graph-page__wikilinks">
-          {nodeCount === 0 ? (
+          {graphLoading && (
+            <div className="graph-page__loading">
+              <span className="graph-page__spinner" aria-label="Loading graph" />
+            </div>
+          )}
+
+          {graphIsError && (
+            <div className="graph-page__error" role="alert">
+              <p>Failed to load graph: {String(graphError)}</p>
+              <button onClick={handleRefresh}>Retry</button>
+            </div>
+          )}
+
+          {!graphLoading && !graphIsError && nodeCount === 0 && (
             <div className="graph-page__empty">
               <p>No notes in the graph yet.</p>
               <button
@@ -234,7 +202,9 @@ export default function GraphPage() {
                 {syncing ? 'Syncing\u2026' : 'Sync Vault'}
               </button>
             </div>
-          ) : (
+          )}
+
+          {!graphLoading && !graphIsError && nodeCount > 0 && (
             <>
               <div className="graph-page__stats">
                 <span className="graph-page__node-badge">
@@ -259,7 +229,6 @@ export default function GraphPage() {
             </>
           )}
 
-          {/* Selected node panel */}
           {selectedNode && (
             <div className="graph-page__side-panel">
               <button
@@ -283,12 +252,14 @@ export default function GraphPage() {
               Loading entities\u2026
             </div>
           )}
-          {lrError && (
+
+          {lrIsError && (
             <div role="alert" className="graph-page__lr-error">
-              LightRAG graph not available: {lrError}
+              LightRAG graph not available: {String(lrError)}
             </div>
           )}
-          {!lrLoading && !lrError && (
+
+          {!lrLoading && !lrIsError && (
             <>
               <p className="graph-page__lr-count">
                 {filteredEntities.length} entities
