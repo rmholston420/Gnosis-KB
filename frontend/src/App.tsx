@@ -1,107 +1,72 @@
 /**
- * App.tsx
- * =======
- * Root application shell.
- *
- * Responsibilities:
- *  - BrowserRouter + route tree
- *  - QueryClientProvider + devtools (dev only)
- *  - Global ⌘K / Ctrl+K → CommandPalette
- *  - VaultSyncWatcher mounted here (invisible, subscribes to WebSocket)
- *  - ProtectedRoute wraps all authenticated views
+ * App.tsx — root shell.
+ * Adds:
+ *  1. Global ⌘K / Ctrl+K shortcut → commandPaletteStore.toggle()
+ *  2. useVaultWebSocket() mounted once so live sync events reach every page
  */
-import React, { useCallback, useEffect, useState, lazy, Suspense } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import React, { useEffect } from 'react';
+import { Routes, Route } from 'react-router-dom';
+import Layout from './components/layout/Layout';
+import { CommandPalette } from './components/shared/CommandPalette';
+import { useCommandPaletteStore } from './store/editorStore';
+import { useVaultWebSocket } from './hooks/useWebSocket';
 
-// Layout + shared
-import { Layout }            from './components/Layout';
-import { CommandPalette }    from './components/CommandPalette';
-import { VaultSyncWatcher }  from './components/VaultSyncWatcher';
-import { ProtectedRoute }    from './components/ProtectedRoute';
-
-// Pages
-import LoginPage       from './pages/LoginPage';
-import NotesPage       from './pages/NotesPage';
-import NoteEditorPage  from './pages/NoteEditorPage';
-import SearchPage      from './pages/SearchPage';
-import GraphPage       from './pages/GraphPage';
-import QueryPage       from './pages/QueryPage';
-import AIChatPage      from './pages/AIChatPage';
-import ReviewPage      from './pages/ReviewPage';
-import MocPage         from './pages/MocPage';
-import DailyNotePage   from './pages/DailyNotePage';
-import TagsPage        from './pages/TagsPage';
-import IngestPage      from './pages/IngestPage';
-import SettingsPage    from './pages/SettingsPage';
-
-// Devtools — lazy-loaded in dev only so the package is never required in test/prod
-const ReactQueryDevtools = import.meta.env.DEV
-  ? lazy(() =>
-      import('@tanstack/react-query-devtools').then((m) => ({
-        default: m.ReactQueryDevtools,
-      }))
-    )
-  : null;
+const NotesPage      = React.lazy(() => import('./pages/NotesPage'));
+const NoteEditorPage = React.lazy(() => import('./pages/NoteEditorPage'));
+const GraphPage      = React.lazy(() => import('./pages/GraphPage'));
+const SearchPage     = React.lazy(() => import('./pages/SearchPage'));
+const DailyNotePage  = React.lazy(() => import('./pages/DailyNotePage'));
+const AiPage         = React.lazy(() => import('./pages/AiPage'));
+const SettingsPage   = React.lazy(() => import('./pages/SettingsPage'));
+const TagsPage       = React.lazy(() => import('./pages/TagsPage'));
+const TemplatesPage  = React.lazy(() => import('./pages/TemplatesPage'));
+const PluginsPage    = React.lazy(() => import('./pages/PluginsPage'));
+const SyncPage       = React.lazy(() => import('./pages/SyncPage'));
+const AnalyticsPage  = React.lazy(() => import('./pages/AnalyticsPage'));
+const NotFoundPage   = React.lazy(() => import('./pages/NotFoundPage'));
 
 export default function App() {
-  const [cmdOpen, setCmdOpen] = useState(false);
+  const { toggle } = useCommandPaletteStore();
 
-  // Global ⌘K / Ctrl+K shortcut
-  const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-      e.preventDefault();
-      setCmdOpen((o) => !o);
-    }
-  }, []);
-
+  // ⌘K / Ctrl+K global shortcut
   useEffect(() => {
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleKeyDown]);
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        toggle();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [toggle]);
+
+  // Live vault sync events
+  useVaultWebSocket();
 
   return (
     <>
-      {/* WebSocket cache invalidator — no UI */}
-      <VaultSyncWatcher />
-
-      {/* ⌘K command palette — portal-rendered above everything */}
-      <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
-
-      <Routes>
-        {/* Public */}
-        <Route path="/login" element={<LoginPage />} />
-
-        {/* Protected — wrapped in the sidebar layout */}
-        <Route element={<ProtectedRoute />}>
+      <React.Suspense fallback={<div className="flex h-screen items-center justify-center text-gnosis-muted text-sm">Loading…</div>}>
+        <Routes>
           <Route element={<Layout />}>
-            <Route index element={<Navigate to="/notes" replace />} />
-            <Route path="notes"          element={<NotesPage />} />
-            <Route path="notes/new"      element={<NoteEditorPage />} />
-            <Route path="notes/:id"      element={<NoteEditorPage />} />
-            <Route path="search"         element={<SearchPage />} />
-            <Route path="graph"          element={<GraphPage />} />
-            <Route path="query"          element={<QueryPage />} />
-            <Route path="chat"           element={<AIChatPage />} />
-            <Route path="review"         element={<ReviewPage />} />
-            <Route path="moc"            element={<MocPage />} />
-            <Route path="moc/:id"        element={<MocPage />} />
-            <Route path="daily"          element={<DailyNotePage />} />
-            <Route path="tags"           element={<TagsPage />} />
-            <Route path="ingest"         element={<IngestPage />} />
-            <Route path="settings"       element={<SettingsPage />} />
+            <Route index            element={<NotesPage />} />
+            <Route path="notes"     element={<NotesPage />} />
+            <Route path="notes/new" element={<NoteEditorPage />} />
+            <Route path="notes/:id" element={<NoteEditorPage />} />
+            <Route path="graph"     element={<GraphPage />} />
+            <Route path="search"    element={<SearchPage />} />
+            <Route path="daily"     element={<DailyNotePage />} />
+            <Route path="ai"        element={<AiPage />} />
+            <Route path="settings"  element={<SettingsPage />} />
+            <Route path="tags"      element={<TagsPage />} />
+            <Route path="templates" element={<TemplatesPage />} />
+            <Route path="plugins"   element={<PluginsPage />} />
+            <Route path="sync"      element={<SyncPage />} />
+            <Route path="analytics" element={<AnalyticsPage />} />
+            <Route path="*"         element={<NotFoundPage />} />
           </Route>
-        </Route>
-
-        {/* Catch-all */}
-        <Route path="*" element={<Navigate to="/notes" replace />} />
-      </Routes>
-
-      {/* React Query Devtools — only rendered in development builds */}
-      {ReactQueryDevtools && (
-        <Suspense fallback={null}>
-          <ReactQueryDevtools initialIsOpen={false} buttonPosition="bottom-right" />
-        </Suspense>
-      )}
+        </Routes>
+      </React.Suspense>
+      <CommandPalette />
     </>
   );
 }
