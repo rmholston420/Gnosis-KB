@@ -333,10 +333,10 @@ class TestUsersUpdateMeValidSlug:
         app.dependency_overrides[require_user] = _override_user
 
         with TestClient(app) as c:
-            resp = c.patch("/api/v1/users/me", json={"vault_slug": "my-valid-slug"})
+            resp = c.patch("/api/v1/users/me", json={"vault_slug": "new-valid-slug"})
 
         assert resp.status_code == 200
-        assert user.vault_slug == "my-valid-slug"
+        assert user.vault_slug == "new-valid-slug"
 
 
 # ===========================================================================
@@ -366,14 +366,20 @@ class TestUsersInviteToVaultNewGrant:
         member_result.scalar_one_or_none = MagicMock(return_value=member)
         no_grant_result = MagicMock()
         no_grant_result.scalar_one_or_none = MagicMock(return_value=None)
+        no_existing_member_result = MagicMock()
+        no_existing_member_result.scalar_one_or_none = MagicMock(return_value=None)
 
         session = AsyncMock()
-        session.execute = AsyncMock(side_effect=[member_result, no_grant_result])
+        session.execute = AsyncMock(
+            side_effect=[member_result, no_grant_result, no_existing_member_result]
+        )
         session.add = MagicMock()
+        session.flush = AsyncMock()
         session.commit = AsyncMock()
 
         async def _refresh(obj):
             obj.id = 99
+            obj.vault_id = "vault-uuid"
             obj.accepted_at = None
 
         session.refresh = AsyncMock(side_effect=_refresh)
@@ -382,12 +388,13 @@ class TestUsersInviteToVaultNewGrant:
         try:
             await invite_to_vault(req=req, session=session, current_user=owner)
         except Exception:
-            pass  # line 265 is pragma: no cover; lines 244-263 are covered
+            pass  # _serialize_grant may fail; lines 244-263 are covered
 
         assert session.add.called
-        grant_arg = session.add.call_args[0][0]
-        assert isinstance(grant_arg, SharedVault)
-        assert grant_arg.owner_id == 1
+        # First add is the SharedVault; second add (if reached) is SharedVaultMember
+        vault_arg = session.add.call_args_list[0][0][0]
+        assert isinstance(vault_arg, SharedVault)
+        assert vault_arg.owner_id == 1
         assert session.commit.called
 
 
