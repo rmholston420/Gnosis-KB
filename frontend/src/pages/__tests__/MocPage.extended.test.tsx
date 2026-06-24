@@ -1,11 +1,10 @@
 /**
  * MocPage.extended.test.tsx
  *
- * MocPage.tsx builds its own axios calls directly — it does NOT use
- * @/services/api at all. We must mock the `axios` module itself.
- *
- * The Generate button is disabled until topic is non-empty.
- * After clicking, the mutation fires generateMoc() -> axios.post().
+ * MocPage.tsx uses raw axios calls — vi.mock('axios') is required.
+ * waitFor callbacks MUST use expect().toBeTruthy() so waitFor retries
+ * on failure; queryByText/queryByRole return null (no throw) and would
+ * exit waitFor immediately without the assertion wrapper.
  */
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
@@ -13,7 +12,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-// ─── Mock axios at the module level ─────────────────────────────────────────
 const mockAxiosPost = vi.fn();
 vi.mock('axios', () => ({
   default: {
@@ -63,16 +61,26 @@ function renderPage() {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks();
   mockAxiosPost.mockResolvedValue({ data: MOC_RESPONSE });
 });
 
-// ─── Loading + error states ──────────────────────────────────────────────────
+// Helper: fill topic and click Generate, then wait for result title
+async function generateMoc() {
+  fireEvent.change(screen.getByPlaceholderText(/e\.g\. EEG signal processing/i), {
+    target: { value: 'Buddhism' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: /generate moc/i }));
+  // waitFor MUST assert (throws on failure) so it retries until title appears
+  await waitFor(() =>
+    expect(screen.queryByText('Buddhism Overview')).toBeTruthy()
+  );
+}
+
 describe('MocPage — loading + error states', () => {
   it('shows loading state while mutation is pending', async () => {
-    // Keep the mutation pending indefinitely
     mockAxiosPost.mockReturnValue(new Promise(() => {}));
     renderPage();
-    // Fill topic so button is enabled
     fireEvent.change(screen.getByPlaceholderText(/e\.g\. EEG signal processing/i), {
       target: { value: 'Buddhism' },
     });
@@ -95,74 +103,51 @@ describe('MocPage — loading + error states', () => {
   });
 });
 
-// ─── Rendered content (after successful mutation) ────────────────────────────
 describe('MocPage — rendered content', () => {
   it('renders MOC title after generation', async () => {
     renderPage();
-    fireEvent.change(screen.getByPlaceholderText(/e\.g\. EEG signal processing/i), {
-      target: { value: 'Buddhism' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: /generate moc/i }));
-    await waitFor(() =>
-      expect(screen.queryByText('Buddhism Overview')).toBeTruthy()
-    );
+    await generateMoc();
+    // title appears in the sidebar result box
+    expect(screen.getByText('Buddhism Overview')).toBeInTheDocument();
   });
 
-  it('renders sections from body headings', async () => {
+  it('renders section headings from response', async () => {
     renderPage();
-    fireEvent.change(screen.getByPlaceholderText(/e\.g\. EEG signal processing/i), {
-      target: { value: 'Buddhism' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: /generate moc/i }));
+    await generateMoc();
+    // MocSectionCard renders heading inside nested spans —
+    // check document text content rather than a single node
     await waitFor(() =>
-      expect(screen.queryByText(/introduction|core concepts/i)).toBeTruthy()
+      expect(document.body.textContent).toMatch(/Introduction/)
     );
+    expect(document.body.textContent).toMatch(/Core Concepts/);
   });
 });
 
-// ─── Panel toggle ────────────────────────────────────────────────────────────
 describe('MocPage — tab switching', () => {
-  it('switches to Markdown tab', async () => {
+  it('switches to Markdown tab and shows Markdown Output header', async () => {
     renderPage();
-    fireEvent.change(screen.getByPlaceholderText(/e\.g\. EEG signal processing/i), {
-      target: { value: 'Buddhism' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: /generate moc/i }));
-    await waitFor(() => screen.queryByText('Buddhism Overview'));
-    const markdownTab = screen.queryByRole('tab', { name: /markdown/i });
-    if (markdownTab) {
-      fireEvent.click(markdownTab);
-      await waitFor(() =>
-        expect(screen.queryByText(/markdown output/i)).toBeTruthy()
-      );
-    }
+    await generateMoc();
+    const markdownTab = screen.getByRole('tab', { name: /markdown/i });
+    fireEvent.click(markdownTab);
+    await waitFor(() =>
+      expect(screen.queryByText(/markdown output/i)).toBeTruthy()
+    );
   });
 });
 
-// ─── Copy button ─────────────────────────────────────────────────────────────
 describe('MocPage — copy button', () => {
   it('copies markdown to clipboard', async () => {
     Object.assign(navigator, {
       clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
     });
     renderPage();
-    fireEvent.change(screen.getByPlaceholderText(/e\.g\. EEG signal processing/i), {
-      target: { value: 'Buddhism' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: /generate moc/i }));
-    await waitFor(() => screen.queryByText('Buddhism Overview'));
-    // Switch to Markdown tab first (Copy button lives there)
-    const markdownTab = screen.queryByRole('tab', { name: /markdown/i });
-    if (markdownTab) {
-      fireEvent.click(markdownTab);
-      await waitFor(() => screen.queryByText(/markdown output/i));
-    }
-    const copyBtn = screen.queryByRole('button', { name: /copy/i });
-    if (copyBtn) {
-      fireEvent.click(copyBtn);
-      await waitFor(() =>
-        expect(navigator.clipboard.writeText).toHaveBeenCalled()
-      );
-    }
+    await generateMoc();
+    const markdownTab = screen.getByRole('tab', { name: /markdown/i });
+    fireEvent.click(markdownTab);
+    await waitFor(() => expect(screen.queryByText(/markdown output/i)).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /copy/i }));
+    await waitFor(() =>
+      expect(navigator.clipboard.writeText).toHaveBeenCalled()
+    );
   });
 });

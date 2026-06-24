@@ -1,15 +1,11 @@
 /**
  * QueryPage.extended.test.tsx
  *
- * QueryPage.tsx defines its own local `api` object built on raw axios calls —
- * it does NOT use @/services/api at all. vi.mock('@/services/api') has zero
- * effect here. We must mock the `axios` module directly.
+ * QueryPage.tsx uses raw axios calls — vi.mock('axios') required.
  *
- * Key behaviors:
- * - Run button: disabled when queryText is empty, enabled once text is typed
- * - Save dialog: has both <input> (Name) and <textarea> (Description), both
- *   role="textbox" — use getAllByRole('textbox')[0] inside the dialog
- * - Saved queries: loaded via useQuery -> api.listSaved -> axios.get
+ * Critical: waitFor callbacks MUST use expect().toBeTruthy() to throw
+ * on failure so waitFor actually retries. queryByText/queryByRole return
+ * null (no throw) and exit waitFor immediately.
  */
 import React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
@@ -17,7 +13,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-// ─── Mock axios ───────────────────────────────────────────────────────────────
 const mockAxiosPost   = vi.fn();
 const mockAxiosGet    = vi.fn();
 const mockAxiosDelete = vi.fn();
@@ -76,15 +71,11 @@ function renderPage() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // GET /api/v1/query/saved
   mockAxiosGet.mockResolvedValue({ data: SAVED_QUERIES });
-  // POST /api/v1/query/run
   mockAxiosPost.mockResolvedValue({ data: QUERY_RESULT });
-  // DELETE
   mockAxiosDelete.mockResolvedValue({ data: {} });
 });
 
-// ─── Initial render ───────────────────────────────────────────────────────────
 describe('QueryPage — initial render', () => {
   it('renders query textarea', () => {
     renderPage();
@@ -93,19 +84,15 @@ describe('QueryPage — initial render', () => {
 
   it('renders Run button (disabled when textarea empty)', () => {
     renderPage();
-    const runBtn = screen.queryByRole('button', { name: /run/i });
-    expect(runBtn).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /run/i })).toBeTruthy();
   });
 });
 
-// ─── Run query ────────────────────────────────────────────────────────────────
 describe('QueryPage — run query', () => {
   it('calls axios.post and displays results', async () => {
     renderPage();
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'FROM notes' } });
-    // Button should now be enabled
-    const runBtn = screen.getByRole('button', { name: /run/i });
-    fireEvent.click(runBtn);
+    fireEvent.click(screen.getByRole('button', { name: /run/i }));
     await waitFor(() => expect(mockAxiosPost).toHaveBeenCalled());
   });
 
@@ -129,30 +116,21 @@ describe('QueryPage — run query', () => {
   });
 });
 
-// ─── Save dialog ──────────────────────────────────────────────────────────────
 describe('QueryPage — save dialog', () => {
   it('opens save dialog and calls axios.post to save', async () => {
-    // createSaved also goes through axios.post — return saved-query shape
     mockAxiosPost
-      .mockResolvedValueOnce({ data: QUERY_RESULT })           // runQuery (if called)
-      .mockResolvedValue({ data: { id: 3, name: 'My Query' } }); // createSaved
+      .mockResolvedValueOnce({ data: QUERY_RESULT })
+      .mockResolvedValue({ data: { id: 3, name: 'My Query' } });
 
     renderPage();
-    // Type query so Save button is accessible
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'FROM notes' } });
-
-    const saveBtn = screen.getByRole('button', { name: /save/i });
-    fireEvent.click(saveBtn);
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
 
     const dialog = await screen.findByRole('dialog');
-    // Dialog has <input> (Name) AND <textarea> (Description) — both role=textbox
     const textboxes = within(dialog).getAllByRole('textbox');
     fireEvent.change(textboxes[0], { target: { value: 'My Query' } });
 
-    // The Save button inside dialog is disabled until name is non-empty;
-    // after our change it should be enabled
-    const submitBtn = within(dialog).getByRole('button', { name: /save/i });
-    fireEvent.click(submitBtn);
+    fireEvent.click(within(dialog).getByRole('button', { name: /save/i }));
 
     await waitFor(() =>
       expect(mockAxiosPost).toHaveBeenCalledWith(
@@ -163,20 +141,23 @@ describe('QueryPage — save dialog', () => {
   });
 });
 
-// ─── Saved queries panel ──────────────────────────────────────────────────────
 describe('QueryPage — saved queries panel', () => {
   it('loads and displays saved queries from axios.get', async () => {
+    renderPage();
+    // expect().toBeTruthy() inside waitFor makes it retry until element appears
+    await waitFor(() =>
+      expect(screen.queryByText('Find Dharma')).toBeTruthy()
+    );
+    expect(screen.getByText('Find Dharma')).toBeInTheDocument();
+  });
+
+  it('expands saved query accordion on click', async () => {
     renderPage();
     await waitFor(() =>
       expect(screen.queryByText('Find Dharma')).toBeTruthy()
     );
-  });
-
-  it('loads saved query text into textarea on click', async () => {
-    renderPage();
-    await waitFor(() => screen.queryByText('Find Dharma'));
     fireEvent.click(screen.getByText('Find Dharma'));
-    // Expanding shows the Run/Delete buttons inside the accordion
+    // After expanding, inline Run button appears inside the accordion
     await waitFor(() =>
       expect(screen.queryAllByRole('button', { name: /run/i }).length).toBeGreaterThan(0)
     );
@@ -184,10 +165,15 @@ describe('QueryPage — saved queries panel', () => {
 
   it('calls axios.delete when delete button clicked', async () => {
     renderPage();
-    await waitFor(() => screen.queryByText('Find Dharma'));
-    // Expand the first saved query to reveal delete button
+    await waitFor(() =>
+      expect(screen.queryByText('Find Dharma')).toBeTruthy()
+    );
+    // Expand first saved query
     fireEvent.click(screen.getByText('Find Dharma'));
-    await waitFor(() => screen.queryAllByRole('button', { name: /run/i }));
+    await waitFor(() =>
+      expect(screen.queryAllByRole('button', { name: /run/i }).length).toBeGreaterThan(0)
+    );
+    // The delete button is a small button containing a Trash2 SVG with red styling
     const trashBtns = screen.queryAllByRole('button').filter(
       (btn) => btn.querySelector('svg') && btn.className.includes('red')
     );

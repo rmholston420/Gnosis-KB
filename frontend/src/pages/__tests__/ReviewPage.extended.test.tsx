@@ -1,21 +1,19 @@
 /**
  * ReviewPage.extended.test.tsx
  *
- * ReviewPage.tsx calls native fetch('/api/v1/review/queue') and
- * fetch('/api/v1/review/stats') directly — NOT via @/services/api.
- * We must mock global.fetch.
+ * ReviewPage.tsx calls native fetch() directly.
+ * Fix: vi.stubGlobal('fetch', ...) in beforeEach.
  *
- * Empty state text: "Nothing due today 🎉" (queue.length === 0)
- * Rating buttons are shown only after clicking the "Rate recall" button.
- * Skip button appears after reveal.
+ * Critical: all waitFor callbacks use expect().toBeTruthy() so waitFor
+ * retries on failure. queryByText/queryByRole return null (no throw)
+ * and would exit waitFor immediately without the assertion wrapper.
  */
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-// ─── Mock @/services/api for listNotes (WikilinkPreview) ─────────────────────
 vi.mock('@/services/api', () => ({
   default: {
     listNotes: vi.fn().mockResolvedValue({ items: [] }),
@@ -55,25 +53,14 @@ const STATS = {
 
 function makeFetchMock(queue: unknown[], stats = STATS) {
   return vi.fn().mockImplementation((url: string) => {
-    if (String(url).includes('/review/queue')) {
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve(queue),
-      });
+    const u = String(url);
+    if (u.includes('/review/queue')) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(queue) });
     }
-    if (String(url).includes('/review/stats')) {
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve(stats),
-      });
+    if (u.includes('/review/stats')) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(stats) });
     }
-    if (String(url).includes('/review/')) {
-      // POST rating
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({}),
-      });
-    }
+    // POST rating — matches /review/{id}
     return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
   });
 }
@@ -99,28 +86,29 @@ beforeEach(() => {
   vi.stubGlobal('fetch', makeFetchMock(DUE_CARDS));
 });
 
-// ─── Loading + empty states ───────────────────────────────────────────────────
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 describe('ReviewPage — loading + empty', () => {
   it('shows loading state initially', () => {
-    // fetch never resolves
     vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => {})));
     renderPage();
-    expect(screen.queryByText(/loading queue/i) ?? document.body).toBeTruthy();
+    // Loading spinner renders synchronously before fetch resolves
+    expect(document.body.textContent).toMatch(/loading queue/i);
   });
 
-  it('shows empty state when queue is empty — "Nothing due today"', async () => {
+  it('shows "Nothing due today" when queue is empty', async () => {
     vi.stubGlobal('fetch', makeFetchMock([]));
     renderPage();
     await waitFor(() =>
-      // The actual text in ReviewPage.tsx is "Nothing due today 🎉"
       expect(screen.queryByText(/nothing due today/i)).toBeTruthy()
     );
   });
 });
 
-// ─── Card interaction ────────────────────────────────────────────────────────
 describe('ReviewPage — card interaction', () => {
-  it('renders card title', async () => {
+  it('renders card title after queue loads', async () => {
     renderPage();
     await waitFor(() =>
       expect(screen.queryByText('What is Sunyata?')).toBeTruthy()
@@ -129,7 +117,10 @@ describe('ReviewPage — card interaction', () => {
 
   it('reveals rating buttons after clicking Rate recall', async () => {
     renderPage();
-    await waitFor(() => screen.queryByText('What is Sunyata?'));
+    // Wait for queue to load and card title to appear
+    await waitFor(() =>
+      expect(screen.queryByText('What is Sunyata?')).toBeTruthy()
+    );
     fireEvent.click(screen.getByRole('button', { name: /rate recall/i }));
     await waitFor(() =>
       expect(screen.queryByText('Perfect')).toBeTruthy()
@@ -138,10 +129,13 @@ describe('ReviewPage — card interaction', () => {
 
   it('calls fetch POST when rating button clicked', async () => {
     renderPage();
-    await waitFor(() => screen.queryByText('What is Sunyata?'));
+    await waitFor(() =>
+      expect(screen.queryByText('What is Sunyata?')).toBeTruthy()
+    );
     fireEvent.click(screen.getByRole('button', { name: /rate recall/i }));
-    await waitFor(() => screen.queryByText('Perfect'));
-    // Click the "5 — Perfect" rating button
+    await waitFor(() =>
+      expect(screen.queryByText('Perfect')).toBeTruthy()
+    );
     const ratingBtns = screen.queryAllByRole('button');
     const perfectBtn = ratingBtns.find((b) => b.textContent?.includes('Perfect'));
     if (perfectBtn) {
@@ -156,23 +150,23 @@ describe('ReviewPage — card interaction', () => {
   });
 });
 
-// ─── Skip ─────────────────────────────────────────────────────────────────────
 describe('ReviewPage — skip', () => {
   it('skip button advances to session complete when only 1 card', async () => {
     renderPage();
-    await waitFor(() => screen.queryByText('What is Sunyata?'));
-    // Reveal first
+    await waitFor(() =>
+      expect(screen.queryByText('What is Sunyata?')).toBeTruthy()
+    );
     fireEvent.click(screen.getByRole('button', { name: /rate recall/i }));
-    await waitFor(() => screen.queryByText('Skip'));
+    await waitFor(() =>
+      expect(screen.queryByText('Skip')).toBeTruthy()
+    );
     fireEvent.click(screen.getByText('Skip'));
     await waitFor(() =>
-      // Session ends → shows completion screen
       expect(screen.queryByText(/session complete|nothing due/i)).toBeTruthy()
     );
   });
 });
 
-// ─── Error state ──────────────────────────────────────────────────────────────
 describe('ReviewPage — error state', () => {
   it('shows "Failed to load review queue" when fetch rejects', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network error')));
