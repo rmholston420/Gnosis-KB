@@ -20,7 +20,7 @@ const mock = new MockAdapter(apiClient);
 beforeEach(() => {
   mock.reset();
   localStorage.clear();
-  window.location.href = 'http://localhost/';
+  window.location.href = 'http://localhost:3000/';
 });
 
 describe('apiClient request interceptor', () => {
@@ -48,9 +48,10 @@ describe('apiClient response interceptor', () => {
     await expect(apiClient.get('/api/v1/protected')).rejects.toThrow();
 
     expect(localStorage.getItem('gnosis_token')).toBeNull();
-    // jsdom resolves the assigned href '/login' against the current origin,
-    // producing the full URL 'http://localhost/login'.
-    expect(window.location.href).toBe('http://localhost/login');
+    // jsdom resolves href='/login' against the current origin.
+    // Assert the pathname only so the test is environment-agnostic
+    // (origin may be localhost or localhost:3000 depending on test runner).
+    expect(new URL(window.location.href).pathname).toBe('/login');
   });
 
   it('re-rejects non-401 errors without touching localStorage or location', async () => {
@@ -62,7 +63,7 @@ describe('apiClient response interceptor', () => {
     });
 
     expect(localStorage.getItem('gnosis_token')).toBe('good-token');
-    expect(window.location.href).not.toBe('http://localhost/login');
+    expect(new URL(window.location.href).pathname).not.toBe('/login');
   });
 
   it('passes 200 responses through unchanged', async () => {
