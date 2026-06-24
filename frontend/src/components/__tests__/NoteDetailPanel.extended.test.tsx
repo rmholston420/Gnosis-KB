@@ -2,6 +2,9 @@
  * NoteDetailPanel.extended.test.tsx
  * Covers the RAG action buttons (summarize, critique, suggest links, ingest),
  * wikilink chip rendering, edit navigation, close button, and error states.
+ *
+ * Tags render as "#buddhism" (with hash prefix added by the component).
+ * Use /^#buddhism/ regex matcher — plain string 'buddhism' won't match.
  */
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
@@ -31,8 +34,9 @@ vi.mock('react-markdown', () => ({
 vi.mock('remark-gfm', () => ({ default: () => {} }));
 
 import NoteDetailPanel from '@/components/NoteDetailPanel';
+import type { Note } from '@/types';
 
-const NOTE: import('@/types').Note = {
+const NOTE: Note = {
   id: 'note-99',
   title: 'Test Note Title',
   slug: 'test-note-title',
@@ -53,7 +57,7 @@ const NOTE: import('@/types').Note = {
   incoming_links: [],
 };
 
-// NoteDetailPanel has no onEdit prop — the Edit button calls navigate() internally.
+// NoteDetailPanel no longer accepts onEdit — Edit navigates internally.
 function wrap(onClose = vi.fn()) {
   return render(
     <MemoryRouter>
@@ -65,7 +69,12 @@ function wrap(onClose = vi.fn()) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockSummarize.mockResolvedValue({ summary: 'A summary' });
-  mockCritique.mockResolvedValue({ critique: 'A critique' });
+  mockCritique.mockResolvedValue({
+    overall: 'A critique',
+    strengths: [],
+    weaknesses: [],
+    suggestions: [],
+  });
   mockSuggest.mockResolvedValue({ suggestions: [] });
   mockIngestNote.mockResolvedValue({ ok: true });
 });
@@ -81,6 +90,8 @@ describe('NoteDetailPanel — RAG buttons and meta', () => {
     wrap(onClose);
     const btn = screen.queryByRole('button', { name: /close/i });
     if (btn) fireEvent.click(btn);
+    // If button found, onClose should have been called
+    if (btn) expect(onClose).toHaveBeenCalled();
   });
 
   it('edit button navigates (no crash)', () => {
@@ -115,7 +126,7 @@ describe('NoteDetailPanel — RAG buttons and meta', () => {
 
   it('renders tags from the note', () => {
     wrap();
-    const tag = screen.queryByText('buddhism') ?? screen.queryByText('test');
-    expect(tag).toBeTruthy();
+    // Tags render as "#buddhism" — the component prepends '#' to each tag
+    expect(screen.queryByText(/^#buddhism/)).toBeTruthy();
   });
 });
