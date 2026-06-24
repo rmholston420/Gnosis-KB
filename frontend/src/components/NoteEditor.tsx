@@ -30,7 +30,6 @@ import remarkGfm from 'remark-gfm';
 import type { Note } from '../types';
 import TagInput from './TagInput';
 import BacklinkPanel from './BacklinkPanel';
-import api from '../services/api';
 
 interface NoteEditorProps {
   note: Note;
@@ -162,7 +161,7 @@ export default function NoteEditor({
         {(mode === 'edit' || mode === 'split') && (
           <div
             className="flex-1 min-w-0 overflow-auto"
-            ref={textareaRef as React.RefObject<HTMLDivElement | HTMLTextAreaElement>}
+            ref={textareaRef as React.RefObject<HTMLDivElement>}
           >
             <CodeMirror
               value={body}
@@ -195,11 +194,6 @@ export default function NoteEditor({
             incomingLinks={note.incoming_links ?? []}
             outgoingLinks={note.outgoing_links ?? []}
             noteTitlesById={noteTitlesById}
-            // Expose a way to pre-fetch title map
-            onFetchTitles={async () => {
-              const res = await api.listNotes({ page: 1, page_size: 500 });
-              return new Map(res.items.map((n) => [n.id, n.title]));
-            }}
           />
         </div>
       )}
