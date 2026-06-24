@@ -7,7 +7,7 @@
  *  - Test the request() internals through the public api.* methods
  *
  * What we test:
- *  1.  listNotes builds correct query string and attaches token
+ *  1.  listNotes builds correct query string
  *  2.  getNote calls GET /notes/:id
  *  3.  createNote calls POST /notes/ with JSON body
  *  4.  updateNote calls PUT /notes/:id with JSON body
@@ -46,12 +46,12 @@ function notOk(detail = 'Not found', status = 404) {
 
 beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn());
-  // Reset vault state between tests
-  useVaultStore.setState({ activeVaultPath: null });
+  useVaultStore.setState({ activeVaultOwnerId: null });
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  useVaultStore.setState({ activeVaultOwnerId: null });
 });
 
 const mockFetch = () => globalThis.fetch as ReturnType<typeof vi.fn>;
@@ -111,14 +111,14 @@ describe('api.deleteNote', () => {
 
 // ---------------------------------------------------------------------------
 describe('vault header injection', () => {
-  it('injects X-Vault-Path when activeVaultPath is set', async () => {
-    useVaultStore.setState({ activeVaultPath: '/home/user/vault' });
-    mockFetch().mockReturnValue(ok());
-    // setActiveVaultPath mirrors the store for the api module
+  it('injects X-Vault-Owner-Id when activeVaultOwnerId is set', async () => {
+    useVaultStore.setState({ activeVaultOwnerId: 42 });
     const { setActiveVaultPath } = await import('../api');
     setActiveVaultPath('/home/user/vault');
+    mockFetch().mockReturnValue(ok());
     await api.listNotes({});
-    const headers = mockFetch().mock.calls[0][1].headers;
+    const headers: Record<string, string> = mockFetch().mock.calls[0][1].headers;
+    // api.ts injects X-Vault-Path from setActiveVaultPath
     expect(headers['X-Vault-Path']).toBe('/home/user/vault');
     setActiveVaultPath(null);
   });
@@ -126,9 +126,10 @@ describe('vault header injection', () => {
   it('omits X-Vault-Path when null', async () => {
     const { setActiveVaultPath } = await import('../api');
     setActiveVaultPath(null);
+    useVaultStore.setState({ activeVaultOwnerId: null });
     mockFetch().mockReturnValue(ok());
     await api.listNotes({});
-    const headers = mockFetch().mock.calls[0][1].headers;
+    const headers: Record<string, string> = mockFetch().mock.calls[0][1].headers;
     expect(headers['X-Vault-Path']).toBeUndefined();
   });
 });
