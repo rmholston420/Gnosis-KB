@@ -73,7 +73,7 @@ export default function SettingsPage() {
       .then((data) => {
         if (!mounted) return;
         setProviderInfo(data);
-        setSelectedModel(data.model);
+        setSelectedModel(data?.model ?? '');
       })
       .catch(() => { if (mounted) setProviderError(true); })
       .finally(() => { if (mounted) setProviderLoading(false); });
@@ -172,7 +172,7 @@ export default function SettingsPage() {
                 onChange={(e) => { setSelectedModel(e.target.value); setSaveState('idle'); }}
                 className="w-full rounded bg-bg-elevated border border-border text-sm px-3 py-1.5 text-text-primary focus:outline-none"
               >
-                {providerInfo.models.map((m) => (
+                {(providerInfo.models ?? []).map((m) => (
                   <option key={m} value={m}>{m}</option>
                 ))}
               </select>

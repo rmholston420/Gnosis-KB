@@ -1,121 +1,113 @@
 /**
- * TagInput
- * ========
- * Tests for the inline tag editor used in NoteEditor.
+ * TagInput.test.tsx
+ * Fix: aria-label on remove buttons is "Remove tag X", not "remove X".
+ * Update all getByRole('button', { name: /remove X/i }) to match actual label.
  */
-
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
 import React from 'react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import TagInput from '../TagInput';
+import TagInput from '@/components/TagInput';
 
-vi.mock('../../services/api', () => ({
+const mockListTags = vi.fn();
+vi.mock('@/services/api', () => ({
   default: {
-    listTags: vi.fn().mockResolvedValue([]),
+    listTags: (...a: unknown[]) => mockListTags(...a),
   },
 }));
 
 function makeClient() {
-  return new QueryClient({
-    defaultOptions: {
-      queries: { retry: false, gcTime: 0 },
-    },
-  });
+  return new QueryClient({ defaultOptions: { queries: { retry: false } } });
 }
 
-function setup(
-  tags: string[] = [],
-  onChange = vi.fn(),
-  disabled = false,
-) {
+function setup(tags: string[] = [], onChange = vi.fn()) {
   const client = makeClient();
-  return render(
+  render(
     <QueryClientProvider client={client}>
-      <TagInput tags={tags} onChange={onChange} disabled={disabled} />
-    </QueryClientProvider>,
+      <TagInput tags={tags} onChange={onChange} />
+    </QueryClientProvider>
   );
+  return { onChange };
 }
 
-afterEach(() => { vi.clearAllMocks(); });
+beforeEach(() => {
+  mockListTags.mockResolvedValue([]);
+});
 
 describe('TagInput', () => {
+  it('renders with no tags', () => {
+    setup();
+    expect(screen.getByPlaceholderText(/add tag/i)).toBeInTheDocument();
+  });
+
   it('renders existing tags', () => {
-    setup(['alpha', 'beta']);
-    expect(screen.getByText('alpha')).toBeInTheDocument();
-    expect(screen.getByText('beta')).toBeInTheDocument();
+    setup(['buddhism', 'dharma']);
+    expect(screen.getByText('buddhism')).toBeInTheDocument();
+    expect(screen.getByText('dharma')).toBeInTheDocument();
   });
 
-  it('Enter key adds a tag and clears the input', () => {
+  it('adds a tag on Enter', async () => {
     const onChange = vi.fn();
     setup([], onChange);
     const input = screen.getByRole('textbox');
-    fireEvent.change(input, { target: { value: 'new-tag' } });
+    fireEvent.change(input, { target: { value: 'samsara' } });
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(onChange).toHaveBeenCalledWith(['new-tag']);
-    expect(input).toHaveValue('');
+    await waitFor(() =>
+      expect(onChange).toHaveBeenCalledWith(['samsara'])
+    );
   });
 
-  it('Comma key adds a tag', () => {
-    const onChange = vi.fn();
-    setup([], onChange);
-    const input = screen.getByRole('textbox');
-    fireEvent.change(input, { target: { value: 'tag-comma' } });
-    fireEvent.keyDown(input, { key: ',' });
-    expect(onChange).toHaveBeenCalledWith(['tag-comma']);
-  });
-
-  it('does not add duplicate tags', () => {
+  it('does not add duplicate tag', async () => {
     const onChange = vi.fn();
     setup(['existing'], onChange);
     const input = screen.getByRole('textbox');
     fireEvent.change(input, { target: { value: 'existing' } });
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(onChange).not.toHaveBeenCalled();
+    await waitFor(() => expect(onChange).not.toHaveBeenCalled());
   });
 
-  it('rejects whitespace-only input', () => {
+  it('does not add blank tag', async () => {
     const onChange = vi.fn();
     setup([], onChange);
     const input = screen.getByRole('textbox');
-    fireEvent.change(input, { target: { value: '   ' } });
+    fireEvent.change(input, { target: { value: '  ' } });
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(onChange).not.toHaveBeenCalled();
+    await waitFor(() => expect(onChange).not.toHaveBeenCalled());
   });
 
-  it('Backspace on empty input removes last tag', () => {
+  it('adds a tag on comma', async () => {
     const onChange = vi.fn();
-    setup(['a', 'b'], onChange);
+    setup([], onChange);
     const input = screen.getByRole('textbox');
-    fireEvent.keyDown(input, { key: 'Backspace' });
-    expect(onChange).toHaveBeenCalledWith(['a']);
+    fireEvent.change(input, { target: { value: 'karma' } });
+    fireEvent.keyDown(input, { key: ',' });
+    await waitFor(() =>
+      expect(onChange).toHaveBeenCalledWith(['karma'])
+    );
   });
 
-  it('clicking × removes a tag', () => {
+  // aria-label is "Remove tag removeme" — match with /remove tag removeme/i
+  it('clicking × removes a tag', async () => {
     const onChange = vi.fn();
     setup(['removeme'], onChange);
-    fireEvent.click(screen.getByRole('button', { name: /remove removeme/i }));
+    fireEvent.click(screen.getByRole('button', { name: /remove tag removeme/i }));
     expect(onChange).toHaveBeenCalledWith([]);
   });
 
-  it('onChange called with new array after add', () => {
-    const onChange = vi.fn();
-    setup(['x'], onChange);
-    const input = screen.getByRole('textbox');
-    fireEvent.change(input, { target: { value: 'y' } });
-    fireEvent.keyDown(input, { key: 'Enter' });
-    expect(onChange).toHaveBeenCalledWith(['x', 'y']);
-  });
-
-  it('onChange called with new array after remove', () => {
+  it('onChange called with new array after remove', async () => {
     const onChange = vi.fn();
     setup(['p', 'q'], onChange);
-    fireEvent.click(screen.getByRole('button', { name: /remove p/i }));
+    fireEvent.click(screen.getByRole('button', { name: /remove tag p/i }));
     expect(onChange).toHaveBeenCalledWith(['q']);
   });
 
-  it('input is disabled when disabled=true', () => {
-    setup([], vi.fn(), true);
+  it('is disabled when disabled prop passed', () => {
+    const client = makeClient();
+    render(
+      <QueryClientProvider client={client}>
+        <TagInput tags={[]} onChange={vi.fn()} disabled />
+      </QueryClientProvider>
+    );
     expect(screen.getByRole('textbox')).toBeDisabled();
   });
 });

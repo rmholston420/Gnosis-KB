@@ -1,6 +1,9 @@
 /**
  * SettingsPage.extended.test.tsx
  * Targets uncovered lines in SettingsPage.tsx
+ *
+ * Key fix: getProviders must return a full ProviderInfo shape so
+ * SettingsPage.tsx doesn't crash on providerInfo.models.map().
  */
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
@@ -19,7 +22,6 @@ vi.mock('@/services/api', () => ({
     updateSettings: (...a: unknown[]) => mockUpdateSettings(...a),
     getStats:       (...a: unknown[]) => mockGetStats(...a),
     reindex:        (...a: unknown[]) => mockReindex(...a),
-    // SettingsPage calls getProviders() on mount via useEffect
     getProviders:   (...a: unknown[]) => mockGetProviders(...a),
     listNotes:      vi.fn().mockResolvedValue({ items: [] }),
   },
@@ -33,18 +35,12 @@ vi.mock('react-router-dom', async (orig) => {
 
 import SettingsPage from '@/pages/SettingsPage';
 
-const BASE_SETTINGS = {
-  vault_path: '/home/user/vault',
-  theme: 'dark',
-  auto_save: true,
-  spaced_repetition_enabled: true,
-};
-
-const BASE_STATS = {
-  total_notes: 150,
-  total_tags: 42,
-  vector_indexed: 148,
-  graph_indexed: 150,
+// Full ProviderInfo shape — models[] must be present to avoid crash at line 175
+const PROVIDER_INFO = {
+  provider: 'ollama',
+  model: 'mistral',
+  available: true,
+  models: ['mistral', 'llama3'],
 };
 
 function renderPage() {
@@ -57,76 +53,68 @@ function renderPage() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // Default happy-path values; individual tests override as needed
-  mockGetSettings.mockResolvedValue(BASE_SETTINGS);
-  mockGetStats.mockResolvedValue(BASE_STATS);
-  mockGetProviders.mockResolvedValue({ providers: [] });
+  mockGetProviders.mockResolvedValue(PROVIDER_INFO);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('SettingsPage — loading + error', () => {
   it('shows loading state initially', () => {
-    mockGetSettings.mockReturnValue(new Promise(() => {}));
-    mockGetStats.mockReturnValue(new Promise(() => {}));
+    // Keep getProviders pending so loading spinner stays visible
+    mockGetProviders.mockReturnValue(new Promise(() => {}));
     renderPage();
-    expect(screen.getByText(/loading/i)).toBeTruthy();
+    expect(screen.getByText(/loading provider info/i)).toBeTruthy();
   });
 
-  it('shows error when getSettings rejects', async () => {
-    mockGetSettings.mockRejectedValue(new Error('Settings load failed'));
+  it('shows error when getProviders rejects', async () => {
+    mockGetProviders.mockRejectedValue(new Error('Provider load failed'));
     renderPage();
-    await waitFor(() => expect(screen.queryByText(/error/i)).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.queryByText(/could not load provider/i)).toBeTruthy()
+    );
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('SettingsPage — content', () => {
-  it('renders vault path', async () => {
+  it('renders provider name after load', async () => {
     renderPage();
-    await waitFor(() => expect(screen.queryByDisplayValue('/home/user/vault')).toBeTruthy());
+    await waitFor(() => expect(screen.queryByText('ollama')).toBeTruthy());
   });
 
-  it('renders stats', async () => {
+  it('renders model selector with options', async () => {
     renderPage();
-    await waitFor(() => expect(screen.queryByText(/150/)).toBeTruthy());
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-describe('SettingsPage — save settings', () => {
-  it('calls updateSettings on save', async () => {
-    mockUpdateSettings.mockResolvedValue(BASE_SETTINGS);
-    renderPage();
-    await waitFor(() => screen.queryByDisplayValue('/home/user/vault'));
-    const saveBtn = screen.queryByRole('button', { name: /save/i });
-    if (saveBtn) {
-      fireEvent.click(saveBtn);
-      await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled());
-    }
+    await waitFor(() =>
+      expect(screen.queryByRole('option', { name: 'mistral' })).toBeTruthy()
+    );
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe('SettingsPage — reindex', () => {
-  it('calls reindex when reindex button clicked', async () => {
-    mockReindex.mockResolvedValue({});
+describe('SettingsPage — save model', () => {
+  it('Save model button is present after load', async () => {
     renderPage();
-    await waitFor(() => screen.queryByDisplayValue('/home/user/vault'));
-    const reindexBtn = screen.queryByRole('button', { name: /reindex/i });
-    if (reindexBtn) {
-      fireEvent.click(reindexBtn);
-      await waitFor(() => expect(mockReindex).toHaveBeenCalled());
-    }
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: /save model/i })).toBeTruthy()
+    );
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe('SettingsPage — toggle auto-save', () => {
-  it('renders auto-save toggle', async () => {
+describe('SettingsPage — sync', () => {
+  it('Sync Now button is present', async () => {
     renderPage();
-    await waitFor(() => {
-      const toggle = screen.queryByRole('checkbox', { name: /auto.?save/i });
-      if (toggle) expect(toggle).toBeTruthy();
-    });
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: /sync now/i })).toBeTruthy()
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('SettingsPage — export', () => {
+  it('Export Vault button is present', async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: /export vault/i })).toBeTruthy()
+    );
   });
 });
