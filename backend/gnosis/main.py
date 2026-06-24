@@ -89,6 +89,7 @@ def create_app() -> FastAPI:
         graph,
         health,
         ingest,
+        neurolink,
         notes,
         query,
         review,
@@ -113,6 +114,7 @@ def create_app() -> FastAPI:
     application.include_router(vault.router, prefix=_api_v1)
     application.include_router(admin.router, prefix=_api_v1)
     application.include_router(users.router, prefix=_api_v1)
+    application.include_router(neurolink.router, prefix=_api_v1)
 
     @application.exception_handler(Exception)
     async def _global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
