@@ -1,13 +1,25 @@
 /**
  * NoteDetailPanel.test.tsx
  * ========================
- * Tests for the read-only note detail side-panel.
+ * NoteDetailPanel is a CONTROLLED component — it receives `note` and
+ * `onClose` as props; it does NOT fetch internally.  All tests pass a
+ * pre-built Note fixture directly.
  *
- * We mock api.getNote so tests never hit the network, and mock
- * react-router useParams / useNavigate for controlled navigation.
+ * Cases:
+ *  1.  Renders note title
+ *  2.  Renders note_type in the header meta line
+ *  3.  Renders tags as chips
+ *  4.  Does NOT render tag chips when tags array is empty
+ *  5.  Renders markdown body content
+ *  6.  Renders wikilink chips for [[wikilinks]] found in the body
+ *  7.  Clicking a wikilink chip calls onWikilinkClick with the title
+ *  8.  Clicking the Edit (pencil) button navigates to /notes/:id
+ *  9.  Clicking the Close (X) button calls onClose
+ * 10.  Does NOT render action result section when result is null
+ * 11.  All four action buttons render
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import NoteDetailPanel from '../NoteDetailPanel';
 import type { Note } from '../../types';
@@ -15,19 +27,16 @@ import type { Note } from '../../types';
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
-  return {
-    ...actual,
-    useNavigate: () => mockNavigate,
-    useParams:   () => ({ id: 'note-abc' }),
-  };
+  return { ...actual, useNavigate: () => mockNavigate };
 });
 
-const mockGetNote = vi.fn();
+// Minimal api stubs — the panel calls these only when action buttons are clicked
 vi.mock('../../services/api', () => ({
-  api: {
-    getNote:    (...args: unknown[]) => mockGetNote(...args),
-    updateNote: vi.fn().mockResolvedValue({}),
-    deleteNote: vi.fn().mockResolvedValue({}),
+  default: {
+    summarizeNote: vi.fn().mockResolvedValue({ summary: 'A summary.' }),
+    critiqueNote:  vi.fn().mockResolvedValue({ overall: 'Good note.' }),
+    suggestLinks:  vi.fn().mockResolvedValue({ suggestions: [] }),
+    ingestNote:    vi.fn().mockResolvedValue({}),
   },
 }));
 
@@ -35,78 +44,108 @@ const baseNote: Note = {
   id:            'note-abc',
   title:         'Śūnyatā',
   slug:          'sunyata',
-  body:          '## Emptiness\n\nAll phenomena lack inherent existence.',
+  body:          '## Emptiness\n\nAll phenomena lack inherent existence. See also [[Dependent Origination]].',
   note_type:     'permanent',
+  status:        'active',
   tags:          ['buddhism', 'madhyamaka'],
   folder:        null,
   created_at:    '2025-01-01T00:00:00Z',
   updated_at:    '2025-06-01T00:00:00Z',
   incoming_links: [],
   outgoing_links: [],
+  word_count:    12,
 };
 
-function renderPanel() {
-  return render(<MemoryRouter><NoteDetailPanel /></MemoryRouter>);
+const onClose = vi.fn();
+
+function renderPanel(note: Note = baseNote, onWikilinkClick?: (t: string) => void) {
+  return render(
+    <MemoryRouter>
+      <NoteDetailPanel
+        note={note}
+        onClose={onClose}
+        onWikilinkClick={onWikilinkClick}
+      />
+    </MemoryRouter>
+  );
 }
 
 beforeEach(() => {
-  mockGetNote.mockReset();
+  onClose.mockReset();
   mockNavigate.mockReset();
-  mockGetNote.mockResolvedValue(baseNote);
 });
 
 describe('NoteDetailPanel', () => {
-  it('renders a loading state before data arrives', () => {
-    // Never resolve to keep loading state visible
-    mockGetNote.mockReturnValue(new Promise(() => {}));
+  it('renders the note title', () => {
     renderPanel();
-    // Should not immediately show note content
-    expect(screen.queryByText('Śūnyatā')).not.toBeInTheDocument();
+    expect(screen.getByText('Śūnyatā')).toBeInTheDocument();
   });
 
-  it('renders note title after loading', async () => {
+  it('renders note_type in the header meta', () => {
     renderPanel();
-    await waitFor(() => expect(screen.getByText('Śūnyatā')).toBeInTheDocument());
+    expect(screen.getByText('permanent')).toBeInTheDocument();
   });
 
-  it('renders note tags', async () => {
+  it('renders tags as chips', () => {
     renderPanel();
-    await waitFor(() => {
-      expect(screen.getByText('buddhism')).toBeInTheDocument();
-      expect(screen.getByText('madhyamaka')).toBeInTheDocument();
-    });
+    expect(screen.getByText('#buddhism')).toBeInTheDocument();
+    expect(screen.getByText('#madhyamaka')).toBeInTheDocument();
   });
 
-  it('renders note_type badge', async () => {
-    renderPanel();
-    await waitFor(() => expect(screen.getByText('permanent')).toBeInTheDocument());
+  it('does not render tag section when tags is empty', () => {
+    renderPanel({ ...baseNote, tags: [] });
+    expect(screen.queryByText('#buddhism')).not.toBeInTheDocument();
   });
 
-  it('calls api.getNote with the id from useParams', async () => {
+  it('renders markdown body heading', async () => {
     renderPanel();
-    await waitFor(() => expect(mockGetNote).toHaveBeenCalledWith('note-abc'));
+    // react-markdown renders the ## Emptiness heading
+    expect(await screen.findByRole('heading', { name: /emptiness/i })).toBeInTheDocument();
   });
 
-  it('shows an error state when getNote rejects', async () => {
-    mockGetNote.mockRejectedValue(new Error('Network error'));
+  it('renders wikilink chip for [[Dependent Origination]]', async () => {
     renderPanel();
-    await waitFor(() =>
-      expect(screen.getByText(/error|failed|not found/i)).toBeInTheDocument()
-    );
+    expect(await screen.findByText('Dependent Origination')).toBeInTheDocument();
   });
 
-  it('renders Edit button that navigates to note editor', async () => {
-    renderPanel();
-    await waitFor(() => screen.getByText('Śūnyatā'));
-    const editBtn = screen.getByRole('button', { name: /edit/i });
-    fireEvent.click(editBtn);
-    expect(mockNavigate).toHaveBeenCalledWith('/notes/note-abc/edit');
+  it('calls onWikilinkClick when a wikilink chip is clicked', async () => {
+    const onWikilinkClick = vi.fn();
+    renderPanel(baseNote, onWikilinkClick);
+    const chip = await screen.findByText('Dependent Origination');
+    // The wikilink chip is a button; its parent button carries the onClick
+    const btn = chip.closest('button') as HTMLButtonElement;
+    fireEvent.click(btn);
+    expect(onWikilinkClick).toHaveBeenCalledWith('Dependent Origination');
   });
 
-  it('renders markdown body content', async () => {
+  it('clicking the Edit button navigates to /notes/:id', () => {
     renderPanel();
-    await waitFor(() => screen.getByText('Śūnyatā'));
-    // The rendered markdown should contain the heading text
-    expect(screen.getByText(/emptiness/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle('Edit note'));
+    expect(mockNavigate).toHaveBeenCalledWith('/notes/note-abc');
+  });
+
+  it('clicking the Close button calls onClose', () => {
+    renderPanel();
+    fireEvent.click(screen.getByTitle('Close panel'));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders all four action buttons', () => {
+    renderPanel();
+    expect(screen.getByText('Summarize')).toBeInTheDocument();
+    expect(screen.getByText('Critique')).toBeInTheDocument();
+    expect(screen.getByText('Suggest Links')).toBeInTheDocument();
+    expect(screen.getByText('Ingest')).toBeInTheDocument();
+  });
+
+  it('does not render action result section initially', () => {
+    renderPanel();
+    expect(screen.queryByText('Summary')).not.toBeInTheDocument();
+    expect(screen.queryByText('Critique')).not.toBeInTheDocument();
+  });
+
+  it('renders word count when provided', () => {
+    renderPanel();
+    expect(screen.getByText('12 words')).toBeInTheDocument();
   });
 });

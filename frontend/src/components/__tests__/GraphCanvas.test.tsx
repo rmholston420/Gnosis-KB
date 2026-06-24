@@ -3,27 +3,26 @@
  * ====================
  * Tests for the Cytoscape.js knowledge-graph canvas wrapper.
  *
- * Cytoscape requires a DOM container with real dimensions, which jsdom
- * doesn't provide.  We mock the entire `cytoscape` module so tests can
- * verify that:
- *  - The component mounts without error for empty / populated data
- *  - cytoscape() is called with the right elements structure
- *  - Node tap triggers onNodeClick callback (or navigate fallback)
- *  - The component re-initialises (destroy + re-create) when data changes
- *  - The container div is rendered with the correct class
+ * Key constraint: vi.mock factories are hoisted to the top of the file by
+ * Vitest's transformer BEFORE const declarations are evaluated.  Any const
+ * used inside a vi.mock factory must be created via vi.hoisted() so it is
+ * initialised at hoist time rather than at statement-evaluation time.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import type { GraphData } from '../../types';
 
-// ── Cytoscape mock ───────────────────────────────────────────────────────────
-const mockOn       = vi.fn();
-const mockDestroy  = vi.fn();
-const mockCy       = { on: mockOn, destroy: mockDestroy };
-const mockCytoscape = vi.fn(() => mockCy);
-mockCytoscape.use = vi.fn();
+// ── Create mock objects at hoist time ────────────────────────────────────────
+const { mockOn, mockDestroy, mockCytoscape } = vi.hoisted(() => {
+  const mockOn      = vi.fn();
+  const mockDestroy = vi.fn();
+  const mockCy      = { on: mockOn, destroy: mockDestroy };
+  const mockCytoscape = Object.assign(vi.fn(() => mockCy), { use: vi.fn() });
+  return { mockOn, mockDestroy, mockCytoscape };
+});
 
+// ── Module mocks (hoisted; can safely reference hoisted consts) ───────────────
 vi.mock('cytoscape', () => ({ default: mockCytoscape }));
 vi.mock('cytoscape-fcose', () => ({ default: {} }));
 
@@ -33,14 +32,15 @@ vi.mock('react-router-dom', async () => {
   return { ...actual, useNavigate: () => mockNavigate };
 });
 
+// Import component AFTER mocks are registered
 import GraphCanvas from '../GraphCanvas';
 
 const emptyData: GraphData = { nodes: [], edges: [] };
 
 const sampleData: GraphData = {
   nodes: [
-    { id: 'n1', title: 'Emptiness',   slug: 'emptiness',   note_type: 'permanent',  incoming_link_count: 2, outgoing_link_count: 1 },
-    { id: 'n2', title: 'Impermanence', slug: 'impermanence', note_type: 'fleeting',   incoming_link_count: 0, outgoing_link_count: 3 },
+    { id: 'n1', title: 'Emptiness',    slug: 'emptiness',    note_type: 'permanent', incoming_link_count: 2, outgoing_link_count: 1 },
+    { id: 'n2', title: 'Impermanence', slug: 'impermanence', note_type: 'fleeting',  incoming_link_count: 0, outgoing_link_count: 3 },
   ],
   edges: [
     { source: 'n1', target: 'n2', link_text: 'relates to' },
@@ -65,31 +65,39 @@ beforeEach(() => {
 describe('GraphCanvas', () => {
   it('renders the container div', () => {
     renderCanvas(emptyData);
-    // Container must be present (Cytoscape attaches to it)
     const div = document.querySelector('.bg-bg-primary') as HTMLElement;
     expect(div).toBeInTheDocument();
   });
 
-  it('calls cytoscape() on mount with empty data', () => {
+  it('renders container with minHeight style', () => {
+    renderCanvas(emptyData);
+    const div = document.querySelector('[style]') as HTMLElement;
+    expect(div?.style.minHeight).toBe('400px');
+  });
+
+  it('calls cytoscape() on mount', () => {
     renderCanvas(emptyData);
     expect(mockCytoscape).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes empty elements array for empty data', () => {
+    renderCanvas(emptyData);
     const opts = mockCytoscape.mock.calls[0][0] as { elements: unknown[] };
     expect(opts.elements).toHaveLength(0);
   });
 
-  it('maps nodes to cytoscape elements', () => {
+  it('maps nodes into cytoscape elements with correct id', () => {
     renderCanvas(sampleData);
     const opts = mockCytoscape.mock.calls[0][0] as { elements: Array<{ data: { id: string } }> };
-    const nodeIds = opts.elements.map((e) => e.data.id);
-    expect(nodeIds).toContain('n1');
-    expect(nodeIds).toContain('n2');
+    const ids = opts.elements.map((e) => e.data.id);
+    expect(ids).toContain('n1');
+    expect(ids).toContain('n2');
   });
 
-  it('maps edges to cytoscape elements with composite id', () => {
+  it('maps edges with composite id "source-target"', () => {
     renderCanvas(sampleData);
     const opts = mockCytoscape.mock.calls[0][0] as { elements: Array<{ data: { id: string; source?: string } }> };
     const edge = opts.elements.find((e) => e.data.source === 'n1');
-    expect(edge).toBeDefined();
     expect(edge?.data.id).toBe('n1-n2');
   });
 
@@ -98,10 +106,11 @@ describe('GraphCanvas', () => {
     expect(mockOn).toHaveBeenCalledWith('tap', 'node', expect.any(Function));
   });
 
-  it('calls onNodeClick with node id when tap fires and callback provided', () => {
+  it('calls onNodeClick with node id when tap fires and callback is provided', () => {
     const onNodeClick = vi.fn();
     renderCanvas(sampleData, onNodeClick);
-    const [[, , tapHandler]] = mockOn.mock.calls as [[string, string, (e: { target: { id: () => string } }) => void]];
+    const tapCall = mockOn.mock.calls.find(([event]) => event === 'tap')!;
+    const tapHandler = tapCall[2] as (e: { target: { id: () => string } }) => void;
     tapHandler({ target: { id: () => 'n1' } });
     expect(onNodeClick).toHaveBeenCalledWith('n1');
     expect(mockNavigate).not.toHaveBeenCalled();
@@ -109,25 +118,20 @@ describe('GraphCanvas', () => {
 
   it('navigates to /notes/:id when no onNodeClick provided', () => {
     renderCanvas(sampleData);
-    const [[, , tapHandler]] = mockOn.mock.calls as [[string, string, (e: { target: { id: () => string } }) => void]];
+    const tapCall = mockOn.mock.calls.find(([event]) => event === 'tap')!;
+    const tapHandler = tapCall[2] as (e: { target: { id: () => string } }) => void;
     tapHandler({ target: { id: () => 'n2' } });
     expect(mockNavigate).toHaveBeenCalledWith('/notes/n2');
   });
 
-  it('destroys previous instance when data changes', () => {
+  it('destroys previous cytoscape instance when data prop changes', () => {
     const { rerender } = renderCanvas(sampleData);
     rerender(
       <MemoryRouter>
-        <GraphCanvas data={{ nodes: [], edges: [] }} />
+        <GraphCanvas data={emptyData} />
       </MemoryRouter>
     );
-    // destroy should be called once for the first instance before re-creating
+    // destroy is called by the useEffect cleanup on unmount/dep change
     expect(mockDestroy).toHaveBeenCalled();
-  });
-
-  it('renders with minHeight style', () => {
-    renderCanvas(emptyData);
-    const container = document.querySelector('[style*="minHeight"]') as HTMLElement;
-    expect(container).toBeInTheDocument();
   });
 });
