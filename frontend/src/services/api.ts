@@ -1,75 +1,65 @@
 /**
- * Gnosis API service layer.
- * All HTTP calls go through typed fetch wrappers.
- * Base URL: /api/v1 (proxied by Vite dev server to :8010 in dev)
+ * api.ts — Gnosis-KB frontend API client
  *
- * Vault scoping
- * -------------
- * When the user is browsing a shared vault, useVaultStore holds a non-null
- * activeVaultOwnerId.  request() reads this synchronously via Zustand’s
- * getState() selector (safe outside React components) and appends the header
- *   X-Vault-Owner-Id: <owner_id>
- * to every request.  The backend reads this header in a FastAPI dependency
- * (core/auth.py) and passes it to get_accessible_owner_ids() so note queries
- * are automatically scoped to the foreign vault when the header is present and
- * the caller has a valid grant, or fall back to their own vault otherwise.
+ * All requests go through the `request()` helper which:
+ *  - Prepends BASE_URL
+ *  - Attaches the active-vault header
+ *  - Throws on non-2xx responses with the server's detail message
  */
 
-import { useVaultStore } from '../store/useVaultStore';
+const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000/api';
 
-const BASE_URL = '/api/v1';
+// ---------------------------------------------------------------------------
+// Active vault state (shared with VaultSwitcher)
+// ---------------------------------------------------------------------------
+let _activeVaultPath: string | null = null;
 
-/** Headers injected into every request: auth token + optional vault scope. */
-function buildCommonHeaders(extra: Record<string, string> = {}): Record<string, string> {
-  const token = localStorage.getItem('gnosis_token') ?? '';
-  const { activeVaultOwnerId } = useVaultStore.getState();
-
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${token}`,
-    ...extra,
-  };
-
-  if (activeVaultOwnerId !== null) {
-    headers['X-Vault-Owner-Id'] = String(activeVaultOwnerId);
-  }
-
-  return headers;
+export function setActiveVaultPath(p: string | null) {
+  _activeVaultPath = p;
+}
+export function getActiveVaultPath(): string | null {
+  return _activeVaultPath;
 }
 
-async function request<T>(
-  method: string,
-  path: string,
-  body?: unknown,
-  extraHeaders?: Record<string, string>
-): Promise<T> {
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+function buildCommonHeaders(): Record<string, string> {
+  const h: Record<string, string> = {};
+  if (_activeVaultPath) h['X-Vault-Path'] = _activeVaultPath;
+  return h;
+}
+
+async function request(method: string, path: string, body?: unknown): Promise<unknown> {
   const res = await fetch(`${BASE_URL}${path}`, {
     method,
     headers: {
       'Content-Type': 'application/json',
-      ...buildCommonHeaders(extraHeaders),
+      ...buildCommonHeaders(),
     },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
-
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(
-      typeof detail.detail === 'string' ? detail.detail : JSON.stringify(detail)
-    );
+    throw new Error(detail.detail ?? res.statusText);
   }
-
-  if (res.status === 204) return undefined as unknown as T;
-  return res.json() as Promise<T>;
+  if (res.status === 204) return {};
+  return res.json();
 }
 
-export const api = {
-  // --- Notes ---
+// ---------------------------------------------------------------------------
+// API surface
+// ---------------------------------------------------------------------------
+const api = {
+  // -- Notes -----------------------------------------------------------------
   listNotes: (params: Record<string, string | number>) =>
-    request('GET', `/notes/?${new URLSearchParams(
-      Object.entries(params)
-        .filter(([, v]) => v !== undefined && v !== '')
-        .map(([k, v]) => [k, String(v)])
-    ).toString()}`),
+    request(
+      'GET',
+      '/notes/?' +
+        Object.entries(params)
+          .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+          .join('&'),
+    ),
 
   getNote: (id: string) => request('GET', `/notes/${id}`),
 
@@ -87,45 +77,40 @@ export const api = {
 
   getOrphanNotes: () => request('GET', '/notes/orphans'),
 
-  /**
-   * Wikilink title resolution — returns notes whose title contains `q`,
-   * scoped to the caller’s accessible vaults.
-   */
   searchNoteByTitle: (q: string) =>
-    request('GET', `/notes/by-title?${new URLSearchParams({ q }).toString()}`),
+    request('GET', `/notes/search-by-title?q=${encodeURIComponent(q)}`),
 
-  /** Fetch built-in note template gallery. */
   listTemplates: () => request('GET', '/notes/templates'),
 
-  // --- Search ---
   search: (q: string, params: Record<string, string | number> = {}) =>
-    request('GET', `/search/?q=${encodeURIComponent(q)}&${new URLSearchParams(
-      Object.entries(params).map(([k, v]) => [k, String(v)])
-    ).toString()}`),
+    request(
+      'GET',
+      '/search/?' +
+        Object.entries({ q, ...params })
+          .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+          .join('&'),
+    ),
 
-  // --- Tags ---
   listTags: () => request('GET', '/tags/'),
 
-  // --- Graph ---
+  // -- Graph -----------------------------------------------------------------
   getFullGraph: () => request('GET', '/graph/'),
 
   getNeighborhood: (id: string) => request('GET', `/graph/neighborhood/${id}`),
 
   getPath: (fromId: string, toId: string) =>
-    request('GET', `/graph/path/${fromId}/${toId}`),
+    request('GET', `/graph/path?from=${fromId}&to=${toId}`),
 
   getClusters: () => request('GET', '/graph/clusters'),
 
   getGraphStats: () => request('GET', '/graph/stats'),
 
-  /** Fetch LightRAG entity/relation graph for D3 visualisation. */
   getLightRagGraph: () => request('GET', '/graph/lightrag'),
 
-  /** Fetch raw LightRAG entity list for the entities panel. */
   getGraphEntities: (limit = 100) =>
-    request<{ entities: GraphEntitySummary[] }>('GET', `/graph/entities?limit=${limit}`),
+    request('GET', `/graph/entities?limit=${limit}`),
 
-  // --- AI ---
+  // -- AI --------------------------------------------------------------------
   chat: (message: string, mode = 'hybrid', sessionId?: string) =>
     request('POST', '/ai/chat', { message, mode, session_id: sessionId }),
 
@@ -138,45 +123,26 @@ export const api = {
   /** Trigger on-demand LightRAG ingestion of a single note (backfill). */
   ingestNote: (id: string) => request('POST', `/ai/ingest-note/${id}`),
 
-  // --- AI Providers ---
   getProviders: () => request('GET', '/ai/providers'),
 
   setModel: (model: string) => request('POST', '/ai/providers/model', { model }),
 
-  // --- Vault Sync (Slice 15) ---
-
-  /**
-   * Trigger a background vault sync (non-streaming).
-   * Returns { status: 'accepted', message, user_id } immediately.
-   */
+  // -- Vault sync ------------------------------------------------------------
   triggerVaultSync: () =>
-    request<{ status: string; message: string; user_id: number }>('POST', '/vault/sync'),
+    request('POST', '/vault/sync'),
 
-  /**
-   * Poll the current sync state for the authenticated user.
-   * Returns SyncStatusResponse: { state, elapsed, files_processed, files_total }
-   */
   getVaultSyncStatus: () =>
-    request<VaultSyncStatus>('GET', '/vault/sync/status'),
+    request('GET', '/vault/sync/status'),
 
-  /**
-   * Open an SSE stream for vault sync progress.
-   *
-   * Returns a native EventSource that emits one line per file processed.
-   * The last event will be `data: [done]` or `data: [error] <msg>`.
-   *
-   * Note: EventSource does not support custom headers, so the auth token is
-   * passed as a query param. The backend vault router reads ?token= as a
-   * fallback when the Authorization header is absent.
-   */
+  listVaults: () => request('GET', '/vault/vaults'),
+
   openVaultSyncStream: (): EventSource => {
-    const token = localStorage.getItem('gnosis_token') ?? '';
-    const url = `${BASE_URL}/vault/sync?stream=true&token=${encodeURIComponent(token)}`;
+    const url = `${BASE_URL}/vault/sync/stream`;
     return new EventSource(url);
   },
 
-  // --- Ingest ---
-  // FormData requests can’t use Content-Type: application/json, so they
+  // -- Ingest ----------------------------------------------------------------
+  // NOTE: these two methods build FormData manually so they do NOT use
   // build headers manually via buildCommonHeaders() (no Content-Type override).
   ingestFile: (file: File, folder = '70-sources') => {
     const form = new FormData();
@@ -204,6 +170,38 @@ export const api = {
       if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
       return res.json();
     });
+  },
+
+  // -- New methods (graph + query) -------------------------------------------
+
+  /** Fetch the full knowledge graph (nodes + edges). */
+  getGraph: () => request('GET', '/graph/'),
+
+  /** Fetch a single LightRAG entity node with its relations. */
+  getLightRagNode: (nodeId: string) =>
+    request('GET', `/graph/lightrag/node/${encodeURIComponent(nodeId)}`),
+
+  /** List all vault folders. */
+  listFolders: () => request('GET', '/notes/folders'),
+
+  /** Stream a query response via SSE. Returns the EventSource for cleanup. */
+  streamQuery: (
+    query: string,
+    onChunk: (token: string) => void,
+    onDone: () => void,
+  ): EventSource => {
+    const url = `${BASE_URL}/query/stream?q=${encodeURIComponent(query)}`;
+    const es = new EventSource(url);
+    es.onmessage = (e: MessageEvent) => {
+      if (e.data === '[DONE]') {
+        onDone();
+        es.close();
+      } else {
+        onChunk(e.data as string);
+      }
+    };
+    es.onerror = () => { es.close(); };
+    return es;
   },
 };
 

@@ -7,7 +7,6 @@
  *   - getGraph
  *   - getNote (full)
  *   - updateNote / deleteNote
- *   - exportNote
  *   - ingestNote
  *   - listTags / listFolders
  */
@@ -27,26 +26,6 @@ function makeJsonResponse(data: unknown, status = 200) {
   } as Response);
 }
 
-function makeStreamResponse(chunks: string[]) {
-  let idx = 0;
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream({
-    pull(controller) {
-      if (idx < chunks.length) {
-        controller.enqueue(encoder.encode(chunks[idx++]));
-      } else {
-        controller.close();
-      }
-    },
-  });
-  return Promise.resolve({
-    ok: true,
-    status: 200,
-    body: stream,
-    headers: new Headers({ 'content-type': 'text/event-stream' }),
-  } as unknown as Response);
-}
-
 import api from '../api';
 
 // ---- helpers -------------------------------------------------------------------
@@ -61,7 +40,7 @@ describe('api.getGraph', () => {
   it('returns graph data', async () => {
     const data = { nodes: [], edges: [] };
     mockFetch.mockReturnValue(makeJsonResponse(data));
-    const result = await api.getGraph();
+    const result = await api.getGraph() as { nodes: unknown[]; edges: unknown[] };
     expect(result.nodes).toBeDefined();
   });
 
@@ -80,11 +59,12 @@ describe('api.getNote', () => {
     status: 'evergreen', tags: [], folder: '', word_count: 1,
     created_at: '2026-01-01T00:00:00Z', modified_at: '2026-06-01T00:00:00Z',
     incoming_links: [], outgoing_links: [], frontmatter: {},
+    body_html: '', is_deleted: false, vector_indexed: false, graph_indexed: false,
   };
 
   it('returns note data', async () => {
     mockFetch.mockReturnValue(makeJsonResponse(NOTE));
-    const result = await api.getNote('n1');
+    const result = await api.getNote('n1') as { id: string };
     expect(result.id).toBe('n1');
   });
 
@@ -99,19 +79,21 @@ describe('api.getNote', () => {
 // ================================================================================
 describe('api.updateNote', () => {
   const UPDATED = {
-    id: 'n1', title: 'Updated', slug: 'updated', body: 'new body', note_type: 'permanent',
-    status: 'evergreen', tags: [], folder: '', word_count: 2,
-    created_at: '2026-01-01T00:00:00Z', modified_at: '2026-06-24T00:00:00Z',
+    id: 'n1', title: 'Updated', slug: 'updated', body: 'new body',
+    note_type: 'permanent', status: 'evergreen', tags: [], folder: '',
+    word_count: 2, created_at: '2026-01-01T00:00:00Z',
+    modified_at: '2026-06-24T00:00:00Z',
     incoming_links: [], outgoing_links: [], frontmatter: {},
+    body_html: '', is_deleted: false, vector_indexed: false, graph_indexed: false,
   };
 
-  it('sends PATCH and returns updated note', async () => {
+  it('sends PUT and returns updated note', async () => {
     mockFetch.mockReturnValue(makeJsonResponse(UPDATED));
-    const result = await api.updateNote('n1', { title: 'Updated' });
+    const result = await api.updateNote('n1', { title: 'Updated' }) as { title: string };
     expect(result.title).toBe('Updated');
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining('n1'),
-      expect.objectContaining({ method: 'PATCH' })
+      expect.objectContaining({ method: 'PUT' })
     );
   });
 });
@@ -136,7 +118,7 @@ describe('api.deleteNote', () => {
 describe('api.listTags', () => {
   it('returns array of tags', async () => {
     mockFetch.mockReturnValue(makeJsonResponse(['buddhism', 'madhyamaka']));
-    const result = await api.listTags();
+    const result = await api.listTags() as string[];
     expect(Array.isArray(result)).toBe(true);
   });
 });
@@ -147,7 +129,7 @@ describe('api.listTags', () => {
 describe('api.listFolders', () => {
   it('returns array of folders', async () => {
     mockFetch.mockReturnValue(makeJsonResponse(['inbox', 'archive']));
-    const result = await api.listFolders();
+    const result = await api.listFolders() as string[];
     expect(Array.isArray(result)).toBe(true);
   });
 });
@@ -170,7 +152,7 @@ describe('api.getLightRagNode', () => {
   it('returns entity and relations', async () => {
     const data = { entity: { id: 'e1', name: 'Emptiness', type: 'concept' }, relations: [] };
     mockFetch.mockReturnValue(makeJsonResponse(data));
-    const result = await api.getLightRagNode('e1');
+    const result = await api.getLightRagNode('e1') as { entity: { id: string } };
     expect(result.entity).toBeDefined();
   });
 });
@@ -211,8 +193,8 @@ describe('api.streamQuery', () => {
   it('calls onChunk for each message event', () => {
     const mockInstance = {
       onmessage: null as ((e: MessageEvent) => void) | null,
-      onerror: null as ((e: Event) => void) | null,
-      close: vi.fn(),
+      onerror:   null as ((e: Event) => void) | null,
+      close:     vi.fn(),
     };
     const FakeES = vi.fn().mockImplementation(() => mockInstance) as unknown as typeof EventSource;
     global.EventSource = FakeES;
@@ -228,8 +210,8 @@ describe('api.streamQuery', () => {
   it('calls onDone when [DONE] sentinel received', () => {
     const mockInstance = {
       onmessage: null as ((e: MessageEvent) => void) | null,
-      onerror: null as ((e: Event) => void) | null,
-      close: vi.fn(),
+      onerror:   null as ((e: Event) => void) | null,
+      close:     vi.fn(),
     };
     const FakeES = vi.fn().mockImplementation(() => mockInstance) as unknown as typeof EventSource;
     global.EventSource = FakeES;
