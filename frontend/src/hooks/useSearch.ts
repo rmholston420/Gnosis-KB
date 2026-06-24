@@ -1,5 +1,5 @@
 /**
- * useSearch — debounced hybrid search hook.
+ * useSearch — debounced search hooks for all search modes.
  */
 import { useState, useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -9,51 +9,53 @@ import type { SearchResponse, SearchResult } from '../types';
 
 const DEBOUNCE_MS = 300;
 
-/**
- * Debounced hybrid search. Returns results, loading state, and error.
- * Automatically refires when query or mode changes after the debounce window.
- */
-export function useSearch(initialQuery = '', initialMode: SearchMode = 'hybrid') {
-  const [query, setQuery]   = useState(initialQuery);
-  const [mode,  setMode]    = useState<SearchMode>(initialMode);
-  const [debouncedQ, setDQ] = useState(initialQuery);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
+/** Debounce a query string. Returns the debounced value. */
+function useDebounce(value: string, ms = DEBOUNCE_MS): string {
+  const [dv, setDv] = useState(value);
   useEffect(() => {
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => setDQ(query), DEBOUNCE_MS);
-    return () => { if (timer.current) clearTimeout(timer.current); };
-  }, [query]);
-
-  const { data, isLoading, isError, error } = useQuery<SearchResponse>({
-    queryKey:  ['search', debouncedQ, mode],
-    queryFn:   () => search({ q: debouncedQ, mode }),
-    enabled:   debouncedQ.trim().length > 0,
-    staleTime: 30_000,
-  });
-
-  return {
-    query, setQuery,
-    mode,  setMode,
-    results:   data?.items ?? [],
-    total:     data?.total ?? 0,
-    isLoading,
-    isError,
-    error,
-  };
+    const t = setTimeout(() => setDv(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return dv;
 }
 
-/** Semantic-only search hook. */
-export function useSemanticSearch(q: string, limit = 10) {
+/**
+ * Generic debounced search hook.
+ * `query` is the raw (non-debounced) search query.
+ * Returns the TanStack Query result object directly.
+ */
+export function useSearch(query: string, mode: SearchMode = 'hybrid') {
+  const dq = useDebounce(query);
   return useQuery<SearchResponse>({
-    queryKey: ['search', 'semantic', q, limit],
-    queryFn:  () => semanticSearch(q, limit),
-    enabled:  q.trim().length > 0,
+    queryKey:  ['search', dq, mode],
+    queryFn:   () => search({ q: dq, mode }),
+    enabled:   dq.trim().length > 0,
     staleTime: 30_000,
   });
 }
 
-/** Find similar notes to a given note ID. */
+/** Hybrid search (BM25 + vector). */
+export function useHybridSearch(query: string) {
+  return useSearch(query, 'hybrid');
+}
+
+/** Keyword-only (BM25) search. */
+export function useKeywordSearch(query: string) {
+  return useSearch(query, 'keyword');
+}
+
+/** Semantic (vector-only) search. */
+export function useSemanticSearch(q: string, limit = 10) {
+  const dq = useDebounce(q);
+  return useQuery<SearchResponse>({
+    queryKey: ['search', 'semantic', dq, limit],
+    queryFn:  () => semanticSearch(dq, limit),
+    enabled:  dq.trim().length > 0,
+    staleTime: 30_000,
+  });
+}
+
+/** Find notes similar to a given note by embedding distance. */
 export function useSimilarNotes(noteId: string | null, limit = 10) {
   return useQuery<SearchResult[]>({
     queryKey: ['search', 'similar', noteId, limit],
