@@ -10,6 +10,12 @@
  *
  * Stream mocking: use start() not pull() so all chunks are buffered
  * synchronously and available on the very first reader.read() await.
+ *
+ * Error SSE branch note: AIChat.tsx's { error } branch appends to the
+ * `accumulated` local var but does NOT call setMessages — only the
+ * { token } branch does. To make the error text reach the DOM we must
+ * emit a { token } chunk AFTER the { error } chunk so that setMessages
+ * is called with the full accumulated string.
  */
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
@@ -17,10 +23,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ---- SSE fetch mock helpers ------------------------------------------------
 
-/**
- * All chunks enqueued in start() so they are immediately buffered
- * before the component's first reader.read() call resolves.
- */
 function makeStream(chunks: string[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   return new ReadableStream<Uint8Array>({
@@ -86,11 +88,11 @@ describe('AIChat — SSE streaming (lines 99-118)', () => {
       target: { value: 'meta test' },
     });
     fireEvent.click(getSendButton());
-    // Target the badge specifically by its unique purple Tailwind class to
-    // avoid ambiguous match against the mode button and footer span.
+    // Target the badge by its unique purple Tailwind class to avoid
+    // ambiguous match against the mode button and footer span.
     await waitFor(
       () => {
-        const badge = document.querySelector('span.bg-purple-500\\/20') as HTMLElement | null;
+        const badge = document.querySelector('span.bg-purple-500\/20') as HTMLElement | null;
         expect(badge).toBeTruthy();
         expect(badge!.textContent).toMatch(/LightRAG/i);
       },
@@ -99,8 +101,13 @@ describe('AIChat — SSE streaming (lines 99-118)', () => {
   });
 
   it('appends error token to message (lines 117-118)', async () => {
+    // The { error } SSE branch appends to `accumulated` but does NOT call
+    // setMessages. A subsequent { token } chunk triggers setMessages with
+    // the full accumulated string (including the error suffix). We use an
+    // empty-string token (' ') to force the flush without adding visible text.
     mockFetchOk([
       sseChunk({ error: 'Backend exploded' }),
+      sseChunk({ token: ' ' }),        // flush: causes setMessages with accumulated
       'data: [DONE]\n\n',
     ]);
     render(<AIChat />);
@@ -108,14 +115,9 @@ describe('AIChat — SSE streaming (lines 99-118)', () => {
       target: { value: 'error test' },
     });
     fireEvent.click(getSendButton());
-    // Component may render the error as raw text or prefixed — match either.
+    // Component appends: '\n\n*Error: Backend exploded*' + ' ' to accumulated
     await waitFor(
-      () => {
-        const found =
-          screen.queryByText(/Backend exploded/i) ||
-          screen.queryByText(/Error.*Backend exploded/i);
-        expect(found).toBeTruthy();
-      },
+      () => expect(screen.queryByText(/Backend exploded/i)).toBeTruthy(),
       { timeout: 4000 },
     );
   });
