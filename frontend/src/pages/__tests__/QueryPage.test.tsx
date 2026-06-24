@@ -9,6 +9,7 @@
  * causing "Cannot access 'x' before initialization" and a secondary
  * "Cannot find module" crash on require('../QueryPage').
  */
+import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -30,9 +31,10 @@ vi.mock('axios', () => ({
   },
 }));
 
+import QueryPage from '../QueryPage';
+
 function wrap() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const { default: QueryPage } = require('../QueryPage');
   return render(
     <QueryClientProvider client={qc}>
       <QueryPage />

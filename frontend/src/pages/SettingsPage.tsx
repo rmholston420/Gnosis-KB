@@ -1,37 +1,33 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Settings,
-  Cpu,
   CircleCheck,
   Radio,
   Shield,
   Download,
   RefreshCw,
+  XCircle,
+  Loader2,
 } from 'lucide-react';
 import api from '../services/api';
-import type { AppSettings, ExportFormat } from '../types/api';
+import { useAppStore, type RagMode } from '../store/useAppStore';
 
-const RAG_MODES = [
+const RAG_MODES: Array<{ value: RagMode; label: string; description: string }> = [
   {
     value: 'hybrid',
-    label: 'Hybrid Vector + graph traversal (recommended)',
-    description: 'Uses local embeddings first, then graph neighbors for context expansion.',
+    label: 'Hybrid',
+    description: 'Vector + graph traversal (recommended) — uses local embeddings first, then graph neighbors for context expansion.',
   },
   {
     value: 'local',
-    label: 'Local Vector similarity only',
-    description: 'Fastest path for tight, semantically-similar note retrieval.',
+    label: 'Local',
+    description: 'Vector similarity only — fastest path for tight, semantically-similar note retrieval.',
   },
   {
     value: 'global',
-    label: 'Global Graph-wide community search',
-    description: 'Best for discovery across distant areas of the vault graph.',
+    label: 'Global',
+    description: 'Graph-wide community search — best for discovery across distant areas of the vault graph.',
   },
-] as const;
-
-const EXPORT_FORMATS: Array<{ value: ExportFormat; label: string }> = [
-  { value: 'markdown', label: 'Markdown ZIP' },
-  { value: 'json', label: 'JSON' },
 ];
 
 function SectionHeader({ icon, title, status }: { icon: React.ReactNode; title: string; status?: React.ReactNode }) {
@@ -44,66 +40,52 @@ function SectionHeader({ icon, title, status }: { icon: React.ReactNode; title: 
   );
 }
 
-export default function SettingsPage() {
-  const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [exportFormat, setExportFormat] = useState<ExportFormat>('markdown');
-  const [exporting, setExporting] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [exportError, setExportError] = useState('');
-  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
-  const [selectedModel, setSelectedModel] = useState('');
-  const [syncStatus, setSyncStatus] = useState<'idle' | 'active' | 'error'>('idle');
-  const eventSourceRef = useRef<EventSource | null>(null);
+interface ProviderInfo {
+  provider: string;
+  model: string;
+  available: boolean;
+  models: string[];
+}
 
+export default function SettingsPage() {
+  const { ragMode, setRagMode } = useAppStore();
+
+  const [providerInfo, setProviderInfo] = useState<ProviderInfo | null>(null);
+  const [providerLoading, setProviderLoading] = useState(true);
+  const [providerError, setProviderError]   = useState(false);
+  const [selectedModel, setSelectedModel]   = useState('');
+  const [saveState, setSaveState]           = useState<'idle' | 'saving' | 'saved'>('idle');
+
+  const [exportFormat, setExportFormat]     = useState<'markdown' | 'json'>('markdown');
+  const [exporting, setExporting]           = useState(false);
+  const [exportError, setExportError]       = useState('');
+
+  const [syncing, setSyncing]               = useState(false);
+  const [syncStatus, setSyncStatus]         = useState<'idle' | 'active' | 'error'>('idle');
+
+  // Load provider info
   useEffect(() => {
     let mounted = true;
-    api.getSettings()
+    setProviderLoading(true);
+    setProviderError(false);
+    (api as unknown as { getProviders: () => Promise<ProviderInfo> })
+      .getProviders()
       .then((data) => {
         if (!mounted) return;
-        setSettings(data);
-        setSelectedModel(data.ai.model);
+        setProviderInfo(data);
+        setSelectedModel(data.model);
       })
-      .catch(() => {})
-      .finally(() => {
-        if (!mounted) return;
-      });
-    return () => {
-      mounted = false;
-    };
+      .catch(() => { if (mounted) setProviderError(true); })
+      .finally(() => { if (mounted) setProviderLoading(false); });
+    return () => { mounted = false; };
   }, []);
-
-  useEffect(() => {
-    const es = new EventSource('/api/v1/sync/events');
-    eventSourceRef.current = es;
-
-    es.addEventListener('sync_started', () => setSyncStatus('active'));
-    es.addEventListener('sync_completed', () => setSyncStatus('idle'));
-    es.addEventListener('sync_error', () => setSyncStatus('error'));
-
-    return () => {
-      es.close();
-      eventSourceRef.current = null;
-    };
-  }, []);
-
-  const providerBadge = useMemo(() => {
-    if (!settings) return null;
-    if (settings.ai.connected) {
-      return (
-        <span className="ml-auto flex items-center gap-1 text-xs text-green-400">
-          <CircleCheck size={12} /> Connected
-        </span>
-      );
-    }
-    return <span className="ml-auto text-xs text-red-400">Disconnected</span>;
-  }, [settings]);
 
   const handleSaveModel = async () => {
-    if (!settings || selectedModel === settings.ai.model) return;
+    if (!providerInfo || selectedModel === providerInfo.model) return;
     setSaveState('saving');
     try {
-      const updated = await api.patchSettings({ ai: { model: selectedModel } });
-      setSettings(updated);
+      await (api as unknown as { setModel: (m: string) => Promise<unknown> }).setModel(selectedModel);
+      setProviderInfo((prev) => prev ? { ...prev, model: selectedModel } : prev);
       setSaveState('saved');
       window.setTimeout(() => setSaveState('idle'), 1400);
     } catch {
@@ -115,7 +97,7 @@ export default function SettingsPage() {
     setExporting(true);
     setExportError('');
     try {
-      const blob = await api.exportVault(exportFormat);
+      const blob = await (api as unknown as { exportVault: (f: string) => Promise<Blob> }).exportVault(exportFormat);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -132,7 +114,7 @@ export default function SettingsPage() {
   const handleSync = async () => {
     setSyncing(true);
     try {
-      await api.syncObsidian();
+      await (api as unknown as { syncObsidian: () => Promise<void> }).syncObsidian?.();
       setSyncStatus('idle');
     } catch {
       setSyncStatus('error');
@@ -141,18 +123,6 @@ export default function SettingsPage() {
     }
   };
 
-  if (!settings) {
-    return (
-      <div className="flex-1 overflow-y-auto px-6 py-6">
-        <div className="animate-pulse space-y-6">
-          <div className="h-4 w-32 rounded bg-bg-tertiary" />
-          <div className="h-24 rounded-xl bg-bg-elevated" />
-          <div className="h-24 rounded-xl bg-bg-elevated" />
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="flex-1 overflow-y-auto px-6 py-6 space-y-8 max-w-2xl">
       <div className="flex items-center gap-2">
@@ -160,40 +130,67 @@ export default function SettingsPage() {
         <h1 className="text-base font-semibold text-text-primary">Settings</h1>
       </div>
 
+      {/* Provider Section */}
       <section className="space-y-4">
-        <SectionHeader icon={<Cpu size={14} className="text-text-muted" />} title="AI Provider" status={providerBadge} />
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-            <span className="text-text-muted">Provider</span>
-            <span className="text-text-primary capitalize">{settings.ai.provider}</span>
+        <SectionHeader
+          icon={<Radio size={14} className="text-text-muted" />}
+          title="AI Provider"
+          status={
+            !providerLoading && providerInfo
+              ? providerInfo.available
+                ? <span className="flex items-center gap-1 text-xs text-green-400"><CircleCheck size={12} /> Connected</span>
+                : <span className="text-xs text-red-400">Unavailable</span>
+              : null
+          }
+        />
+
+        {providerLoading && (
+          <div className="flex items-center gap-2 text-sm text-text-muted">
+            <Loader2 size={14} className="animate-spin" />
+            <span>Loading provider info…</span>
           </div>
-          <div className="space-y-1.5">
-            <label htmlFor="model-select" className="text-xs text-text-muted">Active model</label>
-            <select
-              id="model-select"
-              value={selectedModel}
-              onChange={(e) => {
-                setSelectedModel(e.target.value);
-                setSaveState('idle');
-              }}
-              className="w-full rounded bg-bg-elevated border border-border text-sm px-3 py-1.5 text-text-primary focus:outline-none"
+        )}
+
+        {providerError && !providerLoading && (
+          <div className="flex items-center gap-2 text-sm text-red-400">
+            <XCircle size={14} />
+            <span>Could not load provider info.</span>
+          </div>
+        )}
+
+        {!providerLoading && !providerError && providerInfo && (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+              <span className="text-text-muted">Provider</span>
+              <span className="text-text-primary">{providerInfo.provider}</span>
+            </div>
+            <div className="space-y-1.5">
+              <label htmlFor="model-select" className="text-xs text-text-muted">Active model</label>
+              <select
+                id="model-select"
+                value={selectedModel}
+                onChange={(e) => { setSelectedModel(e.target.value); setSaveState('idle'); }}
+                className="w-full rounded bg-bg-elevated border border-border text-sm px-3 py-1.5 text-text-primary focus:outline-none"
+              >
+                {providerInfo.models.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            </div>
+            <button
+              type="button"
+              aria-label="Save model"
+              onClick={handleSaveModel}
+              disabled={saveState === 'saving' || selectedModel === providerInfo.model}
+              className="flex items-center gap-2 px-3 py-1.5 rounded bg-accent-teal/10 text-accent-teal text-xs hover:bg-accent-teal/20 disabled:opacity-40 transition-colors"
             >
-              {settings.ai.available_models.map((model) => (
-                <option key={model} value={model}>{model}</option>
-              ))}
-            </select>
+              {saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved' : 'Save model'}
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={handleSaveModel}
-            disabled={saveState === 'saving' || selectedModel === settings.ai.model}
-            className="flex items-center gap-2 px-3 py-1.5 rounded bg-accent-teal/10 text-accent-teal text-xs hover:bg-accent-teal/20 disabled:opacity-40 transition-colors"
-          >
-            {saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved' : 'Save model'}
-          </button>
-        </div>
+        )}
       </section>
 
+      {/* RAG Mode */}
       <section className="space-y-4">
         <SectionHeader icon={<Radio size={14} className="text-text-muted" />} title="RAG Mode" />
         <div className="space-y-3">
@@ -203,10 +200,8 @@ export default function SettingsPage() {
                 type="radio"
                 name="rag-mode"
                 value={mode.value}
-                checked={settings.rag.mode === mode.value}
-                onChange={() => {
-                  setSettings((prev) => prev ? { ...prev, rag: { ...prev.rag, mode: mode.value } } : prev);
-                }}
+                checked={ragMode === mode.value}
+                onChange={() => setRagMode(mode.value)}
                 className="mt-0.5"
               />
               <span className="space-y-0.5">
@@ -218,55 +213,54 @@ export default function SettingsPage() {
         </div>
       </section>
 
+      {/* Export */}
       <section className="space-y-4">
         <SectionHeader icon={<Download size={14} className="text-text-muted" />} title="Export Vault" />
-
         {exportError && (
           <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-xs px-3 py-2 rounded">
             {exportError}
           </div>
         )}
-
         <div className="rounded-xl border border-border bg-bg-elevated px-4 py-4 space-y-3">
-          <p className="text-sm text-text-muted">
-            Export your vault as either a Markdown ZIP or raw JSON snapshot.
-          </p>
+          <p className="text-sm text-text-muted">Export your vault as either a Markdown ZIP or raw JSON snapshot.</p>
           <div className="flex flex-wrap gap-4">
-            {EXPORT_FORMATS.map((format) => (
-              <label key={format.value} className="flex items-center gap-2 text-sm text-text-primary">
+            {(['markdown', 'json'] as const).map((fmt) => (
+              <label key={fmt} className="flex items-center gap-2 text-sm text-text-primary">
                 <input
                   type="radio"
                   name="export-format"
-                  value={format.value}
-                  checked={exportFormat === format.value}
-                  onChange={() => setExportFormat(format.value)}
+                  value={fmt}
+                  checked={exportFormat === fmt}
+                  onChange={() => setExportFormat(fmt)}
                 />
-                {format.label}
+                {fmt === 'markdown' ? 'Markdown ZIP' : 'JSON'}
               </label>
             ))}
           </div>
           <button
             type="button"
+            aria-label="Export Vault"
             onClick={handleExport}
             disabled={exporting}
             className="flex items-center gap-2 px-4 py-2 bg-bg-elevated hover:bg-bg-tertiary border border-border rounded text-sm text-text-primary disabled:opacity-50 transition-colors"
           >
             <Download size={14} />
-            {exporting ? 'Preparing export…' : 'Download export'}
+            {exporting ? 'Preparing export…' : 'Export Vault'}
           </button>
         </div>
       </section>
 
+      {/* Sync */}
       <section className="space-y-4">
         <SectionHeader
           icon={<RefreshCw size={14} className="text-text-muted" />}
           title="Vault Sync"
           status={
-            syncStatus === 'active' ? (
-              <span className="ml-auto text-xs text-accent-teal">Syncing…</span>
-            ) : syncStatus === 'error' ? (
-              <span className="ml-auto text-xs text-red-400">Error</span>
-            ) : null
+            syncStatus === 'active'
+              ? <span className="ml-auto text-xs text-accent-teal">Syncing…</span>
+              : syncStatus === 'error'
+              ? <span className="ml-auto text-xs text-red-400">Error</span>
+              : null
           }
         />
         <div className="rounded-xl border border-border bg-bg-elevated px-4 py-4 space-y-3">
@@ -285,6 +279,7 @@ export default function SettingsPage() {
         </div>
       </section>
 
+      {/* Security */}
       <section className="space-y-4">
         <SectionHeader icon={<Shield size={14} className="text-text-muted" />} title="Security" />
         <div className="rounded-xl border border-border bg-bg-elevated px-4 py-4 space-y-2 text-sm text-text-muted">
@@ -293,12 +288,7 @@ export default function SettingsPage() {
             <code className="text-xs bg-bg-tertiary px-1 py-0.5 rounded mx-1">gnosis_token</code>
             and attached as a bearer token for API requests.
           </p>
-          <p>
-            For production, rotate secrets regularly and serve the frontend over HTTPS only.
-          </p>
-          <p className="text-xs text-text-faint">
-            Active API base URL: <code className="text-xs bg-bg-tertiary px-1.5 py-0.5 rounded">{api.defaults.baseURL ?? '/api/v1'}</code>
-          </p>
+          <p>For production, rotate secrets regularly and serve the frontend over HTTPS only.</p>
         </div>
       </section>
     </div>

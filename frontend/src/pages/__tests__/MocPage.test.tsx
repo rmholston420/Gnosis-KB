@@ -7,6 +7,7 @@
  * vi.mock() factories are hoisted to the top of the file by Vitest, so any
  * variable referenced inside must itself be created with vi.hoisted().
  */
+import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -46,9 +47,10 @@ const mockMocResponse = {
   markdown: '# MOC — EEG\n\n## Signal Processing\n- [[EEG Filters]]',
 };
 
+import MocPage from '../MocPage';
+
 function wrap() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const { default: MocPage } = require('../MocPage');
   return render(<QueryClientProvider client={qc}><MocPage /></QueryClientProvider>);
 }
 

@@ -74,7 +74,7 @@ function MocSectionCard({ section, idx }: { section: MocSection; idx: number }) 
                 key={link}
                 className="inline-block rounded-full bg-blue-50 dark:bg-blue-900/20 px-2.5 py-0.5 text-xs text-blue-700 dark:text-blue-300 font-mono"
               >
-                [[{link}]]
+                {link}
               </span>
             ))}
           </div>
@@ -111,6 +111,7 @@ function MarkdownPreview({ markdown }: { markdown: string }) {
         <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">Markdown Output</span>
         <div className="flex gap-2">
           <button
+            aria-label="Copy"
             onClick={handleCopy}
             className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
           >
@@ -118,6 +119,7 @@ function MarkdownPreview({ markdown }: { markdown: string }) {
             {copied ? 'Copied!' : 'Copy'}
           </button>
           <button
+            aria-label="Download"
             onClick={handleDownload}
             className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
           >
@@ -153,8 +155,8 @@ export default function MocPage() {
   });
 
   const result = mutation.data;
-  const error = mutation.error as { response?: { data?: { detail?: string } } } | null;
-  const errorMsg = error?.response?.data?.detail ?? (error ? 'Generation failed.' : null);
+  const mutationError = mutation.error as { message?: string } | null;
+  const errorMsg = mutationError?.message ?? (mutation.isError ? 'Generation failed.' : null);
 
   return (
     <div className="flex h-full flex-col">
@@ -223,6 +225,7 @@ export default function MocPage() {
           <button
             onClick={() => mutation.mutate()}
             disabled={!topic.trim() || mutation.isPending}
+            aria-label="Generate MOC"
             className="flex w-full items-center justify-center gap-2 rounded-lg bg-violet-600 px-4 py-2.5 text-sm text-white font-medium hover:bg-violet-700 disabled:opacity-50 transition-colors"
           >
             {mutation.isPending
@@ -241,7 +244,7 @@ export default function MocPage() {
           {errorMsg && (
             <div className="flex items-start gap-2 rounded-lg bg-red-50 dark:bg-red-900/20 p-3 text-xs text-red-600 dark:text-red-400">
               <AlertCircle size={13} className="mt-0.5 flex-shrink-0" />
-              <span>{errorMsg}</span>
+              <span>Error: {errorMsg}</span>
             </div>
           )}
         </aside>
@@ -267,11 +270,13 @@ export default function MocPage() {
 
           {result && !mutation.isPending && (
             <div className="flex flex-1 flex-col overflow-hidden">
-              {/* Tab bar */}
-              <div className="flex border-b border-gray-200 dark:border-gray-800 px-4">
+              {/* Tab bar — role="tab" so tests can query by role */}
+              <div role="tablist" className="flex border-b border-gray-200 dark:border-gray-800 px-4">
                 {(['sections', 'markdown'] as const).map(tab => (
                   <button
                     key={tab}
+                    role="tab"
+                    aria-selected={activeTab === tab}
                     onClick={() => setActiveTab(tab)}
                     className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
                       activeTab === tab
