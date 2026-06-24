@@ -2,30 +2,31 @@
  * NoteEditorPage
  * ==============
  * Full note editor with:
- *   - SplitPane: left = editor, right = AI sidebar + backlinks
+ *   - SplitPane: left = editor/preview, right = AI sidebar + backlinks
  *   - FrontmatterPanel: collapsible YAML frontmatter editor
  *   - BacklinksPanel: incoming wikilinks list
  *   - AiSidebar: AI tools (summary, link/tag suggestions, critique)
  *   - WikilinkAutocomplete: floating autocomplete when user types [[
  *   - NoteTemplateGallery: template picker for new notes
+ *   - Edit / Preview toggle: live Markdown preview with wikilink resolution
  */
 
-import React, { useRef, useState, useCallback } from 'react';
+import React, { useRef, useState, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, PanelRight, PanelRightClose } from 'lucide-react';
+import { ArrowLeft, PanelRight, PanelRightClose, Eye, Pencil } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import api from '../services/api';
 import NoteEditor from '../components/NoteEditor';
 import { useAppStore }          from '../store/useAppStore';
-import { useEditorStore }       from '../store/editorStore';
 import { SplitPane }            from '../components/layout/SplitPane';
 import { FrontmatterPanel, type Frontmatter } from '../components/editor/FrontmatterPanel';
 import { BacklinksPanel }       from '../components/editor/BacklinksPanel';
 import { AiSidebar }            from '../components/ai/AiSidebar';
+import { MarkdownPreview }      from '../components/shared/MarkdownPreview';
 import WikilinkAutocomplete, { useWikilinkDetector } from '../components/editor/WikilinkAutocomplete';
 import { NoteTemplateGallery } from '../components/notes/NoteTemplateGallery';
 import type { NoteTemplate }   from '../components/notes/NoteTemplateGallery';
-import { Loader2 }             from 'lucide-react';
 import type { Note, NoteCreate, NoteType, LinkSuggestion } from '../types';
 
 // ---- helpers ---------------------------------------------------------------
@@ -51,6 +52,8 @@ export default function NoteEditorPage() {
 
   // Right-panel (AI + backlinks) visibility
   const [showRightPanel, setShowRightPanel] = useState(true);
+  // Edit vs Preview mode
+  const [previewMode, setPreviewMode] = useState(false);
 
   // ---- Template gallery (new-note flow) -----------------------------------
   const [showTemplateGallery, setShowTemplateGallery] = useState(!id);
@@ -81,7 +84,25 @@ export default function NoteEditorPage() {
     queryKey: ['note', id],
     queryFn:  () => api.getNote(id!) as Promise<Note>,
     enabled:  !!id,
+    onSuccess: (n: Note) => {
+      // Initialise editor content from server on first load
+      if (!bodyValue) setBodyValue(n.body ?? '');
+    },
   });
+
+  // All note titles for wikilink resolution in preview mode
+  const { data: allNotes } = useQuery<{ items: Note[] }>({
+    queryKey: ['notes'],
+    queryFn:  () => api.listNotes() as Promise<{ items: Note[] }>,
+  });
+
+  const titleToId = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const n of (allNotes?.items ?? [])) {
+      if (n.title) map[n.title] = n.note_id ?? n.id;
+    }
+    return map;
+  }, [allNotes]);
 
   const createMutation = useMutation({
     mutationFn: (data: NoteCreate) => api.createNote(data) as Promise<Note>,
@@ -181,23 +202,60 @@ export default function NoteEditorPage() {
           />
         </div>
 
-        {/* Editor */}
-        <div className="flex-1 overflow-hidden relative">
-          <NoteEditor
-            note={blankNote}
-            onSave={saveHandler}
-            isLoading={isPending}
-            onBodyChange={setBodyValue}
-            textareaRef={textareaRef}
-          />
+        {/* Edit / Preview toggle toolbar */}
+        <div className="flex-shrink-0 px-3 py-1.5 border-b border-border flex items-center gap-1">
+          <button
+            onClick={() => setPreviewMode(false)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+              !previewMode
+                ? 'bg-bg-elevated text-text-primary'
+                : 'text-text-muted hover:text-text-primary'
+            }`}
+            aria-pressed={!previewMode}
+          >
+            <Pencil size={11} /> Edit
+          </button>
+          <button
+            onClick={() => setPreviewMode(true)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+              previewMode
+                ? 'bg-bg-elevated text-text-primary'
+                : 'text-text-muted hover:text-text-primary'
+            }`}
+            aria-pressed={previewMode}
+          >
+            <Eye size={11} /> Preview
+          </button>
+        </div>
 
-          {wikilinkQuery !== null && (
-            <WikilinkAutocomplete
-              anchorRect={new DOMRect()}
-              query={wikilinkQuery}
-              onSelect={(title: string) => insertWikilink(title)}
-              onClose={() => insertWikilink('')}
-            />
+        {/* Editor or Preview */}
+        <div className="flex-1 overflow-hidden relative">
+          {previewMode ? (
+            <div className="h-full overflow-y-auto p-4">
+              <MarkdownPreview
+                content={bodyValue || blankNote.body || ''}
+                titleToId={titleToId}
+                className="gnosis-prose"
+              />
+            </div>
+          ) : (
+            <>
+              <NoteEditor
+                note={blankNote}
+                onSave={saveHandler}
+                isLoading={isPending}
+                onBodyChange={setBodyValue}
+                textareaRef={textareaRef}
+              />
+              {wikilinkQuery !== null && (
+                <WikilinkAutocomplete
+                  anchorRect={new DOMRect()}
+                  query={wikilinkQuery}
+                  onSelect={(title: string) => insertWikilink(title)}
+                  onClose={() => insertWikilink('')}
+                />
+              )}
+            </>
           )}
         </div>
       </div>
