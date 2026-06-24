@@ -538,22 +538,14 @@ async def test_daily_review_with_notes_json_response():
 # ===========================================================================
 # ai.py — stream_chat SSE (lines 556-595)
 #
-# _qdrant_rag_stream is an async generator function. When patching it,
-# use `return_value` with an async generator object, NOT `side_effect`
-# (side_effect replaces the callable but is called with (message, owner_ids,
-# mode) positional args which confuses the patch). Use a simple wrapper that
-# returns a pre-built async generator.
+# CRITICAL: stream_chat returns a StreamingResponse whose body_iterator is
+# an async generator (event_generator). The generator body does NOT run
+# until the iterator is consumed. This means any patches applied BEFORE
+# calling stream_chat will have EXITED by the time body_iterator is drained.
+#
+# Fix: keep the patch context alive while consuming body_iterator by
+# collecting chunks INSIDE the `with patch(...)` block.
 # ===========================================================================
-
-
-async def _collect_streaming_async(response) -> list[str]:
-    chunks = []
-    async for chunk in response.body_iterator:
-        if isinstance(chunk, bytes):
-            chunks.append(chunk.decode())
-        else:
-            chunks.append(chunk)
-    return chunks
 
 
 @pytest.mark.asyncio
@@ -569,6 +561,7 @@ async def test_stream_chat_qdrant_path_v2():
     user = MagicMock()
     user.id = 1
 
+    # Patches must stay active while body_iterator is consumed
     with (
         patch("gnosis.routers.ai.graph_rag") as mock_gr,
         patch("gnosis.routers.ai.llm_provider") as mock_llm,
@@ -579,8 +572,11 @@ async def test_stream_chat_qdrant_path_v2():
         response = await stream_chat(
             message="test", mode="hybrid", session=db, current_user=user, owner_ids={1}
         )
+        # Consume iterator INSIDE patch context so mock is still active
+        chunks = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk if isinstance(chunk, str) else chunk.decode())
 
-    chunks = await _collect_streaming_async(response)
     full = "".join(chunks)
     assert "[DONE]" in full
     assert "hello" in full
@@ -604,8 +600,10 @@ async def test_stream_chat_no_provider_emits_error():
         response = await stream_chat(
             message="test", mode="hybrid", session=db, current_user=user, owner_ids={1}
         )
+        chunks = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk if isinstance(chunk, str) else chunk.decode())
 
-    chunks = await _collect_streaming_async(response)
     full = "".join(chunks)
     assert "No AI provider" in full
     assert "[DONE]" in full
@@ -634,8 +632,10 @@ async def test_stream_chat_exception_emits_error_event_v2():
         response = await stream_chat(
             message="test", mode="hybrid", session=db, current_user=user, owner_ids={1}
         )
+        chunks = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk if isinstance(chunk, str) else chunk.decode())
 
-    chunks = await _collect_streaming_async(response)
     full = "".join(chunks)
     assert "boom" in full
     assert "[DONE]" in full
@@ -922,7 +922,6 @@ def test_search_notes_via_http():
     from gnosis.database import get_db
     from gnosis.models.user import User
     from gnosis.routers.notes import router
-    from datetime import datetime
 
     app = FastAPI()
     app.include_router(router, prefix="/api/v1")
@@ -974,12 +973,14 @@ def test_search_notes_via_http():
 # ===========================================================================
 # review.py — enroll card (lines 145-153, 156)
 #
-# enroll_note is POST /{note_id}/enroll and returns HTTP 201 on creation.
-# The existing-card branch returns 200 (model_validate on existing card).
-# _get_card_or_404 uses result.scalars().one_or_none().
-# submit_review first call uses scalars().one_or_none() (card),
-# second call uses scalar_one_or_none() (note).
-# Use _make_card() so ReviewCardRead.model_validate() has proper typed fields.
+# FACTS from the source:
+#   - enroll_note decorator: status_code=status.HTTP_201_CREATED
+#   - FastAPI applies the decorator status_code to ALL non-Response returns,
+#     including the early-return existing-card branch. Both branches → 201.
+#   - ReviewEnroll has required field `note_id: str`. Must include in payload.
+#   - Both DB calls in enroll_note use result.scalar_one_or_none().
+#   - _get_card_or_404 (used by submit_review) uses result.scalar_one_or_none()
+#     (not scalars().one_or_none() — review.py line 75 shows scalar_one_or_none).
 # ===========================================================================
 
 
@@ -1001,12 +1002,16 @@ def test_review_enroll_note_not_found():
     app.dependency_overrides[get_db] = _fake_db
 
     client = TestClient(app, raise_server_exceptions=False)
-    resp = client.post("/api/v1/review/missing-note/enroll", json={})
+    # ReviewEnroll.note_id is required — must be present in body
+    resp = client.post(
+        "/api/v1/review/missing-note/enroll",
+        json={"note_id": "missing-note"},
+    )
     assert resp.status_code == 404
 
 
 def test_review_enroll_existing_card_returns_it():
-    """Lines 148-150: card already exists → returned as 200 (model_validate)."""
+    """Lines 148-150: card already exists → returned as 201 (decorator status_code)."""
     from gnosis.database import get_db
     from gnosis.routers.review import router
 
@@ -1036,9 +1041,12 @@ def test_review_enroll_existing_card_returns_it():
     app.dependency_overrides[get_db] = _fake_db
 
     client = TestClient(app)
-    resp = client.post("/api/v1/review/note-1/enroll", json={})
-    # existing card branch returns 200 (not 201)
-    assert resp.status_code == 200
+    resp = client.post(
+        "/api/v1/review/note-1/enroll",
+        json={"note_id": "note-1"},  # required field
+    )
+    # FastAPI decorator status_code=201 applies to ALL returns incl. early return
+    assert resp.status_code == 201
     assert resp.json()["note_id"] == "note-1"
 
 
@@ -1051,9 +1059,6 @@ def test_review_submit_updates_note_last_reviewed():
     app.include_router(router, prefix="/api/v1")
 
     card = _make_card(note_id="note-1")
-    # card.note is accessed by _card_to_with_note but submit_review does not
-    # call _card_to_with_note; it returns ReviewCardRead.model_validate(card).
-    # _get_card_or_404 uses result.scalars().one_or_none()
     card.note = MagicMock()
     card.note.title = "Test Note"
     card.note.body = "Body"
@@ -1073,22 +1078,16 @@ def test_review_submit_updates_note_last_reviewed():
             call[0] += 1
             r = MagicMock()
             if idx == 0:
-                # _get_card_or_404: result.scalars().one_or_none()
-                r.scalars.return_value.one_or_none.return_value = card
-                # also set scalar_one_or_none for safety
+                # _get_card_or_404 uses result.scalar_one_or_none()
                 r.scalar_one_or_none.return_value = card
             else:
-                # Note lookup: result.scalar_one_or_none()
+                # Note lookup also uses result.scalar_one_or_none()
                 r.scalar_one_or_none.return_value = note
             return r
 
         db.execute = _execute
         db.commit = AsyncMock()
-
-        async def _refresh(obj):
-            pass
-
-        db.refresh = AsyncMock(side_effect=_refresh)
+        db.refresh = AsyncMock()
         yield db
 
     app.dependency_overrides[get_db] = _fake_db
@@ -1100,9 +1099,6 @@ def test_review_submit_updates_note_last_reviewed():
 
 # ===========================================================================
 # users.py — update_grant (lines 343-351)
-#
-# UpdateGrantRequest has field `permission` (not `role`). `role` is a
-# @property that normalises the permission string. Pass permission= not role=.
 # ===========================================================================
 
 
@@ -1120,7 +1116,7 @@ async def test_update_grant_member_not_found_404():
     session = AsyncMock()
     session.execute = AsyncMock(return_value=r)
 
-    req = UpdateGrantRequest(permission="editor")  # permission=, not role=
+    req = UpdateGrantRequest(permission="editor")
     with pytest.raises(Exception) as exc_info:
         await update_grant(grant_id="g1", req=req, session=session, current_user=user)
     assert "404" in str(exc_info.value)
@@ -1142,12 +1138,12 @@ async def test_update_grant_not_vault_owner_403():
     member_result.scalar_one_or_none.return_value = member_row
 
     vault_result = MagicMock()
-    vault_result.scalar_one_or_none.return_value = None  # user doesn't own vault
+    vault_result.scalar_one_or_none.return_value = None
 
     session = AsyncMock()
     session.execute = AsyncMock(side_effect=[member_result, vault_result])
 
-    req = UpdateGrantRequest(permission="viewer")  # permission=, not role=
+    req = UpdateGrantRequest(permission="viewer")
     with pytest.raises(Exception) as exc_info:
         await update_grant(grant_id="g1", req=req, session=session, current_user=user)
     assert "403" in str(exc_info.value)
@@ -1193,7 +1189,7 @@ async def test_revoke_grant_not_vault_owner_403():
     member_result.scalar_one_or_none.return_value = member_row
 
     vault_result = MagicMock()
-    vault_result.scalar_one_or_none.return_value = None  # not owner
+    vault_result.scalar_one_or_none.return_value = None
 
     session = AsyncMock()
     session.execute = AsyncMock(side_effect=[member_result, vault_result])
