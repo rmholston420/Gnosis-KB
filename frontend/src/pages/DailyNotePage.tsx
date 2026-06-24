@@ -1,46 +1,47 @@
-import { useState, useEffect } from 'react';
+/**
+ * DailyNotePage — today’s daily journal note.
+ * Fetches or creates the daily note via api.getDailyNote() and
+ * opens it in the editor.
+ */
+import React from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import api from '../services/api';
+import { today } from '../lib/dateUtils';
 import type { Note } from '../types';
-import { Loader2, CalendarDays } from 'lucide-react';
 
 export default function DailyNotePage() {
   const navigate = useNavigate();
-  const [note, setNote] = useState<Note | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const dateStr  = today();
 
-  useEffect(() => {
-    let cancelled = false;
-    setIsLoading(true);
-    (api.getDailyNote() as Promise<Note>)
-      .then((n) => {
-        if (cancelled) return;
-        setNote(n);
-        navigate(`/notes/${n.id}`, { replace: true });
-      })
-      .catch(() => { if (!cancelled) setIsLoading(false); })
-      .finally(() => { if (!cancelled) setIsLoading(false); });
-    return () => { cancelled = true; };
-  }, [navigate]);
-
-  const today = new Date().toLocaleDateString('en-US', {
-    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+  const { data: note, isLoading, isError } = useQuery<Note>({
+    queryKey: ['daily', dateStr],
+    queryFn:  () => api.getDailyNote(dateStr) as Promise<Note>,
   });
 
-  if (isLoading || !note) {
+  if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="animate-spin text-text-muted" size={24} data-testid="loading" />
+      <div className="flex items-center justify-center h-full">
+        <span className="text-gnosis-muted text-sm">Loading daily note…</span>
       </div>
     );
   }
 
-  return (
-    <div className="h-full flex flex-col">
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-border flex-shrink-0 bg-bg-primary">
-        <CalendarDays size={15} className="text-text-muted" />
-        <span className="text-xs font-medium text-text-muted">{today}</span>
+  if (isError || !note) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-4">
+        <p className="text-gnosis-muted text-sm">Could not load today’s note.</p>
+        <button
+          onClick={() => navigate('/notes/new')}
+          className="px-4 py-2 rounded-lg bg-gnosis-accent text-white text-sm"
+        >
+          Create new note
+        </button>
       </div>
-    </div>
-  );
+    );
+  }
+
+  // Redirect to the full note editor
+  navigate(`/notes/${note.note_id}`, { replace: true });
+  return null;
 }
