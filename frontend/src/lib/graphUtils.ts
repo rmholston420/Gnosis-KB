@@ -1,109 +1,82 @@
 /**
  * Graph data transform utilities for react-force-graph-2d.
+ * Converts raw API GraphData into the shape the renderer expects.
  */
 import type { GraphData, GraphNode, GraphEdge } from '../types';
 
+/** Node color palette keyed by note_type. */
 export const NODE_COLORS: Record<string, string> = {
   permanent: '#3b82f6',
-  fleeting: '#94a3b8',
-  project: '#f59e0b',
-  area: '#10b981',
-  resource: '#8b5cf6',
-  journal: '#ec4899',
-  moc: '#ef4444',
-  literature: '#f97316',
-  default: '#6b7280',
+  fleeting:  '#94a3b8',
+  project:   '#f59e0b',
+  area:      '#10b981',
+  resource:  '#8b5cf6',
+  journal:   '#ec4899',
+  moc:       '#ef4444',
+  literature:'#f97316',
+  default:   '#6b7280',
 };
 
+/** Returns the fill color for a graph node based on its note_type. */
 export function nodeColor(node: GraphNode): string {
-  return NODE_COLORS[node.type ?? 'default'] ?? NODE_COLORS.default;
+  return NODE_COLORS[node.type ?? 'default'] ?? NODE_COLORS['default'];
 }
 
+/**
+ * Returns the visual size (area) of a node.
+ * Scaled by incoming link count so hub nodes appear larger.
+ */
 export function nodeVal(node: GraphNode): number {
-  return Math.sqrt((node.incoming_link_count ?? 0) + 1) * 3;
+  const links = (node as GraphNode & { incoming_link_count?: number }).incoming_link_count ?? 0;
+  return Math.max(4, 4 + links * 2);
 }
 
-export function toForceGraphData(raw: GraphData): {
-  nodes: Array<GraphNode & { id: string }>;
-  links: Array<{ source: string; target: string; type: string }>;
+/** Map cluster index → color from the NODE_COLORS palette. */
+export function clusterColor(idx?: number): string {
+  const palette = Object.values(NODE_COLORS);
+  return palette[(idx ?? 0) % palette.length];
+}
+
+export interface ForceGraphNode {
+  id:                  string;
+  title:               string;
+  type:                string;
+  incoming_link_count: number;
+  cluster_id?:         number;
+  x?: number;
+  y?: number;
+}
+
+export interface ForceGraphLink {
+  source: string;
+  target: string;
+  type:   string;
+}
+
+/**
+ * toForceGraphData converts the raw API GraphData (nodes + edges) into the
+ * { nodes, links } shape expected by react-force-graph-2d.
+ *
+ * Edge endpoints are stored as plain string IDs so the library can resolve
+ * them to node objects internally — do NOT pass node objects here.
+ */
+export function toForceGraphData(graph: GraphData): {
+  nodes: ForceGraphNode[];
+  links: ForceGraphLink[];
 } {
-  return {
-    nodes: raw.nodes.map((n) => ({ ...n, id: n.note_id })),
-    links: raw.edges.map((e: GraphEdge) => ({
-      source: e.source_id,
-      target: e.target_id,
-      type: e.link_type ?? 'wikilink',
-    })),
-  };
-}
+  const nodes: ForceGraphNode[] = (graph.nodes ?? []).map((n: GraphNode) => ({
+    id:                  n.note_id ?? n.id ?? '',
+    title:               n.title ?? '',
+    type:                n.type ?? n.note_type ?? 'default',
+    incoming_link_count: (n as GraphNode & { incoming_link_count?: number }).incoming_link_count ?? 0,
+    cluster_id:          (n as GraphNode & { cluster_id?: number }).cluster_id,
+  }));
 
-export const toForceGraph = toForceGraphData;
+  const links: ForceGraphLink[] = (graph.edges ?? []).map((e: GraphEdge) => ({
+    source: e.source_id ?? e.source ?? '',
+    target: e.target_id ?? e.target ?? '',
+    type:   e.type ?? 'wikilink',
+  }));
 
-export function filterToNeighborhood(
-  data: ReturnType<typeof toForceGraphData>,
-  focusId: string,
-  hops = 1,
-): ReturnType<typeof toForceGraphData> {
-  let frontier = new Set<string>([focusId]);
-  const visited = new Set<string>([focusId]);
-
-  for (let h = 0; h < hops; h += 1) {
-    const nextFrontier = new Set<string>();
-    for (const link of data.links) {
-      if (frontier.has(link.source) && !visited.has(link.target)) {
-        nextFrontier.add(link.target);
-      }
-      if (frontier.has(link.target) && !visited.has(link.source)) {
-        nextFrontier.add(link.source);
-      }
-    }
-    nextFrontier.forEach((id) => visited.add(id));
-    frontier = nextFrontier;
-    if (frontier.size === 0) break;
-  }
-
-  return {
-    nodes: data.nodes.filter((n) => visited.has(n.id)),
-    links: data.links.filter((l) => visited.has(l.source) && visited.has(l.target)),
-  };
-}
-
-export function getNeighbours(
-  data: ReturnType<typeof toForceGraphData>,
-  nodeId: string,
-): Array<GraphNode & { id: string }> {
-  const neighbourIds = new Set<string>();
-  for (const link of data.links) {
-    if (link.source === nodeId) neighbourIds.add(link.target);
-    if (link.target === nodeId) neighbourIds.add(link.source);
-  }
-  return data.nodes.filter((n) => neighbourIds.has(n.id));
-}
-
-export function computeGraphStats(data: ReturnType<typeof toForceGraphData>): {
-  nodeCount: number;
-  linkCount: number;
-  avgDegree: number;
-  orphanCount: number;
-} {
-  const nodeCount = data.nodes.length;
-  const linkCount = data.links.length;
-  const degree = new Map<string, number>();
-  data.nodes.forEach((n) => degree.set(n.id, 0));
-  data.links.forEach((l) => {
-    degree.set(l.source, (degree.get(l.source) ?? 0) + 1);
-    degree.set(l.target, (degree.get(l.target) ?? 0) + 1);
-  });
-  const avgDegree = nodeCount ? (linkCount * 2) / nodeCount : 0;
-  const orphanCount = [...degree.values()].filter((d) => d === 0).length;
-  return { nodeCount, linkCount, avgDegree, orphanCount };
-}
-
-export function clusterColor(clusterId: number): string {
-  const palette = [
-    '#3b82f6', '#10b981', '#f59e0b', '#ef4444',
-    '#8b5cf6', '#ec4899', '#14b8a6', '#f97316',
-    '#6366f1', '#84cc16',
-  ];
-  return palette[clusterId % palette.length];
+  return { nodes, links };
 }

@@ -1,27 +1,44 @@
 /**
- * api/graph.ts — typed API client for graph endpoints.
+ * api/graph.ts — typed wrappers for the knowledge graph endpoints.
+ *
+ * Used by:
+ *   GraphPage   (LightRAG tab entity list + health check)
+ *   graphUtils  (type imports)
  */
-import type { GraphData, GraphEntitySummary } from '../types';
 
-const BASE = (import.meta as unknown as { env: Record<string, string> }).env?.VITE_API_URL ?? '';
-
-async function req<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-  });
-  if (!res.ok) throw new Error(`Graph API ${res.status}: ${path}`);
-  return res.json() as Promise<T>;
+export interface GraphEntitySummary {
+  id:          string;
+  label:       string;
+  type?:       string;
+  description?: string;
 }
 
-export const graphApi = {
-  /** Full note-link graph (nodes + edges). */
-  getFullGraph:      () => req<GraphData>('/api/graph'),
+export interface LightRagGraphHealth {
+  node_count:     number;
+  edge_count:     number;
+  is_empty:       boolean;
+  last_updated?:  string;
+}
 
-  /** LightRAG knowledge graph (nodes + edges). */
-  getLightRagGraph:  () => req<GraphData>('/api/lightrag/graph'),
+const BASE = '/api/v1';
 
-  /** Named entity summaries from LightRAG. */
-  getGraphEntities:  () => req<GraphEntitySummary[]>('/api/lightrag/entities'),
-};
+/** Fetch the full wikilink graph (nodes + edges). */
+export async function fetchGraph(): Promise<{ nodes: unknown[]; edges: unknown[] }> {
+  const res = await fetch(`${BASE}/graph/full`);
+  if (!res.ok) throw new Error(`Graph fetch failed: ${res.status}`);
+  return res.json() as Promise<{ nodes: unknown[]; edges: unknown[] }>;
+}
 
-export default graphApi;
+/** Fetch LightRAG entity summaries for the entity-filter panel. */
+export async function getGraphEntities(): Promise<{ entities: GraphEntitySummary[] }> {
+  const res = await fetch(`${BASE}/graph/entities`);
+  if (!res.ok) throw new Error(`Entities fetch failed: ${res.status}`);
+  return res.json() as Promise<{ entities: GraphEntitySummary[] }>;
+}
+
+/** Fetch LightRAG knowledge-graph health / stats. */
+export async function getLightRagGraph(): Promise<LightRagGraphHealth> {
+  const res = await fetch(`${BASE}/graph/lightrag`);
+  if (!res.ok) throw new Error(`LightRAG graph fetch failed: ${res.status}`);
+  return res.json() as Promise<LightRagGraphHealth>;
+}

@@ -1,103 +1,129 @@
 /**
  * GraphView2D — react-force-graph-2d wrapper.
- * Renders the full vault knowledge graph with clustering, node labels,
- * hover highlights, and click-to-focus behaviour.
+ * Renders the vault knowledge graph as a WebGL-accelerated force-directed canvas.
+ * Accepts external nodes/links/highlightIds so GraphPage controls filtering.
+ * Exposes a ForwardRef so GraphPage can drive zoom/center via graphRef.
  */
-import React, { useRef, useCallback, useState } from 'react';
-import ForceGraph2D, { type ForceGraphMethods } from 'react-force-graph-2d';
-import { useFullGraph } from '../../hooks/useGraph';
-import { toForceGraphData, nodeColor, nodeVal } from '../../lib/graphUtils';
+import React, { useRef, useCallback } from 'react';
+import ForceGraph2D, { type ForceGraphMethods, type NodeObject, type LinkObject } from 'react-force-graph-2d';
+import { nodeColor, nodeVal, NODE_COLORS } from '../../lib/graphUtils';
 import type { GraphNode } from '../../types';
 
-interface Props {
-  onNodeClick?: (node: GraphNode) => void;
-  onError?: (err: Error) => void;
-  width?:  number;
-  height?: number;
+export interface ForceNode extends NodeObject {
+  id:                  string;
+  title:               string;
+  type:                string;
+  incoming_link_count: number;
+  cluster_id?:         number;
+  x?: number;
+  y?: number;
 }
 
-export function GraphView2D({ onNodeClick, onError, width = 800, height = 600 }: Props) {
-  const fgRef = useRef<ForceGraphMethods | undefined>(undefined);
-  const { data: rawGraph, isLoading, isError, error } = useFullGraph();
-  const [hovered, setHovered] = useState<string | null>(null);
-
-  // Propagate query errors to parent (GraphPage) so it can render error state
-  React.useEffect(() => {
-    if (isError && error && onError) {
-      onError(error as Error);
-    }
-  }, [isError, error, onError]);
-
-  const graphData = rawGraph ? toForceGraphData(rawGraph) : { nodes: [], links: [] };
-
-  const handleNodeClick = useCallback(
-    (node: unknown) => {
-      const n = node as GraphNode & { id: string };
-      fgRef.current?.centerAt(n.x, n.y, 800);
-      fgRef.current?.zoom(4, 800);
-      onNodeClick?.(n);
-    },
-    [onNodeClick],
-  );
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center" style={{ width, height }}>
-        <span className="text-gnosis-muted text-sm">Loading graph…</span>
-      </div>
-    );
-  }
-
-  // Error handled by parent via onError callback; render empty placeholder
-  if (isError) {
-    return (
-      <div className="flex items-center justify-center" style={{ width, height }}>
-        <span className="text-gnosis-muted text-sm">Graph unavailable.</span>
-      </div>
-    );
-  }
-
-  return (
-    <ForceGraph2D
-      ref={fgRef}
-      graphData={graphData}
-      width={width}
-      height={height}
-      nodeId="id"
-      nodeLabel="title"
-      nodeColor={(n) => nodeColor(n as GraphNode)}
-      nodeVal={(n)   => nodeVal(n as GraphNode)}
-      onNodeClick={handleNodeClick}
-      onNodeHover={(n) => setHovered(n ? (n as GraphNode & { id: string }).id : null)}
-      nodeCanvasObject={(node, ctx, globalScale) => {
-        const n      = node as GraphNode & { x: number; y: number; id: string };
-        const label  = n.title ?? n.id;
-        const size   = nodeVal(n);
-        const color  = nodeColor(n);
-        const isHov  = hovered === n.id;
-
-        ctx.beginPath();
-        ctx.arc(n.x, n.y, size, 0, 2 * Math.PI);
-        ctx.fillStyle   = color;
-        ctx.globalAlpha = isHov ? 1 : 0.85;
-        ctx.fill();
-        ctx.globalAlpha = 1;
-
-        if (globalScale >= 1.5 || isHov) {
-          const fontSize = Math.max(4, 12 / globalScale);
-          ctx.font        = `${fontSize}px sans-serif`;
-          ctx.textAlign   = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillStyle   = '#fff';
-          ctx.fillText(label, n.x, n.y + size + fontSize);
-        }
-      }}
-      nodeCanvasObjectMode={() => 'after'}
-      linkColor={() => 'rgba(156,163,175,0.4)'}
-      linkWidth={1}
-      backgroundColor="transparent"
-    />
-  );
+export interface ForceLink extends LinkObject {
+  source: string | ForceNode;
+  target: string | ForceNode;
+  type:   string;
 }
 
+interface GraphView2DProps {
+  nodes:          ForceNode[];
+  links:          ForceLink[];
+  highlightIds?:  Set<string>;
+  clusterMode?:   boolean;
+  showLabels?:    boolean;
+  onNodeClick?:   (node: ForceNode) => void;
+  onNodeHover?:   (node: ForceNode | null) => void;
+  width?:         number;
+  height?:        number;
+}
+
+/** Map cluster index to a color string. */
+function clusterColor(idx?: number): string {
+  const palette = Object.values(NODE_COLORS);
+  return palette[(idx ?? 0) % palette.length];
+}
+
+/**
+ * GraphView2D renders the knowledge graph.
+ * Node color encodes note type; node size encodes incoming link count.
+ */
+export const GraphView2D = React.forwardRef<ForceGraphMethods, GraphView2DProps>(
+  ({ nodes, links, highlightIds, clusterMode, showLabels = true, onNodeClick, onNodeHover, width, height }, ref) => {
+
+    const internalRef = useRef<ForceGraphMethods>(null);
+    const resolvedRef = (ref ?? internalRef) as React.RefObject<ForceGraphMethods>;
+
+    const getNodeColor = useCallback((node: NodeObject) => {
+      const n = node as ForceNode;
+      if (highlightIds && highlightIds.size > 0) {
+        if (!highlightIds.has(n.id)) return 'rgba(100,100,100,0.15)';
+      }
+      if (clusterMode) return clusterColor(n.cluster_id);
+      return nodeColor(n as unknown as GraphNode);
+    }, [highlightIds, clusterMode]);
+
+    const getNodeVal = useCallback((node: NodeObject) => {
+      return nodeVal(node as unknown as GraphNode);
+    }, []);
+
+    const handleNodeClick = useCallback((node: NodeObject) => {
+      onNodeClick?.(node as ForceNode);
+    }, [onNodeClick]);
+
+    const handleNodeHover = useCallback((node: NodeObject | null) => {
+      onNodeHover?.(node as ForceNode | null);
+    }, [onNodeHover]);
+
+    const paintNode = useCallback((
+      node: NodeObject,
+      ctx: CanvasRenderingContext2D,
+      globalScale: number,
+    ) => {
+      const n    = node as ForceNode;
+      const x    = n.x ?? 0;
+      const y    = n.y ?? 0;
+      const r    = Math.sqrt(getNodeVal(node)) * 1.5;
+      const col  = getNodeColor(node);
+
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, 2 * Math.PI);
+      ctx.fillStyle = col;
+      ctx.fill();
+
+      if (showLabels && globalScale >= 1.2) {
+        const fontSize = Math.max(8 / globalScale, 3);
+        ctx.font = `${fontSize}px Inter,sans-serif`;
+        ctx.fillStyle = '#e6edf3';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(n.title?.slice(0, 30) ?? '', x, y + r + fontSize);
+      }
+    }, [getNodeColor, getNodeVal, showLabels]);
+
+    return (
+      <ForceGraph2D
+        ref={resolvedRef}
+        graphData={{ nodes, links }}
+        nodeColor={getNodeColor}
+        nodeVal={getNodeVal}
+        linkWidth={(link) => (link as ForceLink).type === 'wikilink' ? 1 : 0.5}
+        linkDirectionalArrowLength={3}
+        linkDirectionalArrowRelPos={1}
+        linkColor={() => 'rgba(100,150,200,0.35)'}
+        nodeCanvasObject={paintNode}
+        nodeCanvasObjectMode={() => 'replace'}
+        onNodeClick={handleNodeClick}
+        onNodeHover={handleNodeHover}
+        nodeLabel={(node) => (node as ForceNode).title ?? ''}
+        enableNodeDrag
+        cooldownTicks={100}
+        width={width}
+        height={height}
+        backgroundColor="#0d1117"
+      />
+    );
+  },
+);
+
+GraphView2D.displayName = 'GraphView2D';
 export default GraphView2D;

@@ -1,102 +1,135 @@
 /**
  * GraphPage.test.tsx
- * ==================
- * GraphPage renders a single-canvas view (GraphView2D + GraphControls).
- * We stub the canvas-heavy sub-components and assert the controls and
- * overlay interactions that are actually present.
+ * Tests the full GraphPage component: tab switching, toolbar, stats, and
+ * LightRAG entity list.
  */
-import React from 'react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
-
-// ---------------------------------------------------------------------------
-// Stub GraphView2D — canvas/WebGL not available in jsdom
-// ---------------------------------------------------------------------------
-vi.mock('../../components/graph/GraphView2D', () => ({
-  GraphView2D: ({ onNodeClick }: { onNodeClick?: (n: unknown) => void }) =>
-    React.createElement('div', { 'data-testid': 'graph-view' },
-      React.createElement('button', {
-        'data-testid': 'node-btn',
-        onClick: () => onNodeClick && onNodeClick({ note_id: 'n1', title: 'EEG Note', note_type: 'permanent', status: 'evergreen', folder: '', word_count: 10, tag_count: 0, incoming_link_count: 1, outgoing_link_count: 0 }),
-      }, 'Simulate node click')
-    ),
-}));
-
-// Stub GraphControls — renders the real controls markup would need canvas
-vi.mock('../../components/graph/GraphControls', () => ({
-  GraphControls: () => React.createElement('div', { 'data-testid': 'graph-controls' }, 'Controls'),
-}));
-
-// Stub NodeDetailOverlay
-vi.mock('../../components/graph/NodeDetailOverlay', () => ({
-  NodeDetailOverlay: ({ node, onClose }: { node: { title: string }; onClose: () => void }) =>
-    React.createElement('div', { 'data-testid': 'node-detail' },
-      node.title,
-      React.createElement('button', { onClick: onClose }, 'Close')
-    ),
-}));
-
 import GraphPage from '../GraphPage';
+import * as apiModule from '../../services/api';
 
-function wrap() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={qc}>
-      <MemoryRouter>
-        <GraphPage />
-      </MemoryRouter>
+// ── Mock react-force-graph-2d so tests don't spin up WebGL ─────────────
+vi.mock('react-force-graph-2d', () => ({
+  default: vi.fn(() => <canvas data-testid="force-graph" />),
+}));
+
+// ── Silence ResizeObserver (jsdom doesn't have it) ─────────────────────
+global.ResizeObserver = class ResizeObserver {
+  observe()   {}
+  unobserve() {}
+  disconnect() {}
+};
+
+// ── Minimal graph fixture ──────────────────────────────────────────────
+const GRAPH_DATA = {
+  nodes: [
+    { note_id: 'n1', id: 'n1', title: 'Alpha', type: 'permanent', incoming_link_count: 2 },
+    { note_id: 'n2', id: 'n2', title: 'Beta',  type: 'fleeting',  incoming_link_count: 0 },
+  ],
+  edges: [
+    { source_id: 'n1', target_id: 'n2', type: 'wikilink' },
+  ],
+};
+
+const ENTITY_DATA = {
+  entities: [
+    { id: 'e1', label: 'Tibetan Buddhism', type: 'concept', description: 'Vajrayana tradition' },
+    { id: 'e2', label: 'Dzogchen',         type: 'practice' },
+  ],
+};
+
+const LIGHTRAG_HEALTH = { node_count: 42, edge_count: 108, is_empty: false };
+
+function makeClient() {
+  return new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+}
+
+function Wrapper({ children }: { children: React.ReactNode }) {
+  return (
+    <QueryClientProvider client={makeClient()}>
+      <MemoryRouter>{children}</MemoryRouter>
     </QueryClientProvider>
   );
 }
 
 beforeEach(() => {
-  vi.spyOn(Storage.prototype, 'getItem').mockReturnValue(null);
+  vi.spyOn(apiModule.default, 'getFullGraph').mockResolvedValue(GRAPH_DATA as never);
+  vi.spyOn(apiModule.default, 'getGraphEntities').mockResolvedValue(ENTITY_DATA as never);
+  vi.spyOn(apiModule.default, 'getLightRagGraph').mockResolvedValue(LIGHTRAG_HEALTH as never);
+  vi.spyOn(apiModule.default, 'triggerVaultSync').mockResolvedValue({ status: 'ok' } as never);
 });
 
-afterEach(() => {
-  vi.restoreAllMocks();
-});
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-describe('GraphPage — render', () => {
-  it('renders the graph view', () => {
-    wrap();
-    expect(screen.getByTestId('graph-view')).toBeInTheDocument();
+describe('GraphPage', () => {
+  it('renders the Knowledge Graph heading', async () => {
+    render(<GraphPage />, { wrapper: Wrapper });
+    expect(screen.getByText('Knowledge Graph')).toBeInTheDocument();
   });
 
-  it('renders the graph controls overlay', () => {
-    wrap();
-    expect(screen.getByTestId('graph-controls')).toBeInTheDocument();
+  it('shows Wikilinks and LightRAG Knowledge tabs', () => {
+    render(<GraphPage />, { wrapper: Wrapper });
+    expect(screen.getByRole('button', { name: /wikilinks/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /lightrag knowledge/i })).toBeInTheDocument();
   });
 
-  it('does not show node detail panel initially', () => {
-    wrap();
-    expect(screen.queryByTestId('node-detail')).toBeNull();
-  });
-});
-
-describe('GraphPage — node click', () => {
-  it('shows NodeDetailOverlay when a node is clicked', async () => {
-    wrap();
-    fireEvent.click(screen.getByTestId('node-btn'));
-    await waitFor(() =>
-      expect(screen.getByTestId('node-detail')).toBeInTheDocument()
-    );
-    expect(screen.getByText('EEG Note')).toBeInTheDocument();
+  it('renders the node filter toolbar input', () => {
+    render(<GraphPage />, { wrapper: Wrapper });
+    expect(screen.getByPlaceholderText(/filter nodes/i)).toBeInTheDocument();
   });
 
-  it('hides NodeDetailOverlay when close is clicked', async () => {
-    wrap();
-    fireEvent.click(screen.getByTestId('node-btn'));
-    await waitFor(() => screen.getByTestId('node-detail'));
-    fireEvent.click(screen.getByRole('button', { name: /close/i }));
-    await waitFor(() =>
-      expect(screen.queryByTestId('node-detail')).toBeNull()
-    );
+  it('renders Refresh button', () => {
+    render(<GraphPage />, { wrapper: Wrapper });
+    expect(screen.getByRole('button', { name: /refresh/i })).toBeInTheDocument();
+  });
+
+  it('shows node + edge stat badges after graph loads', async () => {
+    render(<GraphPage />, { wrapper: Wrapper });
+    await waitFor(() => {
+      expect(screen.getByText(/nodes/i)).toBeInTheDocument();
+      expect(screen.getByText(/edges/i)).toBeInTheDocument();
+    });
+  });
+
+  it('switches to LightRAG tab and shows entity filter input', async () => {
+    render(<GraphPage />, { wrapper: Wrapper });
+    fireEvent.click(screen.getByRole('button', { name: /lightrag knowledge/i }));
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText(/filter entities/i)).toBeInTheDocument();
+    });
+  });
+
+  it('renders LightRAG entity list after tab switch', async () => {
+    render(<GraphPage />, { wrapper: Wrapper });
+    fireEvent.click(screen.getByRole('button', { name: /lightrag knowledge/i }));
+    await waitFor(() => {
+      expect(screen.getByText('Tibetan Buddhism')).toBeInTheDocument();
+      expect(screen.getByText('Dzogchen')).toBeInTheDocument();
+    });
+  });
+
+  it('filters entity list by search term', async () => {
+    render(<GraphPage />, { wrapper: Wrapper });
+    fireEvent.click(screen.getByRole('button', { name: /lightrag knowledge/i }));
+    await waitFor(() => screen.getByText('Tibetan Buddhism'));
+    fireEvent.change(screen.getByPlaceholderText(/filter entities/i), {
+      target: { value: 'dzog' },
+    });
+    expect(screen.getByText('Dzogchen')).toBeInTheDocument();
+    expect(screen.queryByText('Tibetan Buddhism')).not.toBeInTheDocument();
+  });
+
+  it('filtering node list by query hides non-matching nodes from the canvas', async () => {
+    render(<GraphPage />, { wrapper: Wrapper });
+    await waitFor(() => screen.getByText(/nodes/i));
+    fireEvent.change(screen.getByPlaceholderText(/filter nodes/i), {
+      target: { value: 'Alpha' },
+    });
+    // After filtering, only 1 node should be shown in the stats badge
+    await waitFor(() => {
+      expect(screen.getByText(/1 nodes/i)).toBeInTheDocument();
+    });
   });
 });
