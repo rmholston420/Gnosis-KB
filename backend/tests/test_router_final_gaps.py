@@ -12,9 +12,6 @@ notes.py
 query.py  (PUT /saved/{id})
   160->166: payload.query valid -> sq.query updated
   166->168: payload.description is not None -> sq.description updated
-  Key: call update_saved() as a coroutine directly (same pattern as
-  test_query_router.py) so FastAPI response serialization is bypassed
-  entirely and a plain MagicMock return value is fine.
 
 users.py  (get_session + require_user)
   100: _serialize_user direct
@@ -183,11 +180,6 @@ class TestNotesUpdateOptionalFields:
 
 # ===========================================================================
 # query.py — 160->166 and 166->168
-#
-# Call update_saved() directly as a coroutine (same pattern as
-# test_query_router.py) to bypass FastAPI response-model serialization.
-# The function returns the raw ORM object; we never ask FastAPI to
-# encode it through SavedQueryRead, so MagicMock is safe here.
 # ===========================================================================
 
 
@@ -225,7 +217,7 @@ class TestQueryRouterUpdateSavedBranches:
                 sq_id=1,
                 payload=SavedQueryUpdate(query="tag:python"),
                 db=db,
-                current_user=sq,  # sq.id == 1 matches sq.owner_id == 1
+                current_user=sq,
             )
         assert result is sq
         assert sq.query == "tag:python"
@@ -242,7 +234,7 @@ class TestQueryRouterUpdateSavedBranches:
             sq_id=1,
             payload=SavedQueryUpdate(description="new desc"),
             db=db,
-            current_user=sq,  # sq.id == 1 matches sq.owner_id == 1
+            current_user=sq,
         )
         assert result is sq
         assert sq.description == "new desc"
@@ -274,32 +266,44 @@ class TestUsersSerializeUser:
 
 
 class TestUsersSerializeGrant:
+    """Direct unit tests for _serialize_grant.
+
+    Real signature:
+        _serialize_grant(member, vault, owner_email, owner_vault_display_name, member_email)
+    where member is a SharedVaultMember-like object and vault is a SharedVault-like object.
+    """
+
+    def _make_member(self, accepted_at=None):
+        m = MagicMock()
+        m.id = 7
+        m.vault_id = "vault-1"
+        m.member_id = 2
+        m.role = "viewer"
+        m.joined_at = accepted_at
+        return m
+
+    def _make_vault(self, owner_id=1):
+        v = MagicMock()
+        v.owner_id = owner_id
+        v.id = "vault-1"
+        return v
+
     def test_serialize_grant_with_accepted_at(self):
         from gnosis.routers.users import _serialize_grant
 
-        grant = MagicMock()
-        grant.id = 7
-        grant.owner_id = 1
-        grant.member_id = 2
-        grant.permission = "read"
-        grant.is_active = True
-        grant.accepted_at = datetime(2026, 1, 1, tzinfo=UTC)
-        result = _serialize_grant(grant, "o@x.com", "My Vault", "m@x.com")
+        member = self._make_member(accepted_at=datetime(2026, 1, 1, tzinfo=UTC))
+        vault = self._make_vault()
+        result = _serialize_grant(member, vault, "o@x.com", "My Vault", "m@x.com")
         assert result.id == 7
-        assert "2026-01-01" in result.accepted_at
+        assert "2026-01-01" in result.joined_at
 
     def test_serialize_grant_accepted_at_none(self):
         from gnosis.routers.users import _serialize_grant
 
-        grant = MagicMock()
-        grant.id = 8
-        grant.owner_id = 1
-        grant.member_id = 2
-        grant.permission = "read"
-        grant.is_active = True
-        grant.accepted_at = None
-        result = _serialize_grant(grant, "o@x.com", None, "m@x.com")
-        assert result.accepted_at is None
+        member = self._make_member(accepted_at=None)
+        vault = self._make_vault()
+        result = _serialize_grant(member, vault, "o@x.com", None, "m@x.com")
+        assert result.joined_at is None
 
 
 # ===========================================================================
@@ -396,7 +400,7 @@ class TestUsersUpdateMeBranches:
 
 
 # ===========================================================================
-# vault.py — lines 92-93  (_run_sync_background)
+# vault.py — lines 92-93  (_run_sync_background bad total line)
 # ===========================================================================
 
 
@@ -420,7 +424,7 @@ class TestVaultRunSyncBackground:
 
 
 # ===========================================================================
-# vault.py — lines 124-125  (_sync_sse_generator)
+# vault.py — lines 124-125  (_sync_sse_generator exception path)
 # ===========================================================================
 
 
