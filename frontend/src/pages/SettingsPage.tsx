@@ -82,8 +82,10 @@ export default function SettingsPage() {
       })
       .catch(() => setError('Could not load provider info'));
 
-    // Cleanup SSE on unmount
-    return () => eventSourceRef.current?.close();
+    // Cleanup SSE on unmount — copy ref to local var so the closure
+    // captures the current value at effect-run time, not cleanup time.
+    const es = eventSourceRef.current;
+    return () => es?.close();
   }, []);
 
   // Auto-scroll log to bottom
@@ -111,223 +113,159 @@ export default function SettingsPage() {
     setExporting(true);
     setExportError('');
     try {
-      const token = localStorage.getItem('gnosis_token') ?? '';
-      const res = await fetch(
-        `/api/v1/export/?format=${exportFormat}`,
-        { headers: { Authorization: `Bearer ${token}` } },
-      );
-      if (!res.ok) {
-        const detail = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(typeof detail.detail === 'string' ? detail.detail : res.statusText);
-      }
-
-      const disposition = res.headers.get('Content-Disposition') ?? '';
-      const match = disposition.match(/filename="?([^"]+)"?/);
-      const ext   = exportFormat === 'json' ? 'json' : 'zip';
-      const filename = match?.[1] ?? `gnosis-export-${new Date().toISOString().slice(0, 10)}.${ext}`;
-
-      const blob = await res.blob();
-      const url  = URL.createObjectURL(blob);
-      const a    = document.createElement('a');
-      a.href     = url;
-      a.download = filename;
-      document.body.appendChild(a);
+      const blob = await (api as unknown as {
+        exportVault: (fmt: ExportFormat) => Promise<Blob>;
+      }).exportVault(exportFormat);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = exportFormat === 'markdown' ? 'gnosis-vault.zip' : 'gnosis-vault.json';
       a.click();
-      document.body.removeChild(a);
       URL.revokeObjectURL(url);
-    } catch (err) {
-      setExportError(err instanceof Error ? err.message : 'Export failed');
+    } catch {
+      setExportError('Export failed. Try again.');
     } finally {
       setExporting(false);
     }
   }
 
-  /** Open SSE stream to POST /vault/sync?stream=true and display log lines. */
   const handleVaultSync = useCallback(() => {
-    if (syncState === 'running') return;
-
-    // Close any previous stream
-    eventSourceRef.current?.close();
-
     setSyncState('running');
     setSyncLines([]);
     setSyncError('');
 
-    // EventSource can only do GET; we use a fetch-based SSE reader instead
-    // so we can POST with the Authorization header.
+    eventSourceRef.current?.close();
     const token = localStorage.getItem('gnosis_token') ?? '';
+    const base  = import.meta.env.VITE_API_BASE_URL ?? '';
+    const url   = `${base}/api/v1/vault/sync/stream?token=${encodeURIComponent(token)}`;
+    const es    = new EventSource(url);
+    eventSourceRef.current = es;
 
-    fetch('/api/v1/vault/sync?stream=true', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-    }).then(async (res) => {
-      if (!res.ok) {
-        const detail = await res.json().catch(() => ({ detail: res.statusText }));
-        const msg = typeof detail.detail === 'string' ? detail.detail : res.statusText;
-        setSyncError(msg);
-        setSyncState('error');
+    es.onmessage = (ev: MessageEvent) => {
+      const line = ev.data as string;
+      if (line === '[DONE]') {
+        es.close();
+        setSyncState('done');
         return;
       }
+      setSyncLines((prev) => [...prev, line]);
+    };
 
-      const reader = res.body?.getReader();
-      if (!reader) {
-        setSyncError('No response body');
-        setSyncState('error');
-        return;
-      }
-
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      async function pump() {
-        const { done, value } = await reader!.read();
-        if (done) {
-          setSyncState('done');
-          return;
-        }
-        buffer += decoder.decode(value, { stream: true });
-        const parts = buffer.split('\n\n');
-        buffer = parts.pop() ?? '';
-        for (const part of parts) {
-          const line = part.replace(/^data:\s*/m, '').trim();
-          if (!line) continue;
-          if (line === '[done]') {
-            setSyncState('done');
-            return;
-          }
-          if (line.startsWith('[error]')) {
-            setSyncError(line.replace('[error]', '').trim());
-            setSyncState('error');
-            return;
-          }
-          setSyncLines((prev) => [...prev, line]);
-        }
-        pump();
-      }
-
-      pump();
-    }).catch((err: unknown) => {
-      setSyncError(err instanceof Error ? err.message : 'Sync failed');
+    es.onerror = () => {
+      es.close();
       setSyncState('error');
-    });
-  }, [syncState]);
-
-  const chatModels = provider?.models.filter(isChatModel) ?? [];
+      setSyncError('Sync stream disconnected. Check server logs.');
+    };
+  }, []);
 
   return (
-    <div className="max-w-2xl mx-auto px-6 py-8 space-y-8">
-      <div className="flex items-center gap-3">
-        <Settings size={20} className="text-text-muted" />
-        <h1 className="text-lg font-semibold text-text-primary">Settings</h1>
+    <div className="flex-1 overflow-y-auto px-6 py-6 space-y-8 max-w-2xl">
+
+      {/* ── Page header ────────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-2">
+        <Settings size={16} className="text-text-muted" />
+        <h1 className="text-base font-semibold text-text-primary">Settings</h1>
       </div>
 
-      {error && (
-        <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm px-4 py-2 rounded">
-          {error}
-        </div>
-      )}
-
-      {/* ── AI Provider ──────────────────────────────────────────────────────────── */}
+      {/* ── AI Provider ────────────────────────────────────────────────────── */}
       <section className="space-y-4">
         <div className="flex items-center gap-2 pb-2 border-b border-border">
           <Cpu size={14} className="text-text-muted" />
           <h2 className="text-sm font-semibold text-text-primary">AI Provider</h2>
-          {provider && (
-            <span className={`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${
-              provider.available
-                ? 'bg-green-500/15 text-green-400'
-                : 'bg-red-500/15 text-red-400'
-            }`}>
-              {provider.available ? 'Connected' : 'Unavailable'}
+          {provider?.available && (
+            <span className="ml-auto flex items-center gap-1 text-xs text-green-400">
+              <CheckCircle2 size={12} /> Connected
+            </span>
+          )}
+          {provider && !provider.available && (
+            <span className="ml-auto flex items-center gap-1 text-xs text-red-400">
+              <AlertCircle size={12} /> Unavailable
             </span>
           )}
         </div>
 
-        {provider ? (
+        {error && (
+          <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-xs px-3 py-2 rounded">
+            {error}
+          </div>
+        )}
+
+        {provider && (
           <div className="space-y-3">
-            <div className="flex items-center gap-2 text-sm text-text-secondary">
-              <span className="text-text-muted">Provider:</span>
-              <span className="font-medium text-text-primary capitalize">{provider.provider}</span>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+              <span className="text-text-muted">Provider</span>
+              <span className="text-text-primary capitalize">{provider.provider}</span>
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-text-muted uppercase tracking-wider">
-                Active Model
+              <label className="text-xs text-text-muted" htmlFor="model-select">
+                Active model
               </label>
-              <div className="flex gap-2">
-                <select
-                  value={selectedModel}
-                  onChange={(e) => setSelectedModel(e.target.value)}
-                  className="flex-1 bg-bg-tertiary border border-border rounded px-3 py-2 text-sm text-text-primary outline-none focus:border-accent-blue transition-colors"
-                >
-                  {chatModels.map((m) => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                </select>
-                <button
-                  onClick={handleModelSave}
-                  disabled={saving || selectedModel === provider.model}
-                  className="flex items-center gap-1.5 px-3 py-2 bg-accent-blue hover:bg-blue-600 disabled:opacity-50 text-white text-sm rounded transition-colors"
-                >
-                  {saving ? <RefreshCw size={13} className="animate-spin" /> : <Save size={13} />}
-                  {saved ? 'Saved!' : 'Apply'}
-                </button>
-              </div>
-              <p className="text-xs text-text-muted">
-                {chatModels.length} chat models available · embedding models hidden
-              </p>
+              <select
+                id="model-select"
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                className="w-full rounded bg-bg-elevated border border-border text-sm px-3 py-1.5 text-text-primary focus:outline-none"
+              >
+                {provider.models.filter(isChatModel).map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
             </div>
+
+            <button
+              onClick={() => void handleModelSave()}
+              disabled={saving || selectedModel === provider.model}
+              className="flex items-center gap-2 px-3 py-1.5 rounded bg-accent-teal/10 text-accent-teal text-xs hover:bg-accent-teal/20 disabled:opacity-40 transition-colors"
+            >
+              {saving ? <RefreshCw size={12} className="animate-spin" /> : <Save size={12} />}
+              {saved ? 'Saved!' : 'Save model'}
+            </button>
           </div>
-        ) : (
-          <div className="text-sm text-text-muted">Loading provider info…</div>
+        )}
+
+        {!provider && !error && (
+          <div className="flex items-center gap-2 text-xs text-text-muted">
+            <RefreshCw size={12} className="animate-spin" /> Loading provider info…
+          </div>
         )}
       </section>
 
-      {/* ── RAG Mode ─────────────────────────────────────────────────────────────── */}
+      {/* ── RAG Mode ───────────────────────────────────────────────────────── */}
       <section className="space-y-4">
         <div className="flex items-center gap-2 pb-2 border-b border-border">
           <Database size={14} className="text-text-muted" />
           <h2 className="text-sm font-semibold text-text-primary">RAG Mode</h2>
         </div>
-
         <div className="space-y-2">
           {RAG_MODES.map(({ value, label, desc }) => (
             <label
               key={value}
-              className={`flex items-start gap-3 p-3 rounded border cursor-pointer transition-colors ${
-                ragMode === value
-                  ? 'border-accent-blue bg-accent-blue/10'
-                  : 'border-border hover:bg-bg-tertiary'
-              }`}
+              className="flex items-start gap-3 rounded-lg border border-border p-3 cursor-pointer hover:bg-bg-elevated transition-colors"
             >
               <input
                 type="radio"
-                name="ragMode"
+                name="rag-mode"
                 value={value}
                 checked={ragMode === value}
                 onChange={() => setRagMode(value)}
-                className="mt-0.5 accent-blue-500"
+                className="mt-0.5"
               />
               <div>
-                <p className="text-sm font-medium text-text-primary">{label}</p>
-                <p className="text-xs text-text-muted">{desc}</p>
+                <div className="text-sm font-medium text-text-primary">{label}</div>
+                <div className="text-xs text-text-muted">{desc}</div>
               </div>
             </label>
           ))}
         </div>
       </section>
 
-      {/* ── Export ───────────────────────────────────────────────────────────────── */}
+      {/* ── Export ─────────────────────────────────────────────────────────── */}
       <section className="space-y-4">
         <div className="flex items-center gap-2 pb-2 border-b border-border">
-          <Archive size={14} className="text-text-muted" />
+          <Download size={14} className="text-text-muted" />
           <h2 className="text-sm font-semibold text-text-primary">Export Vault</h2>
         </div>
-
-        <p className="text-xs text-text-muted">
-          Download all your notes as a zip archive of Markdown files, or as a
-          single JSON file containing every note with full metadata.
-        </p>
 
         {exportError && (
           <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-xs px-3 py-2 rounded">
@@ -335,46 +273,44 @@ export default function SettingsPage() {
           </div>
         )}
 
-        <div className="flex items-center gap-3 flex-wrap">
-          {/* Format picker */}
-          <div className="flex rounded border border-border overflow-hidden text-xs">
-            <button
-              onClick={() => setExportFormat('markdown')}
-              className={`flex items-center gap-1.5 px-3 py-2 transition-colors ${
-                exportFormat === 'markdown'
-                  ? 'bg-accent-cyan/20 text-accent-cyan border-r border-border'
-                  : 'text-text-muted hover:bg-bg-tertiary border-r border-border'
-              }`}
-            >
-              <Archive size={12} /> Markdown (.zip)
-            </button>
-            <button
-              onClick={() => setExportFormat('json')}
-              className={`flex items-center gap-1.5 px-3 py-2 transition-colors ${
-                exportFormat === 'json'
-                  ? 'bg-accent-cyan/20 text-accent-cyan'
-                  : 'text-text-muted hover:bg-bg-tertiary'
-              }`}
-            >
-              <FileJson size={12} /> JSON
-            </button>
-          </div>
-
-          {/* Download button */}
-          <button
-            onClick={handleExport}
-            disabled={exporting}
-            className="flex items-center gap-2 px-4 py-2 bg-bg-elevated hover:bg-bg-tertiary border border-border rounded text-sm text-text-primary disabled:opacity-50 transition-colors"
-          >
-            {exporting
-              ? <RefreshCw size={13} className="animate-spin text-text-muted" />
-              : <Download size={13} className="text-text-muted" />}
-            {exporting ? 'Preparing…' : 'Download'}
-          </button>
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="export-format"
+              value="markdown"
+              checked={exportFormat === 'markdown'}
+              onChange={() => setExportFormat('markdown')}
+            />
+            <Archive size={13} className="text-text-muted" />
+            <span className="text-sm text-text-primary">Markdown ZIP</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="export-format"
+              value="json"
+              checked={exportFormat === 'json'}
+              onChange={() => setExportFormat('json')}
+            />
+            <FileJson size={13} className="text-text-muted" />
+            <span className="text-sm text-text-primary">JSON</span>
+          </label>
         </div>
 
+        <button
+          onClick={() => void handleExport()}
+          disabled={exporting}
+          className="flex items-center gap-2 px-4 py-2 bg-bg-elevated hover:bg-bg-tertiary border border-border rounded text-sm text-text-primary disabled:opacity-50 transition-colors"
+        >
+          {exporting
+            ? <RefreshCw size={13} className="animate-spin text-accent-cyan" />
+            : <Download size={13} className="text-text-muted" />}
+          {exporting ? 'Exporting…' : 'Download export'}
+        </button>
+
         <p className="text-xs text-text-faint">
-          Export is scoped to your vault. Shared vaults you have read access to
+          Exports all notes in the active vault. Attachments and binary files
           are not included.
         </p>
       </section>

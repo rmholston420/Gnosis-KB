@@ -9,8 +9,7 @@
  *  5. Response interceptor passes successful responses through untouched
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import axios from 'axios';
+import { describe, it, expect, beforeEach } from 'vitest';
 import MockAdapter from 'axios-mock-adapter';
 
 // Dynamically import AFTER setup so the interceptors are wired at module load time

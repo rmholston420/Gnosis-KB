@@ -10,8 +10,6 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Send, Loader2, Bot, User, Cpu } from 'lucide-react';
 import type { ChatMessage } from '../../types';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api/v1';
-
 type ChatMode = 'hybrid' | 'lightrag' | 'vector' | 'naive';
 
 interface AIChatMessage extends ChatMessage {
@@ -47,7 +45,6 @@ export default function AiChat() {
 
     // Open SSE connection
     const base = import.meta.env.VITE_API_BASE_URL ?? "";
-    const _token = localStorage.getItem("gnosis_token") ?? "";
     const url = new URL(`${base}/api/v1/ai/stream/chat`);
     url.searchParams.set("message", text);
     url.searchParams.set("mode", mode);

@@ -7,7 +7,7 @@
  *   import { toast } from './useToast';
  *   toast.success('Note saved');
  *   toast.error('Something went wrong');
- *   toast.info('Syncing 3 offline changes\u2026');
+ *   toast.info('Syncing 3 offline changes…');
  *
  * React hook:
  *   const toasts = useToast();
@@ -17,7 +17,12 @@
  *
  * Internal design: a plain observable store so the imperative API
  * can be called without React context or Zustand.
+ *
+ * Note: this file intentionally mixes components and non-component exports
+ * (toast, useToast, _store, mountToastContainer) to keep the toast system
+ * self-contained. Fast-refresh will reload the whole module on changes.
  */
+/* eslint-disable react-refresh/only-export-components */
 
 import React from 'react';
 import { X } from 'lucide-react';
@@ -79,7 +84,6 @@ export const _store = {
 // Imperative API
 // ---------------------------------------------------------------------------
 
-// eslint-disable-next-line react-refresh/only-export-components
 export const toast = {
   success: (message: string, duration?: number): string => _store.add(message, 'success', duration),
   error:   (message: string, duration?: number): string => _store.add(message, 'error',   duration),
@@ -92,7 +96,6 @@ export const toast = {
 // React hook
 // ---------------------------------------------------------------------------
 
-// eslint-disable-next-line react-refresh/only-export-components
 export function useToast() {
   const [toasts, setToasts] = React.useState<ToastItem[]>([..._store.toasts]);
   React.useEffect(() => {
@@ -142,7 +145,6 @@ function ToastItem({ item, onDismiss }: { item: ToastItem; onDismiss: (id: strin
   );
 }
 
-// eslint-disable-next-line react-refresh/only-export-components
 export function ToastContainer() {
   const [toasts, setToasts] = React.useState<ToastItem[]>([..._store.toasts]);
   React.useEffect(() => {
@@ -179,7 +181,6 @@ export function ToastContainer() {
   );
 }
 
-// eslint-disable-next-line react-refresh/only-export-components
 export function mountToastContainer() {
   if (typeof document === 'undefined') return;
   const existing = document.getElementById('gnosis-toast-root');

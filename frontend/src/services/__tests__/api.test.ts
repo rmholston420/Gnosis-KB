@@ -52,7 +52,7 @@ afterEach(() => {
 
 describe('listNotes', () => {
   it('sends GET to /api/v1/notes/ with query params and auth header', async () => {
-    const spy = vi.stubGlobal('fetch', vi.fn(() => ok([{ id: 'n1' }])));
+    const _spy = vi.stubGlobal('fetch', vi.fn(() => ok([{ id: 'n1' }])));
     await api.listNotes({ note_type: 'permanent', limit: 50 });
     const [url, opts] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(url).toContain('/api/v1/notes/');
