@@ -14,11 +14,9 @@ vi.mock('react-router-dom', async () => {
 });
 
 const mockGetDailyNote = vi.fn();
-const mockCreateNote   = vi.fn();
 vi.mock('../../services/api', () => ({
   default: {
     getDailyNote: (...args: unknown[]) => mockGetDailyNote(...args),
-    createNote:   (...args: unknown[]) => mockCreateNote(...args),
   },
 }));
 
@@ -40,7 +38,6 @@ function renderPage() {
 
 beforeEach(() => {
   mockGetDailyNote.mockReset();
-  mockCreateNote.mockReset();
   mockNavigate.mockReset();
   mockGetDailyNote.mockResolvedValue(dailyNote);
 });
@@ -59,14 +56,13 @@ describe('DailyNotePage', () => {
   it('navigates to the daily note after loading', async () => {
     renderPage();
     await waitFor(() =>
-      expect(mockNavigate).toHaveBeenCalledWith(expect.stringContaining('dn-1'))
+      expect(mockNavigate).toHaveBeenCalledWith(expect.stringContaining('dn-1'), expect.anything())
     );
   });
 
   it('shows loading indicator initially', () => {
     mockGetDailyNote.mockReturnValue(new Promise(() => {}));
     renderPage();
-    // Loading spinner or text present before data resolves
     const spinner = document.querySelector('.animate-spin, [data-testid="loading"]');
     const loadingText = screen.queryByText(/loading|please wait/i);
     expect(spinner || loadingText).toBeTruthy();

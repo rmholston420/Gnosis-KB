@@ -1,61 +1,65 @@
 /**
  * LightRagNodePanel
  * =================
- * Slide-in right-side panel shown when a graph node is selected.
- * Fetches full node data by nodeId via api.getGraphNode().
+ * Pure prop-driven slide-in panel showing a LightRAG graph entity's
+ * details, incident relations, and linked source notes.
  *
  * Props
  * -----
- *   nodeId   — ID of the node to fetch and display
- *   onClose  — called when user dismisses the panel
+ *   entity           — entity to display (null → renders nothing)
+ *   relations        — ALL graph relations; component filters to incident ones
+ *   notes            — flat list of NoteListItem for source-note lookup
+ *   onClose          — called when user dismisses the panel
+ *   onNavigateToNote — called with noteId when user clicks a source note link
  */
+import React, { useEffect, useRef } from 'react';
+import { X } from 'lucide-react';
 
-import React, { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import api from '../../services/api';
-import './LightRagNodePanel.css';
-
-export interface GraphNeighbour {
+// ---------------------------------------------------------------------------
+// Public types (exported so tests can import them)
+// ---------------------------------------------------------------------------
+export interface LightRagEntity {
   id: string;
-  title: string;
+  label: string;
+  description?: string;
+  source_note_ids?: string[];
+}
+
+export interface LightRagRelation {
+  source: string;
+  target: string;
+  label: string;
   weight?: number;
 }
 
-export interface GraphNodeData {
+export interface NoteListItem {
   id: string;
   title: string;
-  description?: string;
-  neighbours?: GraphNeighbour[];
-  edges?: unknown[];
+  folder?: string | null;
 }
 
+// ---------------------------------------------------------------------------
+// Props
+// ---------------------------------------------------------------------------
 interface Props {
-  nodeId: string;
+  entity: LightRagEntity | null;
+  relations: LightRagRelation[];
+  notes: NoteListItem[];
   onClose: () => void;
+  onNavigateToNote: (noteId: string) => void;
 }
 
-export function LightRagNodePanel({ nodeId, onClose }: Props) {
-  const navigate = useNavigate();
-  const panelRef = useRef<HTMLDivElement | null>(null);
-  const [node,    setNode]    = useState<GraphNodeData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error,   setError]   = useState<string | null>(null);
-
-  // Fetch node data whenever nodeId changes
-  useEffect(() => {
-    setLoading(true);
-    setError(null);
-    setNode(null);
-    (api as unknown as { getGraphNode: (id: string) => Promise<GraphNodeData> })
-      .getGraphNode(nodeId)
-      .then((data) => {
-        setNode(data);
-      })
-      .catch((err: Error) => {
-        setError(err.message ?? 'Failed to load node');
-      })
-      .finally(() => setLoading(false));
-  }, [nodeId]);
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+export default function LightRagNodePanel({
+  entity,
+  relations,
+  notes,
+  onClose,
+  onNavigateToNote,
+}: Props) {
+  const panelRef = useRef<HTMLElement | null>(null);
 
   // Close on Escape
   useEffect(() => {
@@ -68,65 +72,95 @@ export function LightRagNodePanel({ nodeId, onClose }: Props) {
 
   // Focus panel for a11y
   useEffect(() => {
-    if (!loading && panelRef.current) panelRef.current.focus();
-  }, [loading]);
+    if (entity && panelRef.current) panelRef.current.focus();
+  }, [entity]);
+
+  if (!entity) return null;
+
+  // Filter to incident relations (entity is source OR target)
+  const incidentRelations = relations.filter(
+    (r) => r.source === entity.id || r.target === entity.id
+  );
+
+  // Resolve source notes
+  const sourceNoteIds = entity.source_note_ids ?? [];
+  const noteMap = new Map(notes.map((n) => [n.id, n]));
+  const sourceNotes = sourceNoteIds
+    .map((id) => noteMap.get(id))
+    .filter((n): n is NoteListItem => n !== undefined);
+
+  const hasContent =
+    !!entity.description || incidentRelations.length > 0 || sourceNotes.length > 0;
 
   return (
-    <div
-      className="lrn-panel lrn-panel--open"
-      ref={panelRef}
-      tabIndex={-1}
+    <aside
+      ref={panelRef as React.Ref<HTMLElement>}
       role="complementary"
-      aria-label={node ? `Entity panel: ${node.title}` : 'Entity panel'}
+      aria-label="Entity panel"
+      tabIndex={-1}
+      className="lrn-panel lrn-panel--open"
     >
-      <div className="lrn-header">
-        <h2 className="lrn-title">{node?.title ?? (loading ? 'Loading…' : 'Node')}</h2>
+      {/* Header */}
+      <div className="lrn-panel__header">
+        <h2 className="lrn-panel__title">{entity.label}</h2>
         <button
-          className="lrn-close"
-          onClick={onClose}
           aria-label="Close entity panel"
+          onClick={onClose}
+          className="lrn-panel__close"
         >
-          ×
+          <X size={16} />
         </button>
       </div>
 
-      {loading && (
-        <div className="lrn-loading">Loading…</div>
-      )}
+      {/* Body */}
+      <div className="lrn-panel__body">
+        {!hasContent && (
+          <p className="lrn-panel__empty">No additional information available.</p>
+        )}
 
-      {error && (
-        <div className="lrn-error">Error: {error}</div>
-      )}
+        {entity.description && (
+          <section className="lrn-panel__section">
+            <h3 className="lrn-panel__section-title">Description</h3>
+            <p className="lrn-panel__text">{entity.description}</p>
+          </section>
+        )}
 
-      {node && !loading && (
-        <>
-          {node.description && (
-            <section className="lrn-section">
-              <p className="lrn-description">{node.description}</p>
-            </section>
-          )}
+        {incidentRelations.length > 0 && (
+          <section className="lrn-panel__section">
+            <h3 className="lrn-panel__section-title">Relations</h3>
+            <ul className="lrn-panel__list">
+              {incidentRelations.map((r, i) => (
+                <li key={i} className="lrn-panel__list-item">
+                  <span className="lrn-panel__relation-label">{r.label}</span>
+                  {r.weight !== undefined && (
+                    <span className="lrn-panel__relation-weight">
+                      {r.weight.toFixed(2)}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
 
-          {(node.neighbours ?? []).length > 0 && (
-            <section className="lrn-section">
-              <h3 className="lrn-section-heading">Neighbours</h3>
-              <ul className="lrn-neighbours">
-                {(node.neighbours ?? []).map((nb) => (
-                  <li key={nb.id}>
-                    <button
-                      className="lrn-neighbour-btn"
-                      onClick={() => navigate(`/graph?node=${nb.id}`)}
-                    >
-                      {nb.title}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
-        </>
-      )}
-    </div>
+        {sourceNotes.length > 0 && (
+          <section className="lrn-panel__section">
+            <h3 className="lrn-panel__section-title">Source Notes</h3>
+            <ul className="lrn-panel__list">
+              {sourceNotes.map((n) => (
+                <li key={n.id}>
+                  <button
+                    onClick={() => onNavigateToNote(n.id)}
+                    className="lrn-panel__note-link"
+                  >
+                    {n.title}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+      </div>
+    </aside>
   );
 }
-
-export default LightRagNodePanel;

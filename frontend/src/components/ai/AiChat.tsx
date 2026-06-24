@@ -40,13 +40,28 @@ export default function AiChat() {
 
     esRef.current?.close();
 
-    const base = import.meta.env.VITE_API_BASE_URL ?? '';
-    const url = new URL(`${base}/api/v1/ai/stream/chat`);
-    url.searchParams.set('message', text);
-    url.searchParams.set('mode', mode);
-    url.searchParams.set('session_id', sessionRef.current);
+    // Build URL — in test environments VITE_API_BASE_URL is undefined,
+    // so we construct the URL differently to avoid jsdom's "Invalid URL" error
+    // when given a bare path to the URL constructor.
+    const base = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL) ?? '';
+    let esUrl: string;
+    if (base && (base.startsWith('http://') || base.startsWith('https://'))) {
+      const urlObj = new URL(`${base}/api/v1/ai/stream/chat`);
+      urlObj.searchParams.set('message', text);
+      urlObj.searchParams.set('mode', mode);
+      urlObj.searchParams.set('session_id', sessionRef.current);
+      esUrl = urlObj.toString();
+    } else {
+      // Relative path — build query string manually (safe in jsdom)
+      const qs = new URLSearchParams({
+        message: text,
+        mode,
+        session_id: sessionRef.current,
+      }).toString();
+      esUrl = `${base}/api/v1/ai/stream/chat?${qs}`;
+    }
 
-    const es = new EventSource(url.toString());
+    const es = new EventSource(esUrl);
     esRef.current = es;
     let accumulated = '';
 
@@ -101,7 +116,6 @@ export default function AiChat() {
           </button>
         ))}
 
-        {/* Clear chat button — only shown when there are messages */}
         {chatMessages.length > 0 && (
           <button
             onClick={clearChat}
@@ -167,6 +181,7 @@ export default function AiChat() {
             placeholder="Ask your knowledge base…"
             rows={1}
             className="flex-1 resize-none rounded-lg bg-bg-secondary px-3 py-2 text-sm focus:outline-none border border-border-default min-h-[36px] max-h-[120px]"
+            style={{ height: 'auto' }}
           />
           <button
             onClick={() => void send()}
@@ -176,6 +191,9 @@ export default function AiChat() {
           >
             {loading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
           </button>
+        </div>
+        <div className="mt-1.5 flex items-center gap-1 text-xs text-text-faint">
+          <span>Powered by LightRAG · references your vault</span>
         </div>
       </div>
     </div>

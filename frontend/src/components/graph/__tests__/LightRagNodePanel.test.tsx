@@ -3,7 +3,7 @@
  * ==========================
  * Tests for the graph entity detail side-panel.
  *
- * The real component accepts synchronous props:
+ * The component accepts synchronous props:
  *   entity: LightRagEntity | null
  *   relations: LightRagRelation[]
  *   notes: NoteListItem[]
@@ -76,7 +76,6 @@ describe('LightRagNodePanel', () => {
 
   it('renders incident relations', () => {
     renderPanel();
-    // Both relations involve node-1 (source or target)
     expect(screen.getByText('related to')).toBeInTheDocument();
     expect(screen.getByText('causes')).toBeInTheDocument();
   });

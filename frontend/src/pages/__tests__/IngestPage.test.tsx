@@ -30,8 +30,8 @@ beforeEach(() => {
   mockIngestUrl.mockReset();
   mockIngestFile.mockReset();
   mockNavigate.mockReset();
-  mockIngestUrl.mockResolvedValue({ id: 'new-note' });
-  mockIngestFile.mockResolvedValue({ id: 'new-note' });
+  mockIngestUrl.mockResolvedValue({ id: 'new-note', title: 'Example Article' });
+  mockIngestFile.mockResolvedValue({ id: 'new-note', title: 'Uploaded File' });
 });
 
 describe('IngestPage', () => {
@@ -56,7 +56,7 @@ describe('IngestPage', () => {
     fireEvent.change(urlInput, { target: { value: 'https://example.com/article' } });
     fireEvent.click(screen.getByRole('button', { name: /ingest|submit|import/i }));
     await waitFor(() =>
-      expect(mockIngestUrl).toHaveBeenCalledWith('https://example.com/article', expect.anything())
+      expect(mockIngestUrl).toHaveBeenCalledWith('https://example.com/article', undefined)
     );
   });
 

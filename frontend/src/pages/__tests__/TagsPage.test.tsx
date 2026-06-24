@@ -15,13 +15,16 @@ vi.mock('react-router-dom', async () => {
 
 const mockGetTags = vi.fn();
 vi.mock('../../services/api', () => ({
-  default: { getTags: (...args: unknown[]) => mockGetTags(...args) },
+  default: {
+    listTags: (...args: unknown[]) => mockGetTags(...args),
+    getTags:  (...args: unknown[]) => mockGetTags(...args),
+  },
 }));
 
 const tags = [
-  { name: 'buddhism', count: 12 },
-  { name: 'madhyamaka', count: 5 },
-  { name: 'meditation', count: 8 },
+  { name: 'buddhism',   count: 12 },
+  { name: 'madhyamaka', count: 5  },
+  { name: 'meditation', count: 8  },
 ];
 
 function renderPage() {
@@ -62,7 +65,7 @@ describe('TagsPage', () => {
     mockGetTags.mockResolvedValue([]);
     renderPage();
     await waitFor(() =>
-      expect(screen.getByText(/no tags|empty/i)).toBeInTheDocument()
+      expect(screen.getByText(/no tags/i)).toBeInTheDocument()
     );
   });
 });
