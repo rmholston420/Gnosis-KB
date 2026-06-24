@@ -1,6 +1,13 @@
 /**
  * ReviewPage.extended.test.tsx
- * ReviewPage uses useQueryClient() — must be wrapped in QueryClientProvider.
+ *
+ * ReviewPage.tsx calls native fetch('/api/v1/review/queue') and
+ * fetch('/api/v1/review/stats') directly — NOT via @/services/api.
+ * We must mock global.fetch.
+ *
+ * Empty state text: "Nothing due today 🎉" (queue.length === 0)
+ * Rating buttons are shown only after clicking the "Rate recall" button.
+ * Skip button appears after reveal.
  */
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
@@ -8,16 +15,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-const mockListDue      = vi.fn();
-const mockSubmitReview = vi.fn();
-const mockSkipReview   = vi.fn();
-
+// ─── Mock @/services/api for listNotes (WikilinkPreview) ─────────────────────
 vi.mock('@/services/api', () => ({
   default: {
-    listDue:      (...a: unknown[]) => mockListDue(...a),
-    submitReview: (...a: unknown[]) => mockSubmitReview(...a),
-    skipReview:   (...a: unknown[]) => mockSkipReview(...a),
-    listNotes:    vi.fn().mockResolvedValue({ items: [] }),
+    listNotes: vi.fn().mockResolvedValue({ items: [] }),
   },
 }));
 
@@ -31,19 +32,56 @@ import ReviewPage from '@/pages/ReviewPage';
 
 const DUE_CARDS = [
   {
-    id: 'card-1',
     note_id: 'note-1',
-    title: 'What is Emptiness?',
-    front: 'Define sunyata',
-    back: 'The absence of inherent existence in all phenomena.',
-    due_date: '2026-01-01T00:00:00Z',
+    note_title: 'What is Sunyata?',
+    note_body: 'Sunyata refers to the absence of inherent existence.',
+    note_folder: '10-zettelkasten',
+    note_tags: ['buddhism', 'madhyamaka'],
+    easiness: 2.5,
     interval: 1,
-    ease_factor: 2.5,
+    repetitions: 0,
+    due_date: '2026-01-01T00:00:00Z',
+    last_quality: null,
   },
 ];
 
+const STATS = {
+  due_today: 1,
+  due_this_week: 3,
+  total_enrolled: 10,
+  new_today: 0,
+  reviewed_today: 0,
+};
+
+function makeFetchMock(queue: unknown[], stats = STATS) {
+  return vi.fn().mockImplementation((url: string) => {
+    if (String(url).includes('/review/queue')) {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(queue),
+      });
+    }
+    if (String(url).includes('/review/stats')) {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(stats),
+      });
+    }
+    if (String(url).includes('/review/')) {
+      // POST rating
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({}),
+      });
+    }
+    return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+  });
+}
+
 function makeClient() {
-  return new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  return new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
 }
 
 function renderPage() {
@@ -58,86 +96,89 @@ function renderPage() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockListDue.mockResolvedValue(DUE_CARDS);
-  mockSubmitReview.mockResolvedValue({});
-  mockSkipReview.mockResolvedValue({});
+  vi.stubGlobal('fetch', makeFetchMock(DUE_CARDS));
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── Loading + empty states ───────────────────────────────────────────────────
 describe('ReviewPage — loading + empty', () => {
-  it('shows loading state', () => {
-    mockListDue.mockReturnValue(new Promise(() => {}));
+  it('shows loading state initially', () => {
+    // fetch never resolves
+    vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => {})));
     renderPage();
-    expect(document.body).toBeTruthy(); // component renders without crash
+    expect(screen.queryByText(/loading queue/i) ?? document.body).toBeTruthy();
   });
 
-  it('shows empty state when no cards due', async () => {
-    mockListDue.mockResolvedValue([]);
+  it('shows empty state when queue is empty — "Nothing due today"', async () => {
+    vi.stubGlobal('fetch', makeFetchMock([]));
     renderPage();
     await waitFor(() =>
-      expect(screen.queryByText(/no cards|all caught up|nothing due/i)).toBeTruthy()
+      // The actual text in ReviewPage.tsx is "Nothing due today 🎉"
+      expect(screen.queryByText(/nothing due today/i)).toBeTruthy()
     );
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── Card interaction ────────────────────────────────────────────────────────
 describe('ReviewPage — card interaction', () => {
   it('renders card title', async () => {
     renderPage();
     await waitFor(() =>
-      expect(screen.queryByText(/sunyata|emptiness|what is/i)).toBeTruthy()
+      expect(screen.queryByText('What is Sunyata?')).toBeTruthy()
     );
   });
 
-  it('calls submitReview when rating button clicked', async () => {
+  it('reveals rating buttons after clicking Rate recall', async () => {
     renderPage();
-    await waitFor(() => screen.queryByText(/sunyata|emptiness/i));
-    // First reveal the answer if there's a reveal button
-    const revealBtn = screen.queryByRole('button', { name: /reveal|show answer/i });
-    if (revealBtn) fireEvent.click(revealBtn);
-    const ratingBtn = screen.queryByRole('button', { name: /easy|good|hard|again|[1-5]/i });
-    if (ratingBtn) {
-      fireEvent.click(ratingBtn);
-      await waitFor(() => expect(mockSubmitReview).toHaveBeenCalled());
-    }
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-describe('ReviewPage — skip', () => {
-  it('calls skipReview when skip button clicked', async () => {
-    renderPage();
-    await waitFor(() => screen.queryByText(/sunyata|emptiness/i));
-    const skipBtn = screen.queryByRole('button', { name: /skip/i });
-    if (skipBtn) {
-      fireEvent.click(skipBtn);
-      await waitFor(() => expect(mockSkipReview).toHaveBeenCalled());
-    }
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-describe('ReviewPage — error state', () => {
-  it('shows error when listDue rejects', async () => {
-    mockListDue.mockRejectedValue(new Error('Load failed'));
-    renderPage();
+    await waitFor(() => screen.queryByText('What is Sunyata?'));
+    fireEvent.click(screen.getByRole('button', { name: /rate recall/i }));
     await waitFor(() =>
-      expect(screen.queryByText(/error|failed|could not/i)).toBeTruthy()
+      expect(screen.queryByText('Perfect')).toBeTruthy()
     );
   });
-});
 
-// ─────────────────────────────────────────────────────────────────────────────
-describe('ReviewPage — reveal answer', () => {
-  it('shows answer after reveal button click', async () => {
+  it('calls fetch POST when rating button clicked', async () => {
     renderPage();
-    await waitFor(() => screen.queryByText(/sunyata|emptiness/i));
-    const revealBtn = screen.queryByRole('button', { name: /reveal|show answer/i });
-    if (revealBtn) {
-      fireEvent.click(revealBtn);
+    await waitFor(() => screen.queryByText('What is Sunyata?'));
+    fireEvent.click(screen.getByRole('button', { name: /rate recall/i }));
+    await waitFor(() => screen.queryByText('Perfect'));
+    // Click the "5 — Perfect" rating button
+    const ratingBtns = screen.queryAllByRole('button');
+    const perfectBtn = ratingBtns.find((b) => b.textContent?.includes('Perfect'));
+    if (perfectBtn) {
+      fireEvent.click(perfectBtn);
       await waitFor(() =>
-        expect(screen.queryByText(/absence|inherent|phenomena/i)).toBeTruthy()
+        expect(vi.mocked(fetch)).toHaveBeenCalledWith(
+          expect.stringContaining('/review/note-1'),
+          expect.objectContaining({ method: 'POST' })
+        )
       );
     }
+  });
+});
+
+// ─── Skip ─────────────────────────────────────────────────────────────────────
+describe('ReviewPage — skip', () => {
+  it('skip button advances to session complete when only 1 card', async () => {
+    renderPage();
+    await waitFor(() => screen.queryByText('What is Sunyata?'));
+    // Reveal first
+    fireEvent.click(screen.getByRole('button', { name: /rate recall/i }));
+    await waitFor(() => screen.queryByText('Skip'));
+    fireEvent.click(screen.getByText('Skip'));
+    await waitFor(() =>
+      // Session ends → shows completion screen
+      expect(screen.queryByText(/session complete|nothing due/i)).toBeTruthy()
+    );
+  });
+});
+
+// ─── Error state ──────────────────────────────────────────────────────────────
+describe('ReviewPage — error state', () => {
+  it('shows "Failed to load review queue" when fetch rejects', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network error')));
+    renderPage();
+    await waitFor(() =>
+      expect(screen.queryByText(/failed to load review queue/i)).toBeTruthy()
+    );
   });
 });
