@@ -29,20 +29,23 @@ import React from 'react';
 import { useVaultStore } from '../../store/useVaultStore';
 
 // ── Mocks ─────────────────────────────────────────────────────────────────
+// NOTE: vi.mock is hoisted to the top of the file by Vitest, so the factory
+// must NOT reference any const/let declared in module scope — that would be a
+// TDZ crash.  Return plain vi.fn() stubs here; wire up return values in
+// beforeEach instead.
+vi.mock('../../services/vaultApi', () => ({
+  fetchMyVaultGrants: vi.fn(),
+  acceptVaultGrant: vi.fn(),
+}));
+
+import { fetchMyVaultGrants, acceptVaultGrant } from '../../services/vaultApi';
+import VaultSwitcher from '../VaultSwitcher';
 
 const mockGrants = [
   { grantId: null, ownerId: 1, label: 'My Notes', permission: 'owner', pending: false },
   { grantId: 7, ownerId: 9, label: "Alice's Vault", permission: 'read', pending: false },
   { grantId: 8, ownerId: 10, label: "Bob's Vault", permission: 'read', pending: true },
 ];
-
-vi.mock('../../services/vaultApi', () => ({
-  fetchMyVaultGrants: vi.fn().mockResolvedValue(mockGrants),
-  acceptVaultGrant: vi.fn().mockResolvedValue({}),
-}));
-
-import { fetchMyVaultGrants, acceptVaultGrant } from '../../services/vaultApi';
-import VaultSwitcher from '../VaultSwitcher';
 
 function renderSwitcher() {
   return render(
@@ -53,6 +56,8 @@ function renderSwitcher() {
 }
 
 beforeEach(() => {
+  (fetchMyVaultGrants as ReturnType<typeof vi.fn>).mockResolvedValue(mockGrants);
+  (acceptVaultGrant as ReturnType<typeof vi.fn>).mockResolvedValue({});
   useVaultStore.setState({ activeVaultOwnerId: null });
   vi.clearAllMocks();
 });

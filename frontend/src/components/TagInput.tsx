@@ -7,10 +7,10 @@
  *   <TagInput tags={tags} onChange={setTags} />
  *
  * Keyboard shortcuts:
- *   Enter / comma  — add current input as a tag
- *   Backspace      — remove last tag when input is empty
- *   ArrowUp/Down   — navigate autocomplete dropdown
- *   Escape         — close dropdown
+ *   Enter / comma / Tab — add current input as a tag
+ *   Backspace           — remove last tag when input is empty
+ *   ArrowUp/Down        — navigate autocomplete dropdown
+ *   Escape              — close dropdown
  *
  * Autocomplete:
  *   Fetches the full tag list once (stale 5 min via React Query).
@@ -41,7 +41,7 @@ interface TagInputProps {
 export default function TagInput({
   tags,
   onChange,
-  placeholder = 'Add tag…',
+  placeholder = 'Add tag\u2026',
   disabled = false,
 }: TagInputProps) {
   const [inputValue, setInputValue] = useState('');
@@ -100,7 +100,7 @@ export default function TagInput({
   function handleKeyDown(e: KeyboardEvent<HTMLInputElement>) {
     if (disabled) return;
 
-    if (e.key === 'Enter' || e.key === ',') {
+    if (e.key === 'Enter' || e.key === ',' || e.key === 'Tab') {
       e.preventDefault();
       if (highlightedIdx >= 0 && suggestions[highlightedIdx]) {
         addTag(suggestions[highlightedIdx]);
@@ -145,7 +145,7 @@ export default function TagInput({
     <div
       ref={containerRef}
       className="relative flex flex-wrap items-center gap-1.5 px-3 py-1.5 border-b border-border bg-bg-primary min-h-[36px]"
-      onClick={() => inputRef.current?.focus()}
+      onClick={() => !disabled && inputRef.current?.focus()}
     >
       <Tag size={12} className="text-text-faint flex-shrink-0" />
 
@@ -169,22 +169,21 @@ export default function TagInput({
         </span>
       ))}
 
-      {/* Text input */}
-      {!disabled && (
-        <input
-          ref={inputRef}
-          type="text"
-          value={inputValue}
-          onChange={(e) => handleInputChange(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onFocus={() => inputValue.length > 0 && setDropdownOpen(true)}
-          placeholder={tags.length === 0 ? placeholder : ''}
-          className="flex-1 min-w-[120px] bg-transparent text-xs text-text-primary outline-none placeholder-text-faint"
-          aria-label="Add tag"
-          aria-autocomplete="list"
-          aria-expanded={dropdownOpen && suggestions.length > 0}
-        />
-      )}
+      {/* Text input — always rendered; disabled attribute controls editability */}
+      <input
+        ref={inputRef}
+        type="text"
+        value={inputValue}
+        onChange={(e) => handleInputChange(e.target.value)}
+        onKeyDown={handleKeyDown}
+        onFocus={() => inputValue.length > 0 && setDropdownOpen(true)}
+        placeholder={placeholder}
+        disabled={disabled}
+        className="flex-1 min-w-[120px] bg-transparent text-xs text-text-primary outline-none placeholder-text-faint disabled:cursor-not-allowed"
+        aria-label="Add tag"
+        aria-autocomplete="list"
+        aria-expanded={dropdownOpen && suggestions.length > 0}
+      />
 
       {/* Autocomplete dropdown */}
       {dropdownOpen && suggestions.length > 0 && (

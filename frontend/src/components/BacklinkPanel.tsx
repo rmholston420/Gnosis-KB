@@ -44,7 +44,7 @@ function LinkRow({ title, context, direction, onClick }: LinkRowProps) {
         </div>
         {context && (
           <div className="text-xs text-text-faint mt-0.5 line-clamp-1 italic">
-            “{context}”
+            &ldquo;{context}&rdquo;
           </div>
         )}
       </div>
@@ -134,7 +134,7 @@ export default function BacklinkPanel({
           )}
 
           {outgoingLinks.length > 0 && (
-            <Section label="Links out" count={outgoingLinks.length} defaultOpen={false}>
+            <Section label="Links out" count={outgoingLinks.length} defaultOpen={true}>
               {outgoingLinks.map((link) => (
                 <LinkRow
                   key={`${link.source_id}-${link.target_id}`}
