@@ -5,7 +5,7 @@
  * the add/remove/subscribe lifecycle without rendering React components.
  *
  * What we verify:
- *  1. toast.success / toast.error / toast.info set the correct type.
+ *  1. toast.success / toast.error / toast.info set the correct variant.
  *  2. toasts auto-remove after their duration.
  *  3. toast.dismiss() removes a toast immediately.
  *  4. Multiple toasts stack and each auto-removes independently.
@@ -24,18 +24,18 @@ describe('toast helpers', () => {
     const id = toast.success('Saved!');
     const item = _store.get(id);
     expect(item).toBeDefined();
-    expect(item?.type).toBe('success');
+    expect(item?.variant).toBe('success');
     expect(item?.message).toBe('Saved!');
   });
 
   it('toast.error creates an error toast', () => {
     const id = toast.error('Oops');
-    expect(_store.get(id)?.type).toBe('error');
+    expect(_store.get(id)?.variant).toBe('error');
   });
 
   it('toast.info creates an info toast', () => {
     const id = toast.info('Heads up');
-    expect(_store.get(id)?.type).toBe('info');
+    expect(_store.get(id)?.variant).toBe('info');
   });
 
   it('toast.dismiss removes the toast immediately', () => {
@@ -77,17 +77,12 @@ describe('toast subscribe', () => {
   });
 
   it('subscriber receives toast snapshot on notification', () => {
-    // We can verify the shape by subscribing before adding
-    // Access _store indirectly: after add, auto-remove fires at timer expiry
-    // The subscribe pattern is tested implicitly via the add/remove cycle
     const receivedToast: ToastItem | null = null;
-    // Since _store is module-private, we verify via the public add path:
-    // add a toast, immediately check it was queued by ensuring no throw,
-    // then advance timer to auto-remove.
     const id = toast.info('shape test');
     const item = _store.get(id);
     expect(item).toBeDefined();
     expect(item?.message).toBe('shape test');
-    expect(receivedToast).toBeNull(); // never assigned — just a placeholder variable
+    expect(item?.variant).toBe('info');
+    expect(receivedToast).toBeNull(); // never assigned — placeholder
   });
 });

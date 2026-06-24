@@ -15,26 +15,18 @@ import { useNavigate } from 'react-router-dom';
 import { ExternalLink, FileText } from 'lucide-react';
 import type { NoteListItem } from '../types';
 
+// NoteListItem doesn't carry body/body_html, but a popup context may pass
+// a richer object. We extend locally so the popup works with either shape.
+type PopupNote = NoteListItem & { body?: string };
+
 export interface PopupState {
-  note: NoteListItem;
+  note: PopupNote;
   anchorRect: DOMRect;
 }
 
 interface WikilinkPopupProps {
   state: PopupState | null;
   onClose: () => void;
-}
-
-// Strip markdown syntax for the snippet
-function _stripMarkdown(md: string): string {
-  return md
-    .replace(/```[\s\S]*?```/g, '')
-    .replace(/`[^`]+`/g, '')
-    .replace(/!?\[[^\]]*\]\([^)]*\)/g, '')
-    .replace(/#+\s/g, '')
-    .replace(/[*_]{1,2}([^*_]+)[*_]{1,2}/g, '$1')
-    .replace(/\[\[([^\]]+)\]\]/g, '$1')
-    .trim();
 }
 
 export default function WikilinkPopup({ state, onClose }: WikilinkPopupProps) {
@@ -57,7 +49,7 @@ export default function WikilinkPopup({ state, onClose }: WikilinkPopupProps) {
   );
 
   const snippet = note.body
-    ? note.body.slice(0, 160).replace(/\n/g, ' ') + (note.body.length > 160 ? '…' : '')
+    ? note.body.slice(0, 160).replace(/\n/g, ' ') + (note.body.length > 160 ? '\u2026' : '')
     : 'No preview available.';
 
   return (
@@ -71,7 +63,7 @@ export default function WikilinkPopup({ state, onClose }: WikilinkPopupProps) {
         zIndex: 9000,
         pointerEvents: 'auto',
       }}
-      onMouseEnter={onClose ? () => { /* cancel hide */ } : undefined}
+      onMouseEnter={() => { /* cancel hide — parent manages timer */ }}
       onMouseLeave={onClose}
     >
       <div className="rounded-lg border border-border-default bg-bg-elevated shadow-lg p-3">

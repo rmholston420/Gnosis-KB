@@ -7,7 +7,7 @@
  *   import { toast } from './useToast';
  *   toast.success('Note saved');
  *   toast.error('Something went wrong');
- *   toast.info('Syncing 3 offline changes…');
+ *   toast.info('Syncing 3 offline changes\u2026');
  *
  * React hook:
  *   const toasts = useToast();

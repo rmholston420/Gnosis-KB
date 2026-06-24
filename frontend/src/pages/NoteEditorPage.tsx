@@ -16,14 +16,10 @@
  *
  * Wikilink autocomplete wiring
  * ----------------------------
- * NoteEditor already renders a <textarea> for the body.  This page attaches
- * a ref to that textarea via the `textareaRef` prop (added to NoteEditor),
- * uses `useWikilinkDetector` to parse the caret, and renders
+ * NoteEditor renders a <textarea> for the body.  This page attaches
+ * a ref to that textarea via the `textareaRef` prop, uses
+ * `useWikilinkDetector` to parse the caret, and renders
  * `WikilinkAutocomplete` as a portal-style overlay.
- *
- * If the underlying NoteEditor does not yet expose `textareaRef`, the
- * autocomplete falls back to a container-level ref and positions itself
- * relative to the editor wrapper instead.
  */
 
 import React, { useRef, useState } from 'react';
@@ -34,7 +30,7 @@ import NoteEditor from '../components/NoteEditor';
 import { useAppStore } from '../store/useAppStore';
 import { Loader2, ArrowLeft } from 'lucide-react';
 import type { Note, NoteCreate, NoteType } from '../types';
-import { WikilinkAutocomplete, useWikilinkDetector } from '../components/editor/WikilinkAutocomplete';
+import WikilinkAutocomplete, { useWikilinkDetector } from '../components/editor/WikilinkAutocomplete';
 import { NoteTemplateGallery } from '../components/notes/NoteTemplateGallery';
 import type { NoteTemplate } from '../components/notes/NoteTemplateGallery';
 
@@ -57,7 +53,7 @@ export default function NoteEditorPage() {
   // wikilink detector on every keystroke without prop-drilling.
   const [bodyValue, setBodyValue] = useState('');
 
-  const { wikilinkQuery, detectQuery, insertWikilink, closeAutocomplete } =
+  const { wikilinkQuery, insertWikilink } =
     useWikilinkDetector(textareaRef, bodyValue, setBodyValue);
 
   // ---- Data fetching -------------------------------------------------------
@@ -172,17 +168,16 @@ export default function NoteEditorPage() {
               isLoading={createMutation.isPending}
               onBodyChange={(v) => {
                 setBodyValue(v);
-                requestAnimationFrame(detectQuery);
               }}
               textareaRef={textareaRef}
             />
 
             {wikilinkQuery !== null && (
               <WikilinkAutocomplete
-                anchorRef={textareaRef as React.RefObject<HTMLTextAreaElement>}
+                anchorRect={new DOMRect()}
                 query={wikilinkQuery}
-                onSelect={(note) => insertWikilink(note)}
-                onClose={closeAutocomplete}
+                onSelect={(title: string) => insertWikilink(title)}
+                onClose={() => insertWikilink('')}
               />
             )}
           </div>
@@ -213,17 +208,16 @@ export default function NoteEditorPage() {
           isLoading={updateMutation.isPending}
           onBodyChange={(v) => {
             setBodyValue(v);
-            requestAnimationFrame(detectQuery);
           }}
           textareaRef={textareaRef}
         />
 
         {wikilinkQuery !== null && (
           <WikilinkAutocomplete
-            anchorRef={textareaRef as React.RefObject<HTMLTextAreaElement>}
+            anchorRect={new DOMRect()}
             query={wikilinkQuery}
-            onSelect={(note) => insertWikilink(note)}
-            onClose={closeAutocomplete}
+            onSelect={(title: string) => insertWikilink(title)}
+            onClose={() => insertWikilink('')}
           />
         )}
       </div>

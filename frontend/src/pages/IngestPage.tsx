@@ -18,7 +18,7 @@ export default function IngestPage() {
     mutationFn: async (files: File[]) => {
       const results: Note[] = [];
       for (const file of files) {
-        const note = await api.uploadFile(file) as Note;
+        const note = await api.ingestFile(file) as Note;
         results.push(note);
       }
       return results;
@@ -97,11 +97,11 @@ export default function IngestPage() {
         <p className="text-sm font-medium text-text-primary">
           {isDragActive ? 'Drop files here' : 'Drag & drop files, or click to browse'}
         </p>
-        <p className="mt-1 text-xs text-text-muted">.txt, .md, .pdf · max 10 MB each</p>
+        <p className="mt-1 text-xs text-text-muted">.txt, .md, .pdf \u00b7 max 10 MB each</p>
         {isLoading && (
           <div className="mt-4 flex items-center gap-2 text-xs text-text-muted">
             <Loader2 size={14} className="animate-spin" />
-            Uploading…
+            Uploading\u2026
           </div>
         )}
       </div>
@@ -137,7 +137,7 @@ export default function IngestPage() {
           onClick={() => navigate('/notes')}
           className="text-xs text-text-muted hover:text-text-primary transition-colors"
         >
-          View all notes →
+          View all notes \u2192
         </button>
       </div>
     </div>
