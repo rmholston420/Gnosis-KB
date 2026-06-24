@@ -17,29 +17,26 @@ vi.mock('react-router-dom', async (orig) => {
   return { ...actual, useNavigate: () => mockNavigate };
 });
 
-const mockGetFullGraph  = vi.fn();
-const mockGetGraphEntities = vi.fn();
-const mockSyncVault    = vi.fn();
-const mockApiClient    = {
-  get: vi.fn(),
-};
+const mockGetFullGraph      = vi.fn();
+const mockGetGraphEntities  = vi.fn();
+const mockSyncVault         = vi.fn();
+const mockApiClient         = { get: vi.fn() };
 
 vi.mock('@/services/api', () => ({
   default: {
-    getFullGraph:      (...a: unknown[]) => mockGetFullGraph(...a),
-    getGraphEntities:  (...a: unknown[]) => mockGetGraphEntities(...a),
-    syncVault:         (...a: unknown[]) => mockSyncVault(...a),
-    apiClient:         mockApiClient,
+    getFullGraph:     (...a: unknown[]) => mockGetFullGraph(...a),
+    getGraphEntities: (...a: unknown[]) => mockGetGraphEntities(...a),
+    syncVault:        (...a: unknown[]) => mockSyncVault(...a),
+    apiClient:        mockApiClient,
   },
 }));
 
-// ForceGraph2D is a heavy canvas dep — stub it out
+// ForceGraph2D is a heavy canvas dep — stub it out and expose callbacks
 vi.mock('react-force-graph-2d', () => ({
   default: vi.fn(({ onNodeClick, onNodeHover }: any) => {
-    // Expose callbacks via data attrs so tests can call them
     React.useEffect(() => {
-      (window as any).__fgOnNodeClick  = onNodeClick;
-      (window as any).__fgOnNodeHover  = onNodeHover;
+      (window as any).__fgOnNodeClick = onNodeClick;
+      (window as any).__fgOnNodeHover = onNodeHover;
     });
     return React.createElement('div', { 'data-testid': 'force-graph' });
   }),
@@ -47,28 +44,33 @@ vi.mock('react-force-graph-2d', () => ({
 
 vi.mock('@/components/graph/LightRagNodePanel', () => ({
   LightRagNodePanel: ({ entity, onClose }: any) =>
-    React.createElement('div', { 'data-testid': 'lr-panel' },
+    React.createElement(
+      'div',
+      { 'data-testid': 'lr-panel' },
       React.createElement('span', null, entity.id),
       React.createElement('button', { onClick: onClose }, 'Close Panel'),
     ),
 }));
 
+// Static import — must come AFTER all vi.mock() declarations so hoisting works
+import GraphPage from '@/pages/GraphPage';
+
+// ---------------------------------------------------------------------------
+
 const GRAPH_DATA = {
   nodes: [
     { id: 'n1', title: 'Dharma', note_type: 'permanent', status: 'evergreen',
       folder: '10-dharma', incoming_link_count: 3, outgoing_link_count: 2 },
-    { id: 'n2', title: 'Sangha',  note_type: 'fleeting',  status: 'seedling',
+    { id: 'n2', title: 'Sangha', note_type: 'fleeting',  status: 'seedling',
       folder: '20-sangha', incoming_link_count: 1, outgoing_link_count: 1 },
   ],
-  edges: [
-    { source: 'n1', target: 'n2', link_text: 'supports' },
-  ],
+  edges: [{ source: 'n1', target: 'n2', link_text: 'supports' }],
 };
 
 const ENTITIES = [
-  { id: 'buddha',    label: 'Buddha',    cluster: 0 },
-  { id: 'dharma',    label: 'Dharma',    cluster: 1 },
-  { id: 'sangha',    label: 'Sangha',    cluster: 2 },
+  { id: 'buddha', label: 'Buddha', cluster: 0 },
+  { id: 'dharma', label: 'Dharma', cluster: 1 },
+  { id: 'sangha', label: 'Sangha', cluster: 2 },
 ];
 
 function makeClient() {
@@ -83,7 +85,7 @@ function renderPage(client?: QueryClient) {
     <QueryClientProvider client={qc}>
       <MemoryRouter>
         <React.Suspense fallback={<div>loading</div>}>
-          {React.createElement(require('@/pages/GraphPage').default)}
+          <GraphPage />
         </React.Suspense>
       </MemoryRouter>
     </QueryClientProvider>
@@ -125,9 +127,7 @@ describe('GraphPage', () => {
   it('node info panel appears when onNodeHover is called', async () => {
     renderPage();
     await waitFor(() => screen.getByTestId('force-graph'));
-    act(() => {
-      (window as any).__fgOnNodeHover?.(GRAPH_DATA.nodes[0]);
-    });
+    act(() => { (window as any).__fgOnNodeHover?.(GRAPH_DATA.nodes[0]); });
     await waitFor(() =>
       expect(screen.getByText('Dharma')).toBeTruthy()
     );
@@ -136,9 +136,7 @@ describe('GraphPage', () => {
   it('onNodeClick navigates to /notes/:id', async () => {
     renderPage();
     await waitFor(() => screen.getByTestId('force-graph'));
-    act(() => {
-      (window as any).__fgOnNodeClick?.(GRAPH_DATA.nodes[0]);
-    });
+    act(() => { (window as any).__fgOnNodeClick?.(GRAPH_DATA.nodes[0]); });
     await waitFor(() =>
       expect(mockNavigate).toHaveBeenCalledWith('/notes/n1')
     );
@@ -147,13 +145,9 @@ describe('GraphPage', () => {
   it('node info panel close button clears panel', async () => {
     renderPage();
     await waitFor(() => screen.getByTestId('force-graph'));
-    act(() => {
-      (window as any).__fgOnNodeHover?.(GRAPH_DATA.nodes[0]);
-    });
+    act(() => { (window as any).__fgOnNodeHover?.(GRAPH_DATA.nodes[0]); });
     await waitFor(() => screen.getByText('Dharma'));
-    // Click the × dismiss button
-    const closeBtn = screen.getByText('\u2715');
-    fireEvent.click(closeBtn);
+    fireEvent.click(screen.getByText('\u2715'));
     await waitFor(() =>
       expect(screen.queryByText('Open Note')).toBeNull()
     );
@@ -200,8 +194,10 @@ describe('GraphPage', () => {
     renderPage();
     fireEvent.click(screen.getByText('LightRAG Knowledge'));
     await waitFor(() => screen.getByText('buddha'));
-    const filterInput = screen.getByPlaceholderText(/Filter entities/i);
-    fireEvent.change(filterInput, { target: { value: 'dharma' } });
+    fireEvent.change(
+      screen.getByPlaceholderText(/Filter entities/i),
+      { target: { value: 'dharma' } }
+    );
     await waitFor(() => {
       expect(screen.queryByText('buddha')).toBeNull();
       expect(screen.getByText('dharma')).toBeTruthy();
@@ -210,7 +206,7 @@ describe('GraphPage', () => {
 
   it('clicking entity row calls handleLrNodeClick (apiClient.get)', async () => {
     mockApiClient.get
-      .mockResolvedValueOnce({ data: null })    // lrGraphData call
+      .mockResolvedValueOnce({ data: null })
       .mockResolvedValueOnce({ data: { id: 'buddha', label: 'Buddha', cluster: 0 } })
       .mockResolvedValueOnce({ data: { relations: [] } });
     renderPage();
@@ -224,7 +220,7 @@ describe('GraphPage', () => {
     );
   });
 
-  it('LightRagNodePanel renders when entity is selected', async () => {
+  it('LightRagNodePanel renders when entity is selected and closes on button click', async () => {
     mockApiClient.get
       .mockResolvedValueOnce({ data: null })
       .mockResolvedValueOnce({ data: { id: 'buddha', label: 'Buddha', cluster: 0 } })
