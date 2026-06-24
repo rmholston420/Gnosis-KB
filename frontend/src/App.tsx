@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster, toast } from 'react-hot-toast';
 import Sidebar from '@/components/Sidebar';
 import { useVaultWebSocket } from '@/hooks/useWebSocket';
+import CommandPalette from '@/components/CommandPalette';
 import { registerSW } from '@/registerSW';
 
 // ── Lazy-load every page so the initial bundle stays small ────────────────────
@@ -40,6 +41,8 @@ function AppShell() {
           <AppRoutes />
         </Suspense>
       </main>
+      {/* CommandPalette lives outside Suspense — no flash when ⌘K is pressed */}
+      <CommandPalette />
       <Toaster position="bottom-right" />
     </div>
   );
