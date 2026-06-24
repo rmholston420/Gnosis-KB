@@ -10,13 +10,16 @@
  *   - NoteTemplateGallery: template picker for new notes
  *   - Edit / Preview toggle: live Markdown preview with wikilink resolution
  *
- * Test surface notes:
- *   - data-testid="note-editor" on the root wrapper div (both new-note and
- *     edit paths) so getByTestId('note-editor') resolves after note loads.
- *   - Edit button  has aria-label="Edit"    so getByRole('button',{name:/edit/i}).
- *   - Preview button has aria-label="Preview" so getByRole('button',{name:/preview/i}).
- *   - NoteTemplateGallery renders role="dialog" with close button
- *     aria-label="Close template gallery" (already correct in the component).
+ * Test-surface contract
+ * ---------------------
+ *   data-testid="note-editor" lives on the MOCKED NoteEditor component stub
+ *   (see NoteEditorPage.extended.test.tsx) — do NOT put it on the page wrapper
+ *   div or tests will find two elements and throw 'Found multiple elements'.
+ *
+ *   NoteEditorPage.test.tsx spies on named exports from '../../api/notes',
+ *   so this page imports getNote / createNote / updateNote / listNotes as
+ *   named imports from '../api/notes' (not from '../services/api') so the
+ *   vi.spyOn intercepts them correctly.
  */
 
 import React, { useRef, useState, useCallback, useMemo } from 'react';
@@ -24,6 +27,8 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, PanelRight, PanelRightClose, Eye, Pencil } from 'lucide-react';
 import { Loader2 } from 'lucide-react';
+// Named imports so vi.spyOn(notesApi, 'getNote') works in NoteEditorPage.test.tsx
+import { getNote, createNote, updateNote, listNotes } from '../api/notes';
 import api from '../services/api';
 import NoteEditor from '../components/NoteEditor';
 import { useAppStore }          from '../store/useAppStore';
@@ -87,10 +92,10 @@ export default function NoteEditorPage() {
     }
   }, [bodyValue]);
 
-  // ---- Data fetching -------------------------------------------------------
+  // ---- Data fetching (using named api/notes imports for spy compatibility) -
   const { data: note, isLoading } = useQuery<Note>({
     queryKey: ['note', id],
-    queryFn:  () => api.getNote(id!) as Promise<Note>,
+    queryFn:  () => getNote(id!) as Promise<Note>,
     enabled:  !!id,
     onSuccess: (n: Note) => {
       if (!bodyValue) setBodyValue(n.body ?? '');
@@ -100,7 +105,7 @@ export default function NoteEditorPage() {
   // All note titles for wikilink resolution in preview mode
   const { data: allNotes } = useQuery<{ items: Note[] }>({
     queryKey: ['notes'],
-    queryFn:  () => api.listNotes() as Promise<{ items: Note[] }>,
+    queryFn:  () => listNotes() as Promise<{ items: Note[] }>,
   });
 
   const titleToId = useMemo(() => {
@@ -112,7 +117,7 @@ export default function NoteEditorPage() {
   }, [allNotes]);
 
   const createMutation = useMutation({
-    mutationFn: (data: NoteCreate) => api.createNote(data) as Promise<Note>,
+    mutationFn: (data: NoteCreate) => createNote(data) as Promise<Note>,
     onSuccess: (newNote: Note) => {
       queryClient.invalidateQueries({ queryKey: ['notes'] });
       queryClient.invalidateQueries({ queryKey: ['notes-titles'] });
@@ -123,7 +128,7 @@ export default function NoteEditorPage() {
 
   const updateMutation = useMutation({
     mutationFn: ({ body, title }: { body: string; title?: string }) =>
-      api.updateNote(id!, { body, title }) as Promise<Note>,
+      updateNote(id!, { body, title }) as Promise<Note>,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['note', id] });
       queryClient.invalidateQueries({ queryKey: ['notes'] });
@@ -280,7 +285,7 @@ export default function NoteEditorPage() {
   // ---- New note flow -------------------------------------------------------
   if (!id) {
     return (
-      <div data-testid="note-editor" className="h-full flex flex-col">
+      <div className="h-full flex flex-col">
         {showTemplateGallery && (
           <NoteTemplateGallery
             onSelect={handleTemplateSelect}
@@ -351,7 +356,7 @@ export default function NoteEditorPage() {
   if (!note) return <div className="p-6 text-accent-red">Note not found.</div>;
 
   return (
-    <div data-testid="note-editor" className="h-full flex flex-col">
+    <div className="h-full flex flex-col">
       <div className="px-4 py-2 border-b border-border flex-shrink-0 flex items-center justify-between">
         <button
           onClick={() => navigate('/notes')}

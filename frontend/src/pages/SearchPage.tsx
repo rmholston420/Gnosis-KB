@@ -4,7 +4,7 @@
  */
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { Search, Sparkles, AlignLeft, Loader2, AlertCircle } from 'lucide-react';
+import { Search, Loader2, AlertCircle } from 'lucide-react';
 import { useHybridSearch, useKeywordSearch } from '../hooks/useSearch';
 import { SearchResults } from '../components/search/SearchResults';
 import { SemanticSearch } from '../components/search/SemanticSearch';
@@ -91,18 +91,20 @@ export default function SearchPage() {
               No results for <strong className="text-gnosis-fg">"{query}"</strong>
             </p>
           )}
+          {/*
+            SearchResults renders its own count paragraph internally.
+            Do NOT add a duplicate count <p> here — tests call getByText(/N results/i)
+            and would find two elements.
+          */}
           {items.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-xs text-gnosis-muted">{total} result{total !== 1 ? 's' : ''}</p>
-              <SearchResults
-                results={items}
-                query={query}
-                isLoading={isLoading}
-                isError={isError}
-                total={total}
-                onResultClick={handleResultClick}
-              />
-            </div>
+            <SearchResults
+              results={items}
+              query={query}
+              isLoading={isLoading}
+              isError={isError}
+              total={total}
+              onResultClick={handleResultClick}
+            />
           )}
         </>
       )}
