@@ -18,6 +18,7 @@ export function makeNote(overrides: Partial<NoteListItem> = {}): NoteListItem {
     note_type:   'permanent',
     status:      'draft' as const,
     tags:        [],
+    folder:      '',
     word_count:  42,
     created_at:  '2025-01-01T00:00:00Z',
     modified_at: '2025-06-01T12:00:00Z',
