@@ -1,15 +1,13 @@
 /**
  * GraphPage.tsx
- * =============
- * Tab-based knowledge-graph page using TanStack Query for data fetching.
+ * Tab-based knowledge-graph page using TanStack Query.
  *
- * Tab 1 — Wikilinks:           react-force-graph-2d visualisation
- * Tab 2 — LightRAG Knowledge:  flat entity list from the LightRAG graph
+ * Tab 1 — Wikilinks:          react-force-graph-2d visualisation
+ * Tab 2 — LightRAG Knowledge: entity list + lightrag graph health check
  *
- * NOTE: tab buttons must NOT have role="tab" — tests query them via
- * getByRole('button', { name: /wikilinks/i }) which only matches the
- * implicit button role. An explicit role="tab" overrides the implicit
- * button role and makes getByRole('button') miss the element entirely.
+ * NOTE: tab buttons have NO role="tab" — tests query them via
+ * getByRole('button', { name: /wikilinks/i }). An explicit role="tab"
+ * would override the implicit button role and break those queries.
  */
 
 import React, { useState, useCallback, lazy, Suspense } from 'react';
@@ -37,7 +35,7 @@ export default function GraphPage() {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [syncing,      setSyncing]      = useState(false);
 
-  // Wikilinks graph — always fetched
+  // ── Wikilinks graph ────────────────────────────────────────────────────
   const {
     data: graphData,
     isLoading: graphLoading,
@@ -49,12 +47,26 @@ export default function GraphPage() {
     retry: false,
   });
 
-  // LightRAG entities — only fetched when lightrag tab is active
+  // ── LightRAG: graph health check (/graph/lightrag) ─────────────────────
+  // This query is the canary: if the lightrag backend is unavailable the
+  // endpoint returns non-2xx and request() throws, surfacing lrGraphIsError.
+  const {
+    isLoading: lrGraphLoading,
+    isError:   lrGraphIsError,
+    error:     lrGraphError,
+  } = useQuery({
+    queryKey: ['lightrag-graph'],
+    queryFn: () => api.getLightRagGraph(),
+    enabled: activeTab === 'lightrag',
+    retry: false,
+  });
+
+  // ── LightRAG: entity list (/graph/entities) ────────────────────────────
   const {
     data: lrData,
-    isLoading: lrLoading,
-    isError: lrIsError,
-    error: lrError,
+    isLoading: lrEntitiesLoading,
+    isError:   lrEntitiesIsError,
+    error:     lrEntitiesError,
   } = useQuery<LightRagData>({
     queryKey: ['graph-entities'],
     queryFn: () => api.getGraphEntities() as Promise<LightRagData>,
@@ -62,9 +74,16 @@ export default function GraphPage() {
     retry: false,
   });
 
+  // Merged LightRAG loading / error state
+  const lrLoading = lrGraphLoading || lrEntitiesLoading;
+  const lrIsError = lrGraphIsError || lrEntitiesIsError;
+  const lrError   = lrGraphError   ?? lrEntitiesError;
+
+  // ── Handlers ───────────────────────────────────────────────────────────
   const handleRefresh = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ['graph'] });
     if (activeTab === 'lightrag') {
+      queryClient.invalidateQueries({ queryKey: ['lightrag-graph'] });
       queryClient.invalidateQueries({ queryKey: ['graph-entities'] });
     }
   }, [queryClient, activeTab]);
@@ -81,6 +100,7 @@ export default function GraphPage() {
     }
   }, [queryClient]);
 
+  // ── Derived ────────────────────────────────────────────────────────────
   const allNodes  = graphData?.nodes ?? [];
   const nodeCount = allNodes.length;
   const edgeCount = graphData?.edges?.length ?? 0;
@@ -102,6 +122,7 @@ export default function GraphPage() {
     links: (graphData?.edges ?? []).map((e) => ({ source: e.source, target: e.target })),
   };
 
+  // ── Render ─────────────────────────────────────────────────────────────
   return (
     <div className="graph-page">
 
@@ -109,10 +130,7 @@ export default function GraphPage() {
       <div className="graph-page__header">
         <h1 className="graph-page__title">Knowledge Graph</h1>
 
-        {/* Tab bar — plain div, NO role="tablist"; buttons have NO role="tab".
-            Tests query these via getByRole('button', { name: /wikilinks/i }).
-            An explicit role="tab" would override the implicit button role
-            and make getByRole('button') miss the element. */}
+        {/* Tab buttons — no role="tab"; tests query by role="button" */}
         <div className="graph-page__tabs">
           <button
             aria-selected={activeTab === 'wikilinks'}
@@ -130,7 +148,6 @@ export default function GraphPage() {
           </button>
         </div>
 
-        {/* Toolbar */}
         <div className="graph-page__toolbar" role="toolbar" aria-label="Graph controls">
           {activeTab === 'wikilinks' && (
             <input
@@ -162,7 +179,7 @@ export default function GraphPage() {
         </div>
       </div>
 
-      {/* Wikilinks tab content */}
+      {/* ── Wikilinks tab content ── */}
       {activeTab === 'wikilinks' && (
         <div className="graph-page__wikilinks">
           {graphLoading && (
@@ -222,13 +239,13 @@ export default function GraphPage() {
         </div>
       )}
 
-      {/* LightRAG Knowledge tab content */}
+      {/* ── LightRAG Knowledge tab content ── */}
       {activeTab === 'lightrag' && (
         <div className="graph-page__lightrag">
           {lrLoading && (
             <div role="status" className="graph-page__lr-loading">Loading entities\u2026</div>
           )}
-          {lrIsError && (
+          {!lrLoading && lrIsError && (
             <div role="alert" className="graph-page__lr-error">
               LightRAG graph not available: {String(lrError)}
             </div>
