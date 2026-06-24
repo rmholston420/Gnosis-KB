@@ -9,7 +9,6 @@ import cytoscape from 'cytoscape';
 import type { Core, EventObject } from 'cytoscape';
 import type { GraphData, GraphNode, GraphEdge } from '../types';
 import api from '../services/api';
-import NoteDetailPanel from '../components/NoteDetailPanel';
 import LightRagNodePanel, { type LightRagEntity, type LightRagRelation } from '../components/graph/LightRagNodePanel';
 import './GraphPage.css';
 
@@ -88,6 +87,24 @@ export default function GraphPage(_props: GraphPageProps) {
 
     return [...nodes, ...edges];
   }, [data]);
+
+  // -------------------------------------------------------------------------
+  // LightRAG node open — defined before Cytoscape useEffect so it can be
+  // included in the dependency array without causing a lint warning.
+  // -------------------------------------------------------------------------
+  const handleLightRagOpen = useCallback(async (nodeId: string) => {
+    setLightRagOpen(true);
+    setLightRagLoading(true);
+    setLightRagError(null);
+    try {
+      const result = await api.getLightRagNode(nodeId) as { entity: LightRagEntity; relations: LightRagRelation[] };
+      setLightRagNode(result);
+    } catch (e) {
+      setLightRagError(String(e));
+    } finally {
+      setLightRagLoading(false);
+    }
+  }, []);
 
   // -------------------------------------------------------------------------
   // Cytoscape initialisation / re-render
@@ -188,7 +205,7 @@ export default function GraphPage(_props: GraphPageProps) {
       cy.destroy();
       cyRef.current = null;
     };
-  }, [data, layout, buildElements]);
+  }, [data, layout, buildElements, handleLightRagOpen]);
 
   // -------------------------------------------------------------------------
   // Layout change
@@ -213,23 +230,6 @@ export default function GraphPage(_props: GraphPageProps) {
       cyRef.current.animate({ fit: { eles: match, padding: 80 }, duration: 400 });
       match.first().select();
       setSelectedNodeId(match.first().id());
-    }
-  }, []);
-
-  // -------------------------------------------------------------------------
-  // LightRAG node open
-  // -------------------------------------------------------------------------
-  const handleLightRagOpen = useCallback(async (nodeId: string) => {
-    setLightRagOpen(true);
-    setLightRagLoading(true);
-    setLightRagError(null);
-    try {
-      const result = await api.getLightRagNode(nodeId) as { entity: LightRagEntity; relations: LightRagRelation[] };
-      setLightRagNode(result);
-    } catch (e) {
-      setLightRagError(String(e));
-    } finally {
-      setLightRagLoading(false);
     }
   }, []);
 
@@ -288,14 +288,14 @@ export default function GraphPage(_props: GraphPageProps) {
         <input
           className="graph-page__search"
           type="search"
-          placeholder="Jump to node…"
+          placeholder="Jump to node\u2026"
           value={search}
           onChange={(e) => handleSearch(e.target.value)}
           aria-label="Search nodes"
         />
 
         <span className="graph-page__stats" aria-label={`${nodeCount} nodes, ${edgeCount} edges`}>
-          {nodeCount} nodes · {edgeCount} edges
+          {nodeCount} nodes \u00b7 {edgeCount} edges
         </span>
       </div>
 
@@ -312,7 +312,7 @@ export default function GraphPage(_props: GraphPageProps) {
             onClick={() => setSelectedNodeId(null)}
             aria-label="Close note panel"
           >
-            ×
+            \u00d7
           </button>
           <div className="graph-page__side-panel-title">{selectedNode.title}</div>
           <button
@@ -336,7 +336,7 @@ export default function GraphPage(_props: GraphPageProps) {
         />
       )}
       {lightRagOpen && lightRagLoading && (
-        <div className="lightrag-loading" role="status">Loading LightRAG data…</div>
+        <div className="lightrag-loading" role="status">Loading LightRAG data\u2026</div>
       )}
       {lightRagOpen && lightRagError && (
         <div className="lightrag-error" role="alert">{lightRagError}</div>
