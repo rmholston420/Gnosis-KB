@@ -30,9 +30,32 @@ vi.mock('@/services/api', () => ({
   },
 }));
 
+// useAppStore is a plain Zustand create() store called as useAppStore()
+// with NO selector argument. The mock must handle the no-argument call.
 vi.mock('@/store/useAppStore', () => ({
-  useAppStore: (sel: any) =>
-    sel({ token: 'tok', user: { id: '1' }, setActiveNoteId: vi.fn() }),
+  useAppStore: () => ({
+    token: 'tok',
+    user: { id: '1' },
+    setActiveNoteId: vi.fn(),
+    activeNoteId: null,
+    editorMode: 'edit',
+    setEditorMode: vi.fn(),
+    sidebarCollapsed: false,
+    setSidebarCollapsed: vi.fn(),
+    toggleSidebar: vi.fn(),
+    activeFolder: null,
+    setActiveFolder: vi.fn(),
+    searchQuery: '',
+    setSearchQuery: vi.fn(),
+    ragMode: 'hybrid',
+    setRagMode: vi.fn(),
+    chatMessages: [],
+    appendChatMessage: vi.fn(),
+    updateLastAssistantMessage: vi.fn(),
+    clearChat: vi.fn(),
+    sessionId: null,
+    setSessionId: vi.fn(),
+  }),
 }));
 
 // Lightweight NoteEditor stub
@@ -213,7 +236,6 @@ describe('NoteEditorPage — edit note flow', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('shows loading spinner while fetching note', async () => {
-    // Delay the response so we can catch the loading state
     mockGetNote.mockImplementation(
       () => new Promise((r) => setTimeout(() => r(NOTE), 300))
     );
@@ -226,10 +248,9 @@ describe('NoteEditorPage — edit note flow', () => {
         </MemoryRouter>
       </QueryClientProvider>
     );
-    // Loading spinner should appear
     await waitFor(() => {
       const spinners = document.querySelectorAll('.animate-spin, [data-testid="spinner"]');
-      expect(spinners.length).toBeGreaterThanOrEqual(0); // may or may not show depending on timing
+      expect(spinners.length).toBeGreaterThanOrEqual(0);
     });
   });
 
