@@ -1,181 +1,238 @@
-import React, { useEffect, useRef, useState } from 'react';
-import type { AIChatMessage as BaseChatMessage } from '../types';
+/**
+ * AIChat: Real-time streaming chat with the Gnosis knowledge graph.
+ *
+ * Uses fetch() + ReadableStream for SSE so we can send the Authorization
+ * header — EventSource does not support custom headers.
+ * Token is read from localStorage ('gnosis_token') to mirror api.ts.
+ *
+ * Meta event: the backend emits a single `{meta: {rag_source, mode}}`
+ * event just before [DONE].  We capture it and display a colour-coded badge
+ * beneath the assistant message.
+ */
 
-export interface MetaPayload {
-  [key: string]: unknown;
-  sources?: Array<{ note_id: string; title: string; score?: number }>;
-  model?: string;
-  error?: string;
-}
+import { useRef, useState } from 'react';
+import { Send, Loader2, Bot, User, Zap, BookOpen, Cpu } from 'lucide-react';
+import type { ChatMessage } from '../types';
 
-export type AIChatMessage = BaseChatMessage & {
-  meta?: MetaPayload;
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api/v1';
+
+type RagSource = 'lightrag' | 'vector' | 'hybrid' | 'naive';
+type ChatMode  = 'hybrid' | 'lightrag' | 'vector' | 'naive';
+
+interface MetaPayload { rag_source: RagSource; mode: ChatMode; }
+
+const SOURCE_BADGE: Record<RagSource, { label: string; className: string }> = {
+  lightrag: { label: 'LightRAG', className: 'bg-purple-500/20 text-purple-300 border-purple-500/30' },
+  vector:   { label: 'Vector',   className: 'bg-blue-500/20   text-blue-300   border-blue-500/30'   },
+  hybrid:   { label: 'Hybrid',   className: 'bg-teal-500/20   text-teal-300   border-teal-500/30'   },
+  naive:    { label: 'Naive',    className: 'bg-gray-500/20   text-gray-300   border-gray-500/30'   },
 };
 
-interface Props {
-  noteId?: string | null;
-  initialMessages?: AIChatMessage[];
+interface AIChatMessage extends ChatMessage {
+  meta?: MetaPayload;
 }
 
-type ChatMode = 'hybrid' | 'lightrag' | 'vector' | 'naive';
+export default function AIChat() {
+  const [messages, setMessages] = useState<AIChatMessage[]>([]);
+  const [input,    setInput]    = useState('');
+  const [loading,  setLoading]  = useState(false);
+  const [mode,     setMode]     = useState<ChatMode>('hybrid');
+  const bottomRef  = useRef<HTMLDivElement>(null);
+  const sessionRef = useRef<string>(crypto.randomUUID());
 
-const MODES: ChatMode[] = ['hybrid', 'lightrag', 'vector', 'naive'];
-const INPUT_PLACEHOLDER = 'Ask your knowledge base…';
-const EMPTY_TEXT = 'Ask anything about your knowledge base…';
-
-export default function AIChat({ initialMessages = [] }: Props) {
-  const [messages, setMessages] = useState<AIChatMessage[]>(initialMessages);
-  const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [mode, setMode] = useState<ChatMode>('hybrid');
-  const bottomRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, loading]);
-
-  async function handleSend() {
+  async function send() {
     const text = input.trim();
     if (!text || loading) return;
 
     const userMsg: AIChatMessage = { role: 'user', content: text };
-    setInput('');
     setMessages((prev) => [...prev, userMsg]);
+    setInput('');
     setLoading(true);
 
+    // Append a placeholder assistant message we'll stream into
+    const assistantIdx = messages.length + 1;
+    setMessages((prev) => [...prev, { role: 'assistant', content: '' }]);
+
     try {
-      const res = await fetch('/api/ai/chat/stream', {
+      const token = localStorage.getItem('gnosis_token') ?? '';
+      const res = await fetch(`${API_BASE}/ai/chat/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${globalThis.localStorage?.getItem?.('gnosis_token') ?? ''}`,
+          Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ message: text, mode }),
+        body: JSON.stringify({ message: text, mode, session_id: sessionRef.current }),
       });
 
       if (!res.ok || !res.body) {
-        throw new Error('Failed to get response');
+        throw new Error(`HTTP ${res.status}`);
       }
 
-      const reader = res.body.getReader();
+      const reader  = res.body.getReader();
       const decoder = new TextDecoder();
-      let buffer = '';
-      let assistantText = '';
+      let accumulated = '';
+      let buf = '';
 
-      setMessages((prev) => [...prev, { role: 'assistant', content: '' }]);
-
+      // eslint-disable-next-line no-constant-condition
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        buffer += decoder.decode(value, { stream: true });
-        const parts = buffer.split('\n\n');
-        buffer = parts.pop() ?? '';
+        buf += decoder.decode(value, { stream: true });
+
+        // SSE lines end with \n\n
+        const parts = buf.split('\n\n');
+        buf = parts.pop() ?? '';
 
         for (const part of parts) {
-          const line = part
-            .split('\n')
-            .find((entry) => entry.trim().startsWith('data:'));
-          if (!line) continue;
+          for (const line of part.split('\n')) {
+            if (!line.startsWith('data: ')) continue;
+            const payload = line.slice(6).trim();
+            if (payload === '[DONE]') continue;
+            try {
+              const parsed = JSON.parse(payload) as
+                | { token: string }
+                | { meta: MetaPayload }
+                | { error: string };
 
-          const payload = line.replace(/^data:\s*/, '').trim();
-          if (payload === '[DONE]') continue;
-
-          try {
-            const parsed = JSON.parse(payload) as { token?: string; reply?: string };
-            const chunk = parsed.token ?? parsed.reply ?? '';
-            if (!chunk) continue;
-            assistantText += chunk;
-            setMessages((prev) => {
-              const next = [...prev];
-              next[next.length - 1] = { role: 'assistant', content: assistantText };
-              return next;
-            });
-          } catch {
-            // ignore malformed SSE chunks
+              if ('error' in parsed) {
+                accumulated += `\n\n*Error: ${parsed.error}*`;
+              } else if ('meta' in parsed) {
+                setMessages((prev) =>
+                  prev.map((m, i) =>
+                    i === assistantIdx ? { ...m, meta: parsed.meta } : m
+                  )
+                );
+              } else if ('token' in parsed) {
+                accumulated += parsed.token;
+                setMessages((prev) =>
+                  prev.map((m, i) =>
+                    i === assistantIdx ? { ...m, content: accumulated } : m
+                  )
+                );
+                bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+              }
+            } catch {
+              // ignore non-JSON lines
+            }
           }
         }
       }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to get response';
-      setMessages((prev) => [
-        ...prev,
-        { role: 'assistant', content: message, meta: { error: message } },
-      ]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      setMessages((prev) =>
+        prev.map((m, i) =>
+          i === assistantIdx
+            ? { ...m, content: `*Failed to get response: ${msg}*` }
+            : m
+        )
+      );
     } finally {
       setLoading(false);
-    }
-  }
-
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      void handleSend();
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }
 
   return (
-    <div className="flex flex-col h-full" data-testid="ai-chat">
-      <div className="flex-shrink-0 border-b border-border px-3 py-2 flex gap-1.5">
-        {MODES.map((item) => (
+    <div className="flex h-full flex-col bg-bg-primary text-text-primary">
+
+      {/* Mode selector */}
+      <div className="flex items-center gap-2 border-b border-border-default px-4 py-2">
+        <span className="text-xs text-text-muted">Mode:</span>
+        {(['hybrid', 'lightrag', 'vector', 'naive'] as ChatMode[]).map((m) => (
           <button
-            key={item}
-            type="button"
-            aria-label={item}
-            onClick={() => setMode(item)}
-            className={`px-2 py-1 rounded text-xs capitalize transition-colors ${
-              mode === item
+            key={m}
+            onClick={() => setMode(m)}
+            className={`rounded px-2 py-0.5 text-xs transition-colors ${
+              mode === m
                 ? 'bg-accent-teal text-white'
-                : 'bg-bg-secondary text-text-primary hover:bg-bg-elevated'
+                : 'text-text-muted hover:bg-bg-elevated'
             }`}
           >
-            {item}
+            {m}
           </button>
         ))}
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 py-2 space-y-3">
+      {/* Message list */}
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
         {messages.length === 0 && (
-          <p className="text-xs text-text-muted text-center mt-8">{EMPTY_TEXT}</p>
+          <div className="flex flex-col items-center justify-center h-full gap-3 text-text-muted">
+            <Bot size={40} className="opacity-30" />
+            <p className="text-sm">Ask anything about your knowledge base</p>
+          </div>
         )}
         {messages.map((msg, i) => (
-          <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div
-              className={`max-w-[85%] rounded px-3 py-2 text-xs leading-relaxed ${
-                msg.role === 'user' ? 'bg-primary text-white' : 'bg-bg-elevated text-text-primary'
-              }`}
-            >
-              {msg.content}
+          <div key={i} className={`flex gap-3 ${ msg.role === 'user' ? 'justify-end' : 'justify-start' }`}>
+            {msg.role === 'assistant' && (
+              <div className="flex-shrink-0 w-7 h-7 rounded-full bg-accent-teal/20 flex items-center justify-center">
+                <Cpu size={14} className="text-accent-teal" />
+              </div>
+            )}
+            <div className={`max-w-[75%] ${ msg.role === 'user' ? 'order-first' : '' }`}>
+              <div
+                className={`rounded-lg px-3 py-2 text-sm leading-relaxed ${
+                  msg.role === 'user'
+                    ? 'bg-accent-teal text-white ml-auto'
+                    : 'bg-bg-secondary text-text-primary'
+                }`}
+              >
+                {msg.content || (
+                  <span className="inline-flex gap-1">
+                    <span className="animate-bounce" style={{ animationDelay: '0ms'   }}>·</span>
+                    <span className="animate-bounce" style={{ animationDelay: '150ms' }}>·</span>
+                    <span className="animate-bounce" style={{ animationDelay: '300ms' }}>·</span>
+                  </span>
+                )}
+              </div>
+              {msg.role === 'assistant' && msg.meta && (() => {
+                const badge = SOURCE_BADGE[msg.meta.rag_source];
+                return badge ? (
+                  <div className="mt-1 flex items-center gap-1.5">
+                    <span className={`rounded border px-1.5 py-0.5 text-xs font-medium ${badge.className}`}>
+                      {badge.label}
+                    </span>
+                    <span className="text-xs text-text-faint capitalize">{msg.meta.mode} mode</span>
+                  </div>
+                ) : null;
+              })()}
             </div>
+            {msg.role === 'user' && (
+              <div className="flex-shrink-0 w-7 h-7 rounded-full bg-bg-tertiary flex items-center justify-center">
+                <User size={14} className="text-text-muted" />
+              </div>
+            )}
           </div>
         ))}
-        {loading && (
-          <div className="flex justify-start">
-            <div className="bg-bg-elevated rounded px-3 py-2 text-xs text-text-muted animate-pulse">
-              Thinking…
-            </div>
-          </div>
-        )}
         <div ref={bottomRef} />
       </div>
 
-      <div className="flex-shrink-0 border-t border-border p-2 flex gap-1.5">
-        <textarea
-          className="flex-1 resize-none rounded border border-border bg-bg-secondary text-xs text-text-primary placeholder:text-text-muted px-2 py-1.5 focus:outline-none focus:border-primary"
-          rows={2}
-          placeholder={INPUT_PLACEHOLDER}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          disabled={loading}
-        />
-        <button
-          onClick={() => void handleSend()}
-          disabled={loading || !input.trim()}
-          className="px-3 py-1.5 rounded bg-primary text-white text-xs font-medium disabled:opacity-40 hover:bg-primary-hover transition-colors"
-        >
-          Send
-        </button>
+      {/* Input */}
+      <div className="border-t border-border-default px-4 py-3">
+        <div className="flex items-end gap-2">
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); }
+            }}
+            placeholder="Ask your knowledge base…"
+            rows={1}
+            className="flex-1 resize-none rounded-lg bg-bg-secondary px-3 py-2 text-sm focus:outline-none border border-border-default min-h-[36px] max-h-[120px]"
+            style={{ height: 'auto' }}
+          />
+          <button
+            onClick={() => void send()}
+            disabled={loading || !input.trim()}
+            className="flex-shrink-0 rounded-lg bg-accent-teal p-2 text-white hover:bg-accent-teal/80 disabled:opacity-50 transition-colors"
+          >
+            {loading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+          </button>
+        </div>
+        <div className="mt-1.5 flex items-center gap-1 text-xs text-text-faint">
+          <Zap size={10} />
+          <span>Powered by LightRAG · <BookOpen size={10} className="inline" /> references your vault</span>
+        </div>
       </div>
     </div>
   );

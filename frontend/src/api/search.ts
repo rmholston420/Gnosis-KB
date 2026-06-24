@@ -1,33 +1,57 @@
-import type { SearchResult, SearchMode } from '../types';
+/**
+ * Search API — typed wrappers around /api/v1/search endpoints.
+ */
+import client from './client';
+import type { SearchResult, SearchResponse } from '../types';
 
-const BASE = (import.meta as unknown as { env: Record<string, string> }).env?.VITE_API_URL ?? '';
+export type SearchMode = 'hybrid' | 'semantic' | 'fulltext';
 
-async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const url = BASE ? `${BASE}${path}` : new URL(path, 'http://localhost').toString();
-  const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json' },
-    ...init,
+export interface SearchParams {
+  q: string;
+  mode?: SearchMode;
+  limit?: number;
+  offset?: number;
+  folder?: string;
+  tags?: string;
+}
+
+/** Hybrid BM25 + vector RRF fusion search (default). */
+export async function search(params: SearchParams): Promise<SearchResponse> {
+  const { data } = await client.get<SearchResponse>('/api/v1/search', { params });
+  return data;
+}
+
+/** Pure semantic (dense vector) search. */
+export async function semanticSearch(q: string, limit = 10): Promise<SearchResponse> {
+  const { data } = await client.get<SearchResponse>('/api/v1/search/semantic', {
+    params: { q, limit },
   });
-  if (!res.ok) throw new Error(`Search API ${res.status}: ${path}`);
-  return res.json() as Promise<T>;
+  return data;
 }
 
-export async function searchNotes(query: string, mode: SearchMode = 'hybrid') {
-  return req<{ query: string; mode: SearchMode; items: SearchResult[]; total: number }>(
-    `/api/search?q=${encodeURIComponent(query)}&mode=${mode}`,
-  );
+/** Pure BM25 full-text search. */
+export async function fulltextSearch(q: string, limit = 10): Promise<SearchResponse> {
+  const { data } = await client.get<SearchResponse>('/api/v1/search/fulltext', {
+    params: { q, limit },
+  });
+  return data;
 }
 
-export async function getSimilarNotes(noteId: string) {
-  return req<SearchResult[]>(`/api/search/similar/${noteId}`);
+/** Search by tags. */
+export async function searchByTags(tags: string[], limit = 20): Promise<SearchResponse> {
+  const { data } = await client.get<SearchResponse>('/api/v1/search/tags', {
+    params: { tags: tags.join(','), limit },
+  });
+  return data;
 }
 
-export const searchApi = {
-  search: async (query: string, mode: SearchMode = 'hybrid') => {
-    const res = await searchNotes(query, mode);
-    return res.items;
-  },
-  getSimilar: getSimilarNotes,
-};
-
-export default searchApi;
+/** Find semantically similar notes to a given note. */
+export async function findSimilar(
+  noteId: string,
+  limit = 5,
+): Promise<SearchResult[]> {
+  const { data } = await client.get<SearchResult[]>(`/api/v1/search/similar/${noteId}`, {
+    params: { limit },
+  });
+  return data;
+}

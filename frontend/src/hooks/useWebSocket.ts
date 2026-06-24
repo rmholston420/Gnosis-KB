@@ -1,73 +1,71 @@
 /**
- * useWebSocket / useVaultWebSocket
- * ================================
- * Manages a WebSocket connection to the backend.
- * Returns { lastMessage, send, readyState } so consumers can react to events.
- *
- * Used by VaultSyncWatcher to invalidate TanStack Query caches on live events.
+ * useWebSocket — real-time vault watcher updates via WebSocket.
+ * Connects to the FastAPI backend WS endpoint and fires callbacks
+ * when notes are created, updated, or deleted by the vault sync service.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { NOTES_KEY } from './useNotes';
 
-export type WsMessage = { type: string; data?: unknown };
+export type VaultEvent =
+  | { type: 'note_created'; note_id: string; title: string }
+  | { type: 'note_updated'; note_id: string }
+  | { type: 'note_deleted'; note_id: string }
+  | { type: 'sync_complete'; synced: number };
 
-export type ReadyState = 0 | 1 | 2 | 3;
+const WS_BASE = (() => {
+  const base = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8010';
+  return base.replace(/^https?/, base.startsWith('https') ? 'wss' : 'ws');
+})();
 
-const WS_BASE =
-  (typeof import.meta !== 'undefined'
-    ? (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_WS_URL
-    : undefined) ??
-  `${typeof window !== 'undefined' && window.location.origin.replace(/^http/, 'ws')}/ws`;
-
-function useWebSocket(url: string) {
-  const wsRef                 = useRef<WebSocket | null>(null);
-  const [lastMessage, setLastMessage] = useState<WsMessage | null>(null);
-  const [readyState,  setReadyState]  = useState<ReadyState>(3); // CLOSED
+/**
+ * Subscribes to the vault watcher WebSocket and automatically invalidates
+ * TanStack Query caches when vault events arrive.
+ *
+ * @param onEvent — optional callback for each raw event
+ */
+export function useVaultWebSocket(onEvent?: (evt: VaultEvent) => void) {
+  const qc     = useQueryClient();
+  const wsRef  = useRef<WebSocket | null>(null);
+  const cbRef  = useRef(onEvent);
+  cbRef.current = onEvent;
 
   const connect = useCallback(() => {
-    if (wsRef.current && wsRef.current.readyState < 2) return; // already open/connecting
-
-    const ws = new WebSocket(url);
+    const token = localStorage.getItem('gnosis_token');
+    const url   = `${WS_BASE}/api/v1/ws/vault?token=${token ?? ''}`;
+    const ws    = new WebSocket(url);
     wsRef.current = ws;
 
-    ws.onopen    = () => setReadyState(1);
-    ws.onclose   = () => {
-      setReadyState(3);
-      // Auto-reconnect after 3 s
-      setTimeout(connect, 3000);
-    };
-    ws.onerror   = () => ws.close();
-    ws.onmessage = (evt) => {
-      try {
-        const parsed = JSON.parse(evt.data as string) as WsMessage;
-        setLastMessage(parsed);
-      } catch {
-        // ignore non-JSON frames
+    ws.onmessage = (ev) => {
+      let evt: VaultEvent | null = null;
+      try { evt = JSON.parse(ev.data) as VaultEvent; } catch { return; }
+
+      cbRef.current?.(evt);
+
+      switch (evt.type) {
+        case 'note_created':
+        case 'note_updated':
+          void qc.invalidateQueries({ queryKey: [NOTES_KEY, evt.note_id] });
+          void qc.invalidateQueries({ queryKey: [NOTES_KEY] });
+          break;
+        case 'note_deleted':
+          void qc.invalidateQueries({ queryKey: [NOTES_KEY] });
+          break;
+        case 'sync_complete':
+          void qc.invalidateQueries({ queryKey: [NOTES_KEY] });
+          void qc.invalidateQueries({ queryKey: ['graph'] });
+          break;
       }
     };
-  }, [url]);
+
+    ws.onclose = () => {
+      const delay = Math.min(1000 * 2 ** (wsRef.current?.readyState ?? 0), 30_000);
+      setTimeout(connect, delay);
+    };
+  }, [qc]);
 
   useEffect(() => {
     connect();
-    return () => {
-      wsRef.current?.close();
-    };
+    return () => { wsRef.current?.close(); };
   }, [connect]);
-
-  const send = useCallback((data: unknown) => {
-    if (wsRef.current?.readyState === 1) {
-      wsRef.current.send(JSON.stringify(data));
-    }
-  }, []);
-
-  return { lastMessage, send, readyState };
 }
-
-/**
- * Hook for the vault-sync event stream.
- * Returns { lastMessage, send, readyState } — consumed by VaultSyncWatcher.
- */
-export function useVaultWebSocket() {
-  return useWebSocket(`${WS_BASE}/vault`);
-}
-
-export default useWebSocket;

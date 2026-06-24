@@ -1,108 +1,117 @@
 /**
- * hooks/useAI.ts — TanStack Query hooks for AI features plus streaming chat mutation.
- *
- * Design contract (tests rely on this):
- *  useLinkSuggestions  → useQuery  (auto-fetches, no manual trigger)
- *  useTagSuggestions   → useQuery  (auto-fetches)
- *  useNoteSummary      → useMutation (manual trigger via mutate())
- *  useNoteCritique     → useMutation (manual trigger via mutate())
- *
- * All AI calls go through aiApi (api/ai.ts) so tests can spy on
- * that module's methods directly.
+ * useAI — hooks for AI chat, summarization, suggestions, and critiques.
+ * Streaming chat uses EventSource (SSE).
  */
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { aiApi } from '../api/ai';
-import api from '../services/api';
-import type { ChatMessage, ChatSource } from '../types';
+import { useState, useCallback, useRef } from 'react';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import {
+  chat, summarizeNote, suggestLinks, suggestTags,
+  critiqueNote, orphanAudit, streamingChatUrl,
+} from '../api/ai';
+import type { AiChatMessage, RagMode } from '../types';
 
-export interface SummarizeResult {
-  summary: string;
-  keywords?: string[];
+/** Stateful streaming chat session backed by SSE. */
+export function useAiChat(sessionId?: string) {
+  const [messages, setMessages]  = useState<AiChatMessage[]>([]);
+  const [streaming, setStreaming] = useState(false);
+  const [error, setError]         = useState<string | null>(null);
+  const [ragMode, setRagMode]     = useState<RagMode>('hybrid');
+  const esRef = useRef<EventSource | null>(null);
+
+  const sendMessage = useCallback((text: string) => {
+    const userMsg: AiChatMessage = { role: 'user', content: text };
+    setMessages((prev) => [...prev, userMsg]);
+    setStreaming(true);
+    setError(null);
+
+    esRef.current?.close();
+
+    let buffer = '';
+    const assistantIdx = messages.length + 1;
+
+    const url = streamingChatUrl({ message: text, mode: ragMode, session_id: sessionId });
+    const es  = new EventSource(url);
+    esRef.current = es;
+
+    es.onmessage = (ev) => {
+      if (ev.data === '[DONE]') {
+        es.close();
+        setStreaming(false);
+        return;
+      }
+      try {
+        const chunk = JSON.parse(ev.data) as { token?: string; citations?: string[] };
+        buffer += chunk.token ?? '';
+        setMessages((prev) => {
+          const next = [...prev];
+          const existing = next[assistantIdx];
+          if (existing) {
+            next[assistantIdx] = { ...existing, content: buffer, citations: chunk.citations };
+          } else {
+            next.push({ role: 'assistant', content: buffer, citations: chunk.citations });
+          }
+          return next;
+        });
+      } catch {
+        // non-JSON event; skip
+      }
+    };
+
+    es.onerror = () => {
+      es.close();
+      setStreaming(false);
+      setError('Stream interrupted. Please try again.');
+    };
+  }, [messages.length, ragMode, sessionId]);
+
+  const clearHistory = useCallback(() => {
+    esRef.current?.close();
+    setMessages([]);
+    setError(null);
+  }, []);
+
+  return { messages, streaming, error, ragMode, setRagMode, sendMessage, clearHistory };
 }
 
-export interface CritiqueResult {
-  critique: string;
-  suggestions?: unknown[];
-}
-
-export interface LinkSuggestResult {
-  suggestions: unknown[];
-}
-
-export interface TagSuggestResult {
-  suggestions: unknown[];
-}
-
-/**
- * useNoteSummary — mutation so the user can trigger it on demand.
- * Returns { mutate, data, isPending } — same shape as useMutation.
- */
-export function useNoteSummary(noteId?: string | null) {
-  return useMutation<SummarizeResult, Error, undefined>({
-    mutationFn: () => aiApi.summarizeNote(noteId!) as Promise<SummarizeResult>,
+/** Summarize a note via AI. */
+export function useNoteSummary(noteId: string | null) {
+  return useMutation({
+    mutationFn: () => summarizeNote(noteId!),
   });
 }
 
-/**
- * useNoteCritique / useCritiqueNote — mutation, on-demand.
- */
-export function useNoteCritique(noteId?: string | null) {
-  return useMutation<CritiqueResult, Error, undefined>({
-    mutationFn: () => aiApi.critiqueNote(noteId!) as Promise<CritiqueResult>,
+/** Suggest wikilinks for a note. */
+export function useLinkSuggestions(noteId: string | null) {
+  return useQuery({
+    queryKey: ['ai', 'suggest-links', noteId],
+    queryFn:  () => suggestLinks(noteId!),
+    enabled:  !!noteId,
+    staleTime: 300_000,
   });
 }
 
-export const useCritiqueNote = useNoteCritique;
-
-/**
- * useLinkSuggestions — auto-fetching query via aiApi so tests can spy.
- */
-export function useLinkSuggestions(noteId?: string | null) {
-  return useQuery<LinkSuggestResult>({
-    queryKey: ['ai', 'link-suggestions', noteId],
-    queryFn: async () => {
-      const result = await aiApi.suggestLinks(noteId!);
-      return Array.isArray(result)
-        ? ({ suggestions: result } as LinkSuggestResult)
-        : (result as LinkSuggestResult);
-    },
-    enabled: Boolean(noteId),
+/** Suggest tags for a note. */
+export function useTagSuggestions(noteId: string | null) {
+  return useQuery({
+    queryKey: ['ai', 'suggest-tags', noteId],
+    queryFn:  () => suggestTags(noteId!),
+    enabled:  !!noteId,
+    staleTime: 300_000,
   });
 }
 
-/**
- * useTagSuggestions — auto-fetching query via aiApi.
- */
-export function useTagSuggestions(noteId?: string | null) {
-  return useQuery<TagSuggestResult>({
-    queryKey: ['ai', 'tag-suggestions', noteId],
-    queryFn: async () => {
-      const result = await aiApi.suggestTags(noteId!);
-      return Array.isArray(result)
-        ? ({ suggestions: result } as TagSuggestResult)
-        : (result as TagSuggestResult);
-    },
-    enabled: Boolean(noteId),
+/** Zettelkasten critique of a note. */
+export function useNoteCritique(noteId: string | null) {
+  return useMutation({
+    mutationFn: () => critiqueNote(noteId!),
   });
 }
 
-export interface AiChatState {
-  messages: ChatMessage[];
-  sources: ChatSource[];
-  isStreaming: boolean;
-  streamText: string;
-}
-
-export function useAIChat() {
-  const qc = useQueryClient();
-  return useMutation<void, Error, string>({
-    mutationFn: async (query: string) => {
-      void qc;
-      return new Promise<void>((resolve) => {
-        api.streamQuery(query, undefined, resolve);
-      });
-    },
+/** Orphan audit (returns suggestions for all orphaned notes). */
+export function useOrphanAudit() {
+  return useQuery({
+    queryKey: ['ai', 'orphan-audit'],
+    queryFn:  orphanAudit,
+    staleTime: 600_000,
   });
 }
-
-export type { ChatMessage, ChatSource };

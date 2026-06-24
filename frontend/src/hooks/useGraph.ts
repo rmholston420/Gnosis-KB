@@ -1,51 +1,77 @@
 /**
- * hooks/useGraph.ts — TanStack Query hooks for graph data.
+ * useGraph — hooks for fetching and interacting with the knowledge graph.
  */
 import { useQuery } from '@tanstack/react-query';
-import api from '../services/api';
+import { useState, useMemo } from 'react';
+import { getFullGraph, getNeighborhood, getGraphStats, getClusters } from '../api/graph';
+import { toForceGraphData, filterToNeighborhood } from '../lib/graphUtils';
 import type { GraphData, GraphStats } from '../types';
 
-const GRAPH_KEY = 'graph';
-
+/** Fetch the full knowledge graph and convert it for react-force-graph. */
 export function useFullGraph() {
-  return useQuery({
-    queryKey: [GRAPH_KEY, 'full'],
-    queryFn: () => api.getGraph() as Promise<GraphData>,
+  const query = useQuery<GraphData>({
+    queryKey:  ['graph', 'full'],
+    queryFn:   getFullGraph,
+    staleTime: 60_000,
+  });
+
+  const forceData = useMemo(
+    () => (query.data ? toForceGraphData(query.data) : { nodes: [], links: [] }),
+    [query.data],
+  );
+
+  return { ...query, forceData };
+}
+
+/** Fetch a note's ego-graph (1-hop neighborhood). */
+export function useNeighborhood(noteId: string | null, hops = 1) {
+  return useQuery<GraphData>({
+    queryKey: ['graph', 'neighborhood', noteId, hops],
+    queryFn:  () => getNeighborhood(noteId!, hops),
+    enabled:  !!noteId,
   });
 }
 
-export const useGraphData = useFullGraph;
-
-export function useLightRagGraph() {
-  return useQuery({
-    queryKey: [GRAPH_KEY, 'lightrag'],
-    queryFn: () => api.getLightRagGraph() as Promise<GraphData>,
-  });
-}
-
+/** Fetch graph statistics (density, avg degree, orphan count). */
 export function useGraphStats() {
-  return useQuery({
-    queryKey: [GRAPH_KEY, 'stats'],
-    queryFn: async (): Promise<GraphStats> => {
-      const data = await (api.getGraph() as Promise<GraphData>);
-      const degree = new Map<string, number>();
-      for (const e of data.edges) {
-        const src = (e as { source_id?: string; source?: string }).source_id ?? (e as { source?: string }).source ?? '';
-        const tgt = (e as { target_id?: string; target?: string }).target_id ?? (e as { target?: string }).target ?? '';
-        degree.set(src, (degree.get(src) ?? 0) + 1);
-        degree.set(tgt, (degree.get(tgt) ?? 0) + 1);
-      }
-      const sorted = data.nodes
-        .map((n) => ({ note_id: (n as { note_id?: string; id?: string }).note_id ?? (n as { id?: string }).id ?? '', title: n.title, degree: degree.get((n as { note_id?: string; id?: string }).note_id ?? (n as { id?: string }).id ?? '') ?? 0 }))
-        .sort((a, b) => b.degree - a.degree);
-      const totalDeg = [...degree.values()].reduce((s, v) => s + v, 0);
-      return {
-        total_nodes: data.nodes.length,
-        total_edges: data.edges.length,
-        avg_degree: data.nodes.length ? totalDeg / data.nodes.length : 0,
-        most_connected: sorted.slice(0, 10),
-        isolated_count: sorted.filter((n) => n.degree === 0).length,
-      };
-    },
+  return useQuery<GraphStats>({
+    queryKey:  ['graph', 'stats'],
+    queryFn:   getGraphStats,
+    staleTime: 120_000,
   });
+}
+
+/** Fetch community clusters. */
+export function useGraphClusters() {
+  return useQuery<GraphData>({
+    queryKey:  ['graph', 'clusters'],
+    queryFn:   getClusters,
+    staleTime: 120_000,
+  });
+}
+
+/**
+ * Combined hook for the GraphPage:
+ * manages focus node, neighborhood filter toggle, and search highlight.
+ */
+export function useGraphView() {
+  const { forceData, isLoading, isError } = useFullGraph();
+  const [focusNodeId, setFocusNodeId]         = useState<string | null>(null);
+  const [neighborhoodMode, setNeighborhoodMode] = useState(false);
+  const [searchHighlight, setSearchHighlight]   = useState<Set<string>>(new Set());
+
+  const displayData = useMemo(() => {
+    if (neighborhoodMode && focusNodeId) {
+      return filterToNeighborhood(forceData, focusNodeId, 2);
+    }
+    return forceData;
+  }, [forceData, neighborhoodMode, focusNodeId]);
+
+  return {
+    displayData,
+    focusNodeId, setFocusNodeId,
+    neighborhoodMode, setNeighborhoodMode,
+    searchHighlight,  setSearchHighlight,
+    isLoading, isError,
+  };
 }
