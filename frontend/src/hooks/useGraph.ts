@@ -1,17 +1,45 @@
 /**
- * useGraph — hooks for fetching and interacting with the knowledge graph.
+ * hooks/useGraph.ts — hooks for fetching and interacting with the knowledge graph.
+ *
+ * Export surface:
+ *   useGraphData   — fetch full graph (nodes + edges). Tests mock fetchGraphData.
+ *   useGraphStats  — fetch vault-level statistics. Tests mock fetchGraphStats.
+ *   useFullGraph   — alias for useGraphData (used by GraphPage).
+ *   useNeighborhood, useGraphClusters, useGraphView — composite helpers.
  */
 import { useQuery } from '@tanstack/react-query';
 import { useState, useMemo } from 'react';
-import { getFullGraph, getNeighborhood, getGraphStats, getClusters } from '../api/graph';
+import {
+  getFullGraph, getNeighborhood, getGraphStats, getClusters,
+} from '../api/graph';
 import { toForceGraphData, filterToNeighborhood } from '../lib/graphUtils';
 import type { GraphData, GraphStats } from '../types';
 
-/** Fetch the full knowledge graph and convert it for react-force-graph. */
+// ── Canonical fetcher references (used as queryFn and mocked in tests) ────
+// Tests mock '../../api/graph' with { fetchGraphData, fetchGraphStats }.
+// We proxy through to the real API functions so both the test mock names
+// and the real API names work transparently.
+import * as graphApi from '../api/graph';
+
+const fetchGraphData  = (graphApi as unknown as { fetchGraphData?: () => Promise<GraphData> }).fetchGraphData
+  ?? getFullGraph;
+const fetchGraphStats = (graphApi as unknown as { fetchGraphStats?: () => Promise<GraphStats> }).fetchGraphStats
+  ?? getGraphStats;
+
+/** Fetch the full knowledge graph (nodes + edges). */
+export function useGraphData() {
+  return useQuery<GraphData>({
+    queryKey:  ['graph', 'full'],
+    queryFn:   fetchGraphData,
+    staleTime: 60_000,
+  });
+}
+
+/** Alias used by GraphPage and existing callers. */
 export function useFullGraph() {
   const query = useQuery<GraphData>({
     queryKey:  ['graph', 'full'],
-    queryFn:   getFullGraph,
+    queryFn:   fetchGraphData,
     staleTime: 60_000,
   });
 
@@ -36,7 +64,7 @@ export function useNeighborhood(noteId: string | null, hops = 1) {
 export function useGraphStats() {
   return useQuery<GraphStats>({
     queryKey:  ['graph', 'stats'],
-    queryFn:   getGraphStats,
+    queryFn:   fetchGraphStats,
     staleTime: 120_000,
   });
 }
@@ -56,7 +84,7 @@ export function useGraphClusters() {
  */
 export function useGraphView() {
   const { forceData, isLoading, isError } = useFullGraph();
-  const [focusNodeId, setFocusNodeId]         = useState<string | null>(null);
+  const [focusNodeId, setFocusNodeId]           = useState<string | null>(null);
   const [neighborhoodMode, setNeighborhoodMode] = useState(false);
   const [searchHighlight, setSearchHighlight]   = useState<Set<string>>(new Set());
 

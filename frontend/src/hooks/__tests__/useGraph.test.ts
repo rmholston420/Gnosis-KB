@@ -13,9 +13,17 @@ const mockGraph = {
   edges: [],
 };
 
+// Mock using the names that useGraph.ts resolves at runtime:
+// getFullGraph  → used as fetchGraphData fallback
+// getGraphStats → used as fetchGraphStats fallback
+// We also provide the test-friendly aliases so both code paths work.
 vi.mock('../../api/graph', () => ({
-  fetchGraphData:  vi.fn(async () => mockGraph),
-  fetchGraphStats: vi.fn(async () => mockStats),
+  getFullGraph:      vi.fn(async () => mockGraph),
+  getGraphStats:     vi.fn(async () => mockStats),
+  fetchGraphData:    vi.fn(async () => mockGraph),
+  fetchGraphStats:   vi.fn(async () => mockStats),
+  getNeighborhood:   vi.fn(async () => ({ nodes: [], edges: [] })),
+  getClusters:       vi.fn(async () => ({ nodes: [], edges: [] })),
 }));
 
 import { useGraphData, useGraphStats } from '../useGraph';

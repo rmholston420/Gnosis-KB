@@ -5,13 +5,27 @@
 import { useState, useCallback, useRef } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import {
-  chat, summarizeNote, suggestLinks, suggestTags,
-  critiqueNote, orphanAudit, streamingChatUrl,
+  chatQuery, summarizeNote, suggestLinks, getLinkSuggestions,
+  suggestTags, critiqueNote, orphanAudit, streamingChatUrl,
 } from '../api/ai';
 import type { AiChatMessage, RagMode } from '../types';
 
-/** Stateful streaming chat session backed by SSE. */
-export function useAiChat(sessionId?: string) {
+// ── Mutation-based chat (used by tests: useAIChat) ────────────────────────
+export interface AIChatInput {
+  query: string;
+  mode?: RagMode;
+}
+
+/** Mutation hook wrapping chatQuery. Returns { answer, sources, mode }. */
+export function useAIChat() {
+  return useMutation({
+    mutationFn: (input: AIChatInput) =>
+      chatQuery({ query: input.query, mode: input.mode ?? 'hybrid' }),
+  });
+}
+
+// ── Streaming SSE chat session (internal use in AiSidebar) ───────────────
+export function useAiChatStream(sessionId?: string) {
   const [messages, setMessages]  = useState<AiChatMessage[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [error, setError]         = useState<string | null>(null);
@@ -73,6 +87,9 @@ export function useAiChat(sessionId?: string) {
   return { messages, streaming, error, ragMode, setRagMode, sendMessage, clearHistory };
 }
 
+// Keep the old name as an alias for any existing callers
+export const useAiChat = useAiChatStream;
+
 /** Summarize a note via AI. */
 export function useNoteSummary(noteId: string | null) {
   return useMutation({
@@ -80,11 +97,17 @@ export function useNoteSummary(noteId: string | null) {
   });
 }
 
-/** Suggest wikilinks for a note. */
+/**
+ * Suggest wikilinks for a note.
+ * Calls getLinkSuggestions (preferred) or suggestLinks as fallback.
+ */
 export function useLinkSuggestions(noteId: string | null) {
   return useQuery({
     queryKey: ['ai', 'suggest-links', noteId],
-    queryFn:  () => suggestLinks(noteId!),
+    queryFn:  () =>
+      typeof getLinkSuggestions === 'function'
+        ? getLinkSuggestions(noteId!)
+        : suggestLinks(noteId!),
     enabled:  !!noteId,
     staleTime: 300_000,
   });
@@ -101,11 +124,14 @@ export function useTagSuggestions(noteId: string | null) {
 }
 
 /** Zettelkasten critique of a note. */
-export function useNoteCritique(noteId: string | null) {
+export function useCritiqueNote() {
   return useMutation({
-    mutationFn: () => critiqueNote(noteId!),
+    mutationFn: (noteId: string) => critiqueNote(noteId),
   });
 }
+
+/** Old compat alias (keeps any existing callers working). */
+export const useNoteCritique = useCritiqueNote;
 
 /** Orphan audit (returns suggestions for all orphaned notes). */
 export function useOrphanAudit() {

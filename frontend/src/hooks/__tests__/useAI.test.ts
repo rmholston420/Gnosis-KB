@@ -3,17 +3,26 @@ import { renderHook, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement } from 'react';
 
+// Mock api/ai using the ACTUAL export names from that module.
+// chatQuery  — called by useAIChat
+// getLinkSuggestions — called by useLinkSuggestions (with suggestLinks as fallback)
+// critiqueNote       — called by useCritiqueNote
 vi.mock('../../api/ai', () => ({
-  chatQuery:       vi.fn(async () => ({ answer: 'The Dharma is clear.', sources: ['note-001'], mode: 'hybrid' })),
+  chatQuery: vi.fn(async () => ({ answer: 'The Dharma is clear.', sources: ['note-001'], mode: 'hybrid' })),
   getLinkSuggestions: vi.fn(async () => [
     { target_note_id: 'note-002', target_title: 'Dependent Origination', reason: 'Related concept', score: 0.91 },
   ]),
-  critiqueNote:    vi.fn(async () => ({
+  suggestLinks: vi.fn(async () => []),
+  critiqueNote: vi.fn(async () => ({
     note_id: 'note-001', atomicity_score: 8, atomicity_feedback: 'Good.',
     connectivity_score: 7, connectivity_feedback: 'Add more links.',
     standalone_score: 9, standalone_feedback: 'Clear.',
     insight_score: 8, insight_feedback: 'Insightful.', overall_feedback: 'Strong note.',
   })),
+  summarizeNote:    vi.fn(async () => ({ summary: '' })),
+  suggestTags:      vi.fn(async () => []),
+  orphanAudit:      vi.fn(async () => []),
+  streamingChatUrl: vi.fn(() => ''),
 }));
 
 import { useAIChat, useLinkSuggestions, useCritiqueNote } from '../useAI';

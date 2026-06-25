@@ -4,13 +4,17 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement } from 'react';
 import { makeSearchResult } from '../../test/factories';
 
+// The useSearch hook calls `search({ q, mode })` — the export is `search`,
+// NOT `searchNotes`. Mock the actual export name.
 vi.mock('../../api/search', () => ({
-  searchNotes: vi.fn(async () => ({
+  search: vi.fn(async () => ({
     query: 'zettelkasten',
     mode:  'hybrid',
     items: [makeSearchResult({ title: 'Zettelkasten Method' })],
     total: 1,
   })),
+  semanticSearch: vi.fn(async () => ({ query: '', mode: 'semantic', items: [], total: 0 })),
+  findSimilar:    vi.fn(async () => []),
 }));
 
 import { useSearch } from '../useSearch';

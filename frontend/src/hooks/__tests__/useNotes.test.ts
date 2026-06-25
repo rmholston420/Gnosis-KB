@@ -48,7 +48,9 @@ describe('useNotes hooks', () => {
     mockListNotes.mockResolvedValue([note]);
     const { result: r1 } = renderHook(() => useNotes(),     { wrapper });
     const { result: r2 } = renderHook(() => useNotesList(), { wrapper });
-    await waitFor(() => r1.current.isSuccess && r2.current.isSuccess);
+    // Wait for each hook independently — logical-AND short-circuits if r1 settles first
+    await waitFor(() => expect(r1.current.isSuccess).toBe(true));
+    await waitFor(() => expect(r2.current.isSuccess).toBe(true));
     expect(r1.current.data).toHaveLength(1);
     expect(r2.current.data).toHaveLength(1);
   });

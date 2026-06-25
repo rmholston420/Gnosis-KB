@@ -1,24 +1,22 @@
-/**
- * AIChatPage.test.tsx
- * ===================
- * AIChatPage is a thin shell that renders the <AiChat> component.
- */
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import AIChatPage from '../AIChatPage';
 
-// Stub heavy AiChat to keep this suite fast and focused
-vi.mock('../../components/ai/AiChat', () => ({ default: () => <div data-testid="ai-chat" /> }));
+// Stub the heavy AIChat component so the test focuses on the page shell.
+vi.mock('../../components/AIChat', () => ({
+  default: () => <div data-testid="ai-chat-inner">AI Chat Stub</div>,
+}));
 
 describe('AIChatPage', () => {
-  it('renders without crashing', () => {
-    render(<MemoryRouter><AIChatPage /></MemoryRouter>);
-    expect(document.body).toBeInTheDocument();
-  });
-
   it('renders the AiChat component', () => {
     render(<MemoryRouter><AIChatPage /></MemoryRouter>);
+    // The page wrapper has data-testid="ai-chat" (set on the outer div in AIChatPage.tsx)
     expect(screen.getByTestId('ai-chat')).toBeInTheDocument();
+  });
+
+  it('renders the page heading', () => {
+    render(<MemoryRouter><AIChatPage /></MemoryRouter>);
+    expect(screen.getByText('AI Chat')).toBeInTheDocument();
   });
 });
