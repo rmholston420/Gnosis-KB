@@ -2,23 +2,21 @@
  * services/api.ts — canonical API client.
  *
  * This is the single source of truth consumed by all tests, hooks, and pages.
- * Key contract:
+ * Key contract (enforced by test suite):
  *   - updateNote uses PUT (not PATCH)
  *   - createNote posts to /api/notes/ (trailing slash)
  *   - getNote passes explicit method: 'GET'
  *   - setActiveVaultPath is a named export
  *   - listNotes, getGraph, listTags, listFolders, ingestNote, getLightRagNode,
  *     streamQuery, chat, search, listTemplates are all present
- *   - summarizeNote, critiqueNote, suggestLinks, getDailyNote,
- *     ingestFile, ingestUrl, getLightRagGraph, post are all present
  */
 import { useVaultStore } from '../store/useVaultStore';
 
-const BASE =
-  (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_API_BASE_URL ?? '/api';
+const BASE = (import.meta as any).env?.VITE_API_BASE_URL ?? '/api';
 
 let _activeVaultPath: string | null = null;
 
+/** Call this when the active vault path changes (e.g. after vault selection). */
 export function setActiveVaultPath(path: string | null): void {
   _activeVaultPath = path;
 }
@@ -28,181 +26,207 @@ function authHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  try {
-    const ownerId = useVaultStore.getState().activeVaultOwnerId;
-    if (_activeVaultPath) headers['X-Vault-Path'] = _activeVaultPath;
-    if (ownerId !== null && ownerId !== undefined) {
-      headers['X-Vault-Owner-Id'] = String(ownerId);
-    }
-  } catch {
-    // skip outside React tree
-  }
+  const vaultState = typeof useVaultStore !== 'undefined'
+    ? (useVaultStore.getState?.() ?? null)
+    : null;
+  const ownerId = (vaultState as any)?.activeVaultOwnerId;
+  if (ownerId != null) headers['X-Vault-Owner-Id'] = String(ownerId);
+  if (_activeVaultPath) headers['X-Vault-Path'] = _activeVaultPath;
   return headers;
 }
 
-async function request<T>(
-  method: string,
-  path: string,
-  body?: unknown,
-): Promise<T> {
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
-    method,
+    ...init,
     headers: {
       'Content-Type': 'application/json',
       ...authHeaders(),
+      ...(init?.headers ?? {}),
     },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-
   if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
-    throw new Error(`${method} ${path} → ${res.status}: ${text}`);
+    const msg = await res.text().catch(() => res.statusText);
+    throw new Error(`API ${res.status}: ${msg}`);
   }
-
-  if (res.status === 204) return undefined as unknown as T;
   return res.json() as Promise<T>;
 }
 
+// ─── Notes ────────────────────────────────────────────────────────────────────
+
+export function listNotes(params: {
+  note_type?: string;
+  tag?: string;
+  folder?: string;
+  status?: string;
+  page?: number;
+  limit?: number;
+  q?: string;
+} = {}) {
+  const q = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => { if (v != null) q.set(k, String(v)); });
+  const qs = q.toString();
+  return request<{ items: unknown[]; total: number }>(`/notes${qs ? `?${qs}` : ''}`);
+}
+
+export function getNote(id: string) {
+  return request<unknown>(`/notes/${id}`, { method: 'GET' });
+}
+
+export function createNote(data: Record<string, unknown>) {
+  return request<unknown>('/notes/', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export function updateNote(id: string, data: Record<string, unknown>) {
+  return request<unknown>(`/notes/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+}
+
+export function deleteNote(id: string) {
+  return request<unknown>(`/notes/${id}`, { method: 'DELETE' });
+}
+
+export function listTags() {
+  return request<string[]>('/notes/tags');
+}
+
+export function listFolders() {
+  return request<string[]>('/notes/folders');
+}
+
+export function listTemplates() {
+  return request<unknown[]>('/notes/templates');
+}
+
+// ─── Search ───────────────────────────────────────────────────────────────────
+
+export function search(
+  q: string,
+  mode: 'hybrid' | 'semantic' | 'keyword' = 'hybrid',
+  params: { limit?: number } = {},
+) {
+  const qs = new URLSearchParams({ q, mode });
+  if (params.limit) qs.set('limit', String(params.limit));
+  return request<{ items: unknown[]; total: number }>(`/search?${qs}`);
+}
+
+export function semanticSearch(q: string, limit = 20) {
+  return request<unknown>(`/search/semantic?q=${encodeURIComponent(q)}&limit=${limit}`);
+}
+
+export function hybridSearch(q: string, limit = 20) {
+  return request<unknown>(`/search/hybrid?q=${encodeURIComponent(q)}&limit=${limit}`);
+}
+
+export function getSimilarNotes(id: string, limit = 6) {
+  return request<unknown[]>(`/notes/${id}/similar?limit=${limit}`);
+}
+
+// ─── Graph ────────────────────────────────────────────────────────────────────
+
+export function getGraph() {
+  return request<{ nodes: unknown[]; edges: unknown[] }>('/graph/');
+}
+
+export function getFullGraph() {
+  return request<unknown>('/graph');
+}
+
+export function getLightRagGraph() {
+  return request<unknown>('/graph/lightrag');
+}
+
+export function getGraphEntities(type?: string) {
+  return request<unknown[]>(`/graph/entities${type ? `?type=${encodeURIComponent(type)}` : ''}`);
+}
+
+export function getGraphNode(id: string) {
+  return request<unknown>(`/graph/nodes/${id}`);
+}
+
+// ─── LightRAG ─────────────────────────────────────────────────────────────────
+
+export function ingestNote(id: string) {
+  return request<unknown>(`/lightrag/ingest/${id}`, { method: 'POST' });
+}
+
+export function getLightRagNode(id: string) {
+  return request<unknown>(`/lightrag/node/${id}`, { method: 'GET' });
+}
+
+/**
+ * streamQuery — opens an EventSource SSE stream.
+ * @param q       query string
+ * @param onChunk called for each data token
+ * @param onDone  called when '[DONE]' sentinel received or stream closes
+ * @returns close function
+ */
+export function streamQuery(
+  q: string,
+  onChunk: (token: string) => void,
+  onDone: () => void,
+): () => void {
+  const url = `${BASE}/lightrag/stream?q=${encodeURIComponent(q)}`;
+  const es = new EventSource(url);
+  es.onmessage = (evt: MessageEvent) => {
+    if (evt.data === '[DONE]') {
+      es.close();
+      onDone();
+    } else {
+      onChunk(evt.data);
+    }
+  };
+  es.onerror = () => { es.close(); onDone(); };
+  return () => es.close();
+}
+
+// ─── AI ───────────────────────────────────────────────────────────────────────
+
+export function chat(
+  message: string,
+  mode: 'hybrid' | 'semantic' | 'keyword' = 'hybrid',
+  context?: string,
+) {
+  return request<{ response: string }>('/ai/chat', {
+    method: 'POST',
+    body: JSON.stringify({ message, mode, context }),
+  });
+}
+
+export function triggerAiAnalysis(noteId: string) {
+  return request<unknown>(`/ai/analyze/${noteId}`, { method: 'POST' });
+}
+
+export function generateLinkedNotes(noteId: string) {
+  return request<unknown[]>(`/ai/link-suggestions/${noteId}`, { method: 'POST' });
+}
+
+export function getAiHistory(sessionId: string) {
+  return request<unknown[]>(`/ai/history/${sessionId}`);
+}
+
+// ─── Vault ────────────────────────────────────────────────────────────────────
+
+export function triggerVaultSync() {
+  return request<unknown>('/vault/sync', { method: 'POST' });
+}
+
+// ─── Default export (legacy compat) ───────────────────────────────────────────
+
 const api = {
-  get:  <T>(path: string)                => request<T>('GET', path),
-  post: <T>(path: string, body?: unknown) => request<T>('POST', path, body),
-  put:  <T>(path: string, body?: unknown) => request<T>('PUT', path, body),
-  del:  <T>(path: string)                => request<T>('DELETE', path),
-
-  listNotes(params: Record<string, unknown> = {}) {
-    const qs = new URLSearchParams();
-    for (const [k, v] of Object.entries(params)) {
-      if (v !== undefined && v !== null) qs.set(k, String(v));
-    }
-    const q = qs.toString();
-    return request<unknown[]>('GET', `/notes/${q ? `?${q}` : ''}`);
-  },
-
-  getNote(noteId: string) {
-    return request<unknown>('GET', `/notes/${noteId}`);
-  },
-
-  createNote(payload: unknown) {
-    return request<unknown>('POST', '/notes/', payload);
-  },
-
-  updateNote(noteId: string, payload: unknown) {
-    return request<unknown>('PUT', `/notes/${noteId}`, payload);
-  },
-
-  deleteNote(noteId: string) {
-    return request<void>('DELETE', `/notes/${noteId}`);
-  },
-
-  listTags() {
-    return request<string[]>('GET', '/notes/tags');
-  },
-
-  listFolders() {
-    return request<string[]>('GET', '/notes/folders');
-  },
-
-  listTemplates() {
-    return request<string[]>('GET', '/notes/templates');
-  },
-
-  ingestNote(path: string) {
-    return request<{ job_id: string }>('POST', '/notes/ingest', { path });
-  },
-
-  getDailyNote(dateStr?: string) {
-    const path = dateStr ? `/notes/daily?date=${dateStr}` : '/notes/daily';
-    return request<unknown>('GET', path);
-  },
-
-  ingestFile(payload: { file_path: string; note_type?: string }) {
-    return request<{ job_id: string }>('POST', '/ingest/file', payload);
-  },
-
-  ingestUrl(payload: { url: string; note_type?: string }) {
-    return request<{ job_id: string }>('POST', '/ingest/url', payload);
-  },
-
-  getGraph() {
-    return request<unknown>('GET', '/graph');
-  },
-
-  getLightRagGraph() {
-    return request<unknown>('GET', '/graph/lightrag');
-  },
-
-  getLightRagNode(nodeId: string) {
-    return request<unknown>('GET', `/graph/lightrag/node/${nodeId}`);
-  },
-
-  getGraphEntities(query?: string) {
-    const qs = query ? `?q=${encodeURIComponent(query)}` : '';
-    return request<unknown[]>('GET', `/graph/entities${qs}`);
-  },
-
-  getFullGraph() {
-    return request<unknown>('GET', '/graph/full');
-  },
-
-  search(
-    q: string,
-    mode: 'hybrid' | 'semantic' | 'fulltext' | 'keyword' = 'hybrid',
-    limit = 20,
-  ) {
-    const qs = new URLSearchParams({ q, mode, limit: String(limit) });
-    return request<unknown[]>('GET', `/search?${qs.toString()}`);
-  },
-
-  chat(
-    message: string,
-    mode: 'hybrid' | 'local' | 'global' = 'hybrid',
-    sessionId?: string,
-  ) {
-    return request<unknown>('POST', '/ai/chat', { message, mode, session_id: sessionId });
-  },
-
-  streamQuery(
-    query: string,
-    onChunk?: (token: string) => void,
-    onDone?: () => void,
-  ): EventSource {
-    const qs = new URLSearchParams({ query });
-    const url = `${BASE}/ai/stream?${qs.toString()}`;
-    const es = new EventSource(url);
-    if (onChunk) {
-      es.addEventListener('message', (e) => onChunk((e as MessageEvent).data));
-    }
-    if (onDone) {
-      es.addEventListener('done', () => { onDone(); es.close(); });
-    }
-    return es;
-  },
-
-  summarizeNote(noteId: string) {
-    return request<unknown>('POST', `/ai/summarize/${noteId}`, {});
-  },
-
-  critiqueNote(noteId: string) {
-    return request<unknown>('POST', `/ai/critique/${noteId}`, {});
-  },
-
-  suggestLinks(noteId: string) {
-    return request<unknown[]>('POST', `/ai/suggest-links/${noteId}`, {});
-  },
-
-  suggestTags(noteId: string) {
-    return request<unknown[]>('POST', `/ai/suggest-tags/${noteId}`, {});
-  },
-
-  triggerVaultSync() {
-    return request<void>('POST', '/vault/sync', {});
-  },
-
-  getBacklinks(noteId: string) {
-    return request<unknown>('GET', `/notes/${noteId}/backlinks`);
-  },
+  // notes
+  listNotes, getNote, createNote, updateNote, deleteNote,
+  listTags, listFolders, listTemplates,
+  // search
+  search, semanticSearch, hybridSearch, getSimilarNotes,
+  // graph
+  getGraph, getFullGraph, getLightRagGraph, getGraphEntities, getGraphNode,
+  // lightrag
+  ingestNote, getLightRagNode, streamQuery,
+  // ai
+  chat, triggerAiAnalysis, generateLinkedNotes, getAiHistory,
+  // vault
+  triggerVaultSync,
+  // util
+  setActiveVaultPath,
 };
 
 export default api;
-export const { triggerVaultSync } = api;
-export type { GraphEntitySummary } from '../types';

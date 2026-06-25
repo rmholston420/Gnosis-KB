@@ -12,7 +12,7 @@
  * The LightRAG panel additionally shows its own entity-filter input.
  */
 
-import React, { useRef, useCallback, useState } from 'react';
+import React, { useRef, useCallback, useState, lazy, Suspense } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ForceGraphMethods } from 'react-force-graph-2d';
 import type { GraphData, GraphNode } from '../types';
@@ -85,7 +85,7 @@ export default function GraphPage() {
   const allNodes  = graphData?.nodes ?? [];
   const edgeCount = graphData?.edges?.length ?? 0;
 
-  // Build force-graph data from the graphUtils helper
+  // Build force-graph data from the new graphUtils helper
   const forceData = graphData ? toForceGraphData(graphData) : { nodes: [], links: [] };
 
   // Apply node filter (from the toolbar input) and store highlight query
@@ -144,10 +144,10 @@ export default function GraphPage() {
 
   // ── Handlers ─────────────────────────────────────────────────
   const handleRefresh = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: ['graph'] });
+    queryClient.invalidateQueries({ queryKey: ['graph'] });
     if (activeTab === 'lightrag') {
-      void queryClient.invalidateQueries({ queryKey: ['lightrag-graph'] });
-      void queryClient.invalidateQueries({ queryKey: ['graph-entities'] });
+      queryClient.invalidateQueries({ queryKey: ['lightrag-graph'] });
+      queryClient.invalidateQueries({ queryKey: ['graph-entities'] });
     }
   }, [queryClient, activeTab]);
 
@@ -155,7 +155,7 @@ export default function GraphPage() {
     setSyncing(true);
     try {
       await api.triggerVaultSync();
-      void queryClient.invalidateQueries({ queryKey: ['graph'] });
+      queryClient.invalidateQueries({ queryKey: ['graph'] });
     } catch (_e) {
       // non-fatal
     } finally {
@@ -169,6 +169,11 @@ export default function GraphPage() {
     graphRef.current?.zoom(2.5, 600);
   }, [selectNode]);
 
+  // Read the current zoom level first (with its own fallback), THEN do the
+  // arithmetic. This ensures ?? has a null/undefined to guard against and
+  // avoids the esbuild "?? always returns left operand" warning that fires
+  // when the fallback is placed after a multiply/divide result (which is
+  // always a number — never null/undefined — even when .zoom?.() is undefined).
   const getZoom = () =>
     (graphRef.current as unknown as { zoom?: () => number } | null)?.zoom?.() ?? 1;
 
@@ -202,6 +207,7 @@ export default function GraphPage() {
 
         {/* Toolbar — always visible */}
         <div className="graph-page__toolbar" role="toolbar" aria-label="Graph controls">
+          {/* Node filter — always shown; test queries getAllByPlaceholderText(/filter nodes/i)[0] */}
           <input
             className="graph-page__search"
             type="search"
@@ -235,7 +241,7 @@ export default function GraphPage() {
               <p>No notes in the graph yet.</p>
               <button
                 className="graph-page__sync-btn"
-                onClick={() => void handleSyncVault()}
+                onClick={handleSyncVault}
                 disabled={syncing}
                 aria-label="Sync Vault"
               >
@@ -258,16 +264,20 @@ export default function GraphPage() {
                 onCenterGraph={() => graphRef.current?.zoomToFit(400, 40)}
               />
 
-              <GraphView2D
-                ref={graphRef}
-                nodes={filteredNodes}
-                links={filteredLinks}
-                highlightIds={highlightIds}
-                clusterMode={clusterMode}
-                showLabels={showLabels}
-                onNodeClick={handleNodeClick}
-              />
+              {/* Graph canvas — receives only filtered nodes so stub shows correct count */}
+              <Suspense fallback={<div className="graph-page__canvas-loading">Loading graph…</div>}>
+                <GraphView2D
+                  ref={graphRef}
+                  nodes={filteredNodes}
+                  links={filteredLinks as import('../components/graph/GraphView2D').ForceLink[]}
+                  highlightIds={highlightIds}
+                  clusterMode={clusterMode}
+                  showLabels={showLabels}
+                  onNodeClick={handleNodeClick}
+                />
+              </Suspense>
 
+              {/* Node detail overlay */}
               <NodeDetailOverlay
                 node={selectedNode}
                 onClose={() => selectNode(null)}
@@ -277,46 +287,44 @@ export default function GraphPage() {
         </div>
       )}
 
-      {/* ── LightRAG tab ── */}
+      {/* ── LightRAG Knowledge tab ── */}
       {activeTab === 'lightrag' && (
         <div className="graph-page__lightrag">
-          {lrLoading && <p className="graph-page__loading-text">Loading LightRAG knowledge graph…</p>}
-          {lrIsError && (
-            <div className="graph-page__error" role="alert">
-              <p>Failed to load LightRAG data: {String(lrError)}</p>
-              <button onClick={handleRefresh}>Retry</button>
+          {/* Entity filter (LightRAG tab only) */}
+          <div className="graph-page__lr-toolbar">
+            <input
+              className="graph-page__search"
+              type="search"
+              placeholder="Filter entities…"
+              value={entityFilter}
+              onChange={(e) => setEntityFilter(e.target.value)}
+              aria-label="Filter entities"
+            />
+          </div>
+          {lrLoading && (
+            <div role="status" className="graph-page__lr-loading">Loading entities…</div>
+          )}
+          {!lrLoading && lrIsError && (
+            <div role="alert" className="graph-page__lr-error">
+              LightRAG graph not available: {String(lrError)}
             </div>
           )}
           {!lrLoading && !lrIsError && (
             <>
-              <div className="graph-page__lightrag-toolbar">
-                <input
-                  type="search"
-                  placeholder="Filter entities…"
-                  value={entityFilter}
-                  onChange={(e) => setEntityFilter(e.target.value)}
-                  className="graph-page__search"
-                  aria-label="Filter entities"
-                />
-                <span className="graph-page__node-badge">{filteredEntities.length} entities</span>
-              </div>
-              <div className="graph-page__entity-list">
-                {filteredEntities.length === 0 ? (
-                  <p className="graph-page__empty-text">No entities found.</p>
-                ) : (
-                  filteredEntities.map((e) => (
-                    <div key={e.id} className="graph-page__entity-row">
-                      <span className="graph-page__entity-label">{e.label ?? e.id}</span>
-                      {e.type && (
-                        <span className="graph-page__entity-type">{e.type}</span>
-                      )}
-                      {e.description && (
-                        <span className="graph-page__entity-desc">{e.description}</span>
-                      )}
-                    </div>
-                  ))
-                )}
-              </div>
+              <p className="graph-page__lr-count">{filteredEntities.length} entities</p>
+              <ul className="graph-page__entity-list" aria-label="Entity list">
+                {filteredEntities.map((entity) => (
+                  <li key={entity.id} className="graph-page__entity-item">
+                    <span className="graph-page__entity-id">{entity.id}</span>
+                    {entity.label && entity.label !== entity.id && (
+                      <span className="graph-page__entity-label">{entity.label}</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              {filteredEntities.length === 0 && !entityFilter && (
+                <p className="graph-page__lr-empty">No LightRAG entities indexed yet.</p>
+              )}
             </>
           )}
         </div>

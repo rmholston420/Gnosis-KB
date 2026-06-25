@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import axios from 'axios';
 import MockAdapter from 'axios-mock-adapter';
 
+// Import AFTER mocks so interceptors register on the real instance
 import { apiClient } from '@/api/client';
 
 let mock: MockAdapter;
@@ -21,10 +22,11 @@ describe('apiClient request interceptor', () => {
     mock.onGet('/api/v1/test').reply((config) => [
       200,
       {},
-      config.headers,
+      config.headers,  // echo headers back as response body for inspection
     ]);
 
     const resp = await apiClient.get('/api/v1/test');
+    // The Authorization header is in the request config
     expect(resp.config.headers?.['Authorization']).toBe('Bearer my-secret-token');
   });
 
@@ -47,13 +49,14 @@ describe('apiClient response interceptor', () => {
     expect(localStorage.getItem('gnosis_token')).toBeNull();
   });
 
-  it('re-rejects non-401 errors without touching localStorage', async () => {
+  it('re-rejects non-401 errors without touching localStorage or location', async () => {
     localStorage.setItem('gnosis_token', 'good-token');
     mock.onGet('/api/v1/broken').reply(500, { detail: 'Server error' });
 
     await expect(apiClient.get('/api/v1/broken')).rejects.toMatchObject({
       response: { status: 500 },
     });
+    // Token should be untouched
     expect(localStorage.getItem('gnosis_token')).toBe('good-token');
   });
 

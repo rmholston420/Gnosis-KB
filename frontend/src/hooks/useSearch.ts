@@ -1,32 +1,66 @@
 /**
- * hooks/useSearch.ts — TanStack Query hooks for search.
+ * useSearch — debounced search hooks for all search modes.
  */
+import { useState, useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { searchNotes, getSimilarNotes } from '../api/search';
-import type { SearchResponse, SearchResult, SearchMode } from '../types';
+import { search, semanticSearch, findSimilar } from '../api/search';
+import type { SearchParams, SearchMode } from '../api/search';
+import type { SearchResponse, SearchResult } from '../types';
 
-export type { SearchMode };
+const DEBOUNCE_MS = 300;
 
-const SEARCH_KEY = 'search';
+/** Debounce a query string. Returns the debounced value. */
+function useDebounce(value: string, ms = DEBOUNCE_MS): string {
+  const [dv, setDv] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDv(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return dv;
+}
 
+/**
+ * Generic debounced search hook.
+ * `query` is the raw (non-debounced) search query.
+ * Returns the TanStack Query result object directly.
+ */
 export function useSearch(query: string, mode: SearchMode = 'hybrid') {
-  return useQuery({
-    queryKey: [SEARCH_KEY, mode, query],
-    queryFn: () => searchNotes(query, mode) as Promise<SearchResponse>,
-    enabled: query.trim().length > 0,
+  const dq = useDebounce(query);
+  return useQuery<SearchResponse>({
+    queryKey:  ['search', dq, mode],
+    queryFn:   () => search({ q: dq, mode }),
+    enabled:   dq.trim().length > 0,
+    staleTime: 30_000,
   });
 }
 
-export default useSearch;
+/** Hybrid search (BM25 + vector). */
+export function useHybridSearch(query: string) {
+  return useSearch(query, 'hybrid');
+}
 
-export function useHybridSearch(query: string) { return useSearch(query, 'hybrid'); }
-export function useKeywordSearch(query: string) { return useSearch(query, 'keyword'); }
-export function useSemanticSearch(query: string) { return useSearch(query, 'semantic'); }
+/** Keyword-only (BM25) search. */
+export function useKeywordSearch(query: string) {
+  return useSearch(query, 'keyword');
+}
 
-export function useSimilarNotes(noteId: string | null | undefined) {
-  return useQuery({
-    queryKey: [SEARCH_KEY, 'similar', noteId],
-    queryFn: () => getSimilarNotes(noteId!) as Promise<SearchResult[]>,
-    enabled: Boolean(noteId),
+/** Semantic (vector-only) search. */
+export function useSemanticSearch(q: string, limit = 10) {
+  const dq = useDebounce(q);
+  return useQuery<SearchResponse>({
+    queryKey: ['search', 'semantic', dq, limit],
+    queryFn:  () => semanticSearch(dq, limit),
+    enabled:  dq.trim().length > 0,
+    staleTime: 30_000,
+  });
+}
+
+/** Find notes similar to a given note by embedding distance. */
+export function useSimilarNotes(noteId: string | null, limit = 10) {
+  return useQuery<SearchResult[]>({
+    queryKey: ['search', 'similar', noteId, limit],
+    queryFn:  () => findSimilar(noteId!, limit),
+    enabled:  !!noteId,
+    staleTime: 60_000,
   });
 }

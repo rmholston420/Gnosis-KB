@@ -12,6 +12,7 @@ export default function IngestPage() {
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
 
+  // ---- File upload --------------------------------------------------------
   async function handleFiles(files: File[]) {
     setError(null);
     setSuccess(null);
@@ -30,6 +31,7 @@ export default function IngestPage() {
     }
   }
 
+  // ---- URL ingest ---------------------------------------------------------
   async function handleIngestUrl() {
     if (!url.trim()) return;
     setError(null);
@@ -120,6 +122,7 @@ export default function IngestPage() {
         </div>
       </div>
 
+      {/* Recent ingests link */}
       <div className="mt-6 text-center">
         <button
           onClick={() => navigate('/notes')}

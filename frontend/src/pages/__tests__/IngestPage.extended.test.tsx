@@ -1,120 +1,148 @@
 /**
  * IngestPage.extended.test.tsx
- * ============================
- * Extended coverage for IngestPage. All renders must include
- * QueryClientProvider because IngestPage uses useMutation directly.
+ * Covers file upload, URL ingest, error/success banners, empty-URL guard,
+ * Enter-key shortcut, and navigate-to-notes button.
+ * Uncovered lines: 17-32, 46, 67-69, 82
  */
+import React from 'react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import IngestPage from '../IngestPage';
 
-const mockIngestUrl  = vi.fn();
+// ---- Mocks -----------------------------------------------------------------
 const mockIngestFile = vi.fn();
-vi.mock('../../services/api', () => ({
+const mockIngestUrl  = vi.fn();
+
+vi.mock('@/services/api', () => ({
   default: {
-    ingestUrl:  (...args: unknown[]) => mockIngestUrl(...args),
-    ingestFile: (...args: unknown[]) => mockIngestFile(...args),
+    ingestFile: (...a: unknown[]) => mockIngestFile(...a),
+    ingestUrl:  (...a: unknown[]) => mockIngestUrl(...a),
   },
 }));
 
+// react-dropzone: expose onDrop so we can call it directly
+let capturedOnDrop: ((files: File[]) => void) | null = null;
+vi.mock('react-dropzone', () => ({
+  useDropzone: (opts: { onDrop: (files: File[]) => void }) => {
+    capturedOnDrop = opts.onDrop;
+    return {
+      getRootProps: () => ({ 'data-testid': 'dropzone' }),
+      getInputProps: () => ({ 'data-testid': 'file-input' }),
+      isDragActive: false,
+    };
+  },
+}));
+
+import IngestPage from '@/pages/IngestPage';
+
+const mockNavigate = vi.fn();
+vi.mock('react-router-dom', async (orig) => {
+  const actual = await orig<typeof import('react-router-dom')>();
+  return { ...actual, useNavigate: () => mockNavigate };
+});
+
 function renderPage() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return render(
-    <QueryClientProvider client={qc}>
-      <MemoryRouter><IngestPage /></MemoryRouter>
-    </QueryClientProvider>
+    <MemoryRouter>
+      <IngestPage />
+    </MemoryRouter>
   );
 }
 
-beforeEach(() => {
-  mockIngestUrl.mockReset();
-  mockIngestFile.mockReset();
-  mockIngestUrl.mockResolvedValue({ job_id: 'job-url-1' });
-  mockIngestFile.mockResolvedValue({ job_id: 'job-file-1' });
-});
-
 describe('IngestPage', () => {
-  it('renders heading and input', () => {
-    renderPage();
-    expect(screen.getByText(/ingest content/i)).toBeInTheDocument();
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedOnDrop = null;
   });
 
-  it('renders File path and URL mode buttons', () => {
+  it('renders heading and drop zone', () => {
     renderPage();
-    expect(screen.getByRole('button', { name: /file path/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /url/i })).toBeInTheDocument();
+    expect(screen.getByText(/Ingest Content/i)).toBeTruthy();
+    expect(screen.getByTestId('dropzone')).toBeTruthy();
   });
 
-  it('ingest button is disabled when input is empty', () => {
+  it('renders URL input and ingest button', () => {
+    renderPage();
+    expect(screen.getByPlaceholderText(/https:/i)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /ingest/i })).toBeTruthy();
+  });
+
+  it('ingest button is disabled when URL is empty', () => {
     renderPage();
     const btn = screen.getByRole('button', { name: /ingest/i });
-    expect(btn).toBeDisabled();
+    expect((btn as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('enables ingest button when input has value', () => {
+  it('enables ingest button when URL has value', () => {
     renderPage();
-    const input = screen.getByPlaceholderText(/\/path\/to\/note/i);
-    fireEvent.change(input, { target: { value: '/tmp/note.md' } });
+    const input = screen.getByPlaceholderText(/https:/i);
+    fireEvent.change(input, { target: { value: 'https://example.com' } });
     const btn = screen.getByRole('button', { name: /ingest/i });
-    expect(btn).not.toBeDisabled();
+    expect((btn as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it('successful URL ingest shows job queued message', async () => {
+  it('successful URL ingest shows success banner and navigates', async () => {
+    mockIngestUrl.mockResolvedValue({ id: 'n1', title: 'Test Article' });
     renderPage();
-    fireEvent.click(screen.getByRole('button', { name: /url/i }));
-    const input = screen.getByPlaceholderText(/https/i);
-    fireEvent.change(input, { target: { value: 'https://example.com' } });
+    const input = screen.getByPlaceholderText(/https:/i);
+    fireEvent.change(input, { target: { value: 'https://example.com/article' } });
     fireEvent.click(screen.getByRole('button', { name: /ingest/i }));
-    await waitFor(() =>
-      expect(screen.getByText(/job queued/i)).toBeInTheDocument()
-    );
+    await waitFor(() => expect(screen.getByText(/Ingested:/i)).toBeTruthy());
+    expect(mockNavigate).toHaveBeenCalledWith('/notes/n1');
   });
 
-  it('URL ingest calls api.ingestUrl with correct args', async () => {
+  it('URL ingest error shows error banner', async () => {
+    mockIngestUrl.mockRejectedValue(new Error('Network error'));
     renderPage();
-    fireEvent.click(screen.getByRole('button', { name: /url/i }));
-    const input = screen.getByPlaceholderText(/https/i);
-    fireEvent.change(input, { target: { value: 'https://example.com' } });
+    const input = screen.getByPlaceholderText(/https:/i);
+    fireEvent.change(input, { target: { value: 'https://bad.url' } });
     fireEvent.click(screen.getByRole('button', { name: /ingest/i }));
-    await waitFor(() =>
-      expect(mockIngestUrl).toHaveBeenCalledWith(
-        expect.objectContaining({ url: 'https://example.com' })
-      )
-    );
+    await waitFor(() => expect(screen.getByText(/Network error/i)).toBeTruthy());
   });
 
   it('pressing Enter in URL input triggers ingest', async () => {
+    mockIngestUrl.mockResolvedValue({ id: 'n2', title: 'Key Article' });
     renderPage();
-    fireEvent.click(screen.getByRole('button', { name: /url/i }));
-    const input = screen.getByPlaceholderText(/https/i);
-    fireEvent.change(input, { target: { value: 'https://example.com/enter' } });
-    fireEvent.submit(input.closest('form')!);
+    const input = screen.getByPlaceholderText(/https:/i);
+    fireEvent.change(input, { target: { value: 'https://example.com/key' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(mockIngestUrl).toHaveBeenCalled());
+  });
+
+  it('non-Enter keydown does not trigger ingest', async () => {
+    renderPage();
+    const input = screen.getByPlaceholderText(/https:/i);
+    fireEvent.change(input, { target: { value: 'https://example.com' } });
+    fireEvent.keyDown(input, { key: 'a' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(mockIngestUrl).not.toHaveBeenCalled();
+  });
+
+  it('file drop triggers handleFiles and shows success', async () => {
+    mockIngestFile.mockResolvedValue({ id: 'f1', title: 'Uploaded Note' });
+    renderPage();
+    expect(capturedOnDrop).toBeTruthy();
+    const fakeFile = new File(['content'], 'test.md', { type: 'text/markdown' });
+    await act(async () => { capturedOnDrop?.([fakeFile]); });
     await waitFor(() =>
-      expect(mockIngestUrl).toHaveBeenCalled()
+      expect(screen.getByText(/Uploaded 1 file/i)).toBeTruthy()
     );
   });
 
-  it('file path ingest calls api.ingestFile with correct args', async () => {
+  it('file drop error shows error banner', async () => {
+    mockIngestFile.mockRejectedValue(new Error('File too large'));
     renderPage();
-    const input = screen.getByPlaceholderText(/\/path\/to\/note/i);
-    fireEvent.change(input, { target: { value: '/tmp/note.md' } });
-    fireEvent.click(screen.getByRole('button', { name: /ingest/i }));
+    const fakeFile = new File(['x'], 'big.pdf', { type: 'application/pdf' });
+    await act(async () => { capturedOnDrop?.([fakeFile]); });
     await waitFor(() =>
-      expect(mockIngestFile).toHaveBeenCalledWith(
-        expect.objectContaining({ file_path: '/tmp/note.md' })
-      )
+      expect(screen.getByText(/File too large/i)).toBeTruthy()
     );
   });
 
-  it('successful file ingest shows job queued message', async () => {
+  it('View all notes button navigates to /notes', () => {
     renderPage();
-    const input = screen.getByPlaceholderText(/\/path\/to\/note/i);
-    fireEvent.change(input, { target: { value: '/tmp/note.md' } });
-    fireEvent.click(screen.getByRole('button', { name: /ingest/i }));
-    await waitFor(() =>
-      expect(screen.getByText(/job queued/i)).toBeInTheDocument()
-    );
+    const btn = screen.getByRole('button', { name: /View all notes/i });
+    fireEvent.click(btn);
+    expect(mockNavigate).toHaveBeenCalledWith('/notes');
   });
 });

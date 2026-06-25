@@ -25,7 +25,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import React from 'react';
 import BacklinkPanel from '../BacklinkPanel';
@@ -37,15 +37,7 @@ const titlesById = new Map([
 ]);
 
 function link(sourceId: string, targetId: string): LinkRef {
-  return {
-    note_id:   sourceId,
-    title:     '',
-    source_id: sourceId,
-    target_id: targetId,
-    context:   '',
-    link_text: '',
-    link_type: 'wikilink',
-  };
+  return { source_id: sourceId, target_id: targetId, context: '', link_text: '', link_type: 'wikilink' };
 }
 
 function renderPanel(props: {
@@ -88,19 +80,38 @@ describe('BacklinkPanel', () => {
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 
-  it('link rows are buttons, not anchors', () => {
-    renderPanel({ incomingLinks: [link('n-1', 'current')] });
-    const buttons = screen.getAllByRole('button');
-    expect(buttons.length).toBeGreaterThan(0);
+  it('renders outgoing link section header', () => {
+    renderPanel({ outgoingLinks: [link('current', 'n-1')] });
+    // outgoing section header should be visible (even if collapsed)
+    expect(screen.getByText(/links out/i)).toBeInTheDocument();
   });
 
-  it('falls back to source_id when title not in map', () => {
-    renderPanel({ incomingLinks: [link('unknown-id', 'current')], noteTitlesById: new Map() });
+  it('falls back to note id when title not in map', () => {
+    renderPanel({ incomingLinks: [link('unknown-id', 'current')] });
     expect(screen.getByText('unknown-id')).toBeInTheDocument();
   });
 
-  it('shows incoming section header', () => {
+  it('link rows are buttons (not anchors)', () => {
+    renderPanel({ incomingLinks: [link('n-1', 'current')] });
+    const linkButtons = screen.getAllByRole('button');
+    expect(linkButtons.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('section header "Linked here" is visible when incoming links present', () => {
     renderPanel({ incomingLinks: [link('n-1', 'current')] });
     expect(screen.getByText(/linked here/i)).toBeInTheDocument();
+  });
+
+  it('section header "Links out" is visible when outgoing links present', () => {
+    renderPanel({ outgoingLinks: [link('current', 'n-1')] });
+    expect(screen.getByText(/links out/i)).toBeInTheDocument();
+  });
+
+  it('clicking the panel toggle hides links', () => {
+    renderPanel({ incomingLinks: [link('n-1', 'current')] });
+    expect(screen.getByText('Alpha Note')).toBeInTheDocument();
+    // The first button is the top-level "Links N" toggle
+    fireEvent.click(screen.getAllByRole('button')[0]);
+    expect(screen.queryByText('Alpha Note')).not.toBeInTheDocument();
   });
 });

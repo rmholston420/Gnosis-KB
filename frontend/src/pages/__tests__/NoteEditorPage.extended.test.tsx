@@ -1,8 +1,10 @@
 /**
  * NoteEditorPage — extended tests
  * ================================
- * Mocks ../../hooks/useNotes (the actual data layer used by NoteEditorPage)
- * so that individual hook calls are interceptable.
+ * Uses vi.mock at module level to avoid the DataCloneError that occurs when
+ * vitest tries to serialise the Axios transformRequest function during spy
+ * setup. By mocking the entire '../api/notes' module we intercept before
+ * Axios is ever invoked.
  */
 import React from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
@@ -10,50 +12,43 @@ import { vi, describe, it, beforeEach, expect } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 
-// ── Use vi.hoisted so these are available inside the vi.mock factory ──────────
-const { mockMutateAsync, mockMutate, mockUpdateNote } = vi.hoisted(() => {
-  const mockMutateAsync = vi.fn();
-  const mockMutate      = vi.fn();
-  const mockUpdateNote  = vi.fn(() => ({
-    mutateAsync: mockMutateAsync,
-    mutate:      mockMutate,
-    isPending:   false,
-  }));
-  return { mockMutateAsync, mockMutate, mockUpdateNote };
-});
+// ── Module-level mock of api/notes (avoids DataCloneError) ────────────────────
+const mockGetNote    = vi.fn();
+const mockCreateNote = vi.fn();
+const mockUpdateNote = vi.fn();
+const mockListNotes  = vi.fn();
 
-const NOTE_STUB = {
-  note_id: 'abc123',
-  id:      'abc123',
-  title:   'Test Note',
-  slug:    'test-note',
-  body:    '# Hello',
-  note_type: 'permanent',
-  status:    'inbox',
-  folder:    '10-zettelkasten',
-  tags:      [] as string[],
-  word_count:  2,
-  is_deleted:  false,
-  vector_indexed: false,
-  frontmatter:   {},
-  outgoing_links: [] as unknown[],
-  incoming_links: [] as unknown[],
-  created_at:  '',
-  updated_at:  '',
-};
-
-vi.mock('../../hooks/useNotes', () => ({
-  useNote:       vi.fn(() => ({ data: NOTE_STUB, isLoading: false })),
-  useUpdateNote: mockUpdateNote,
-  useNotes:      vi.fn(() => ({ data: [], isLoading: false })),
-  useNotesList:  vi.fn(() => ({ data: [], isLoading: false })),
-  useCreateNote: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
-  useDeleteNote: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
-  useBacklinks:  vi.fn(() => ({ data: { backlinks: [] }, isLoading: false })),
-  useDailyNote:  vi.fn(() => ({ data: undefined, isLoading: false })),
+vi.mock('../../api/notes', () => ({
+  getNote:    (...a: unknown[]) => mockGetNote(...a),
+  createNote: (...a: unknown[]) => mockCreateNote(...a),
+  updateNote: (...a: unknown[]) => mockUpdateNote(...a),
+  listNotes:  (...a: unknown[]) => mockListNotes(...a),
 }));
 
-// ── Wikilink autocomplete mock ────────────────────────────────────────────────
+// ── Mock heavy sub-components to keep rendering fast ─────────────────────────
+vi.mock('../../components/NoteEditor', () => ({
+  default: ({ onSave }: { onSave: (body: string) => void }) => (
+    <div data-testid="note-editor">
+      <button data-testid="editor-save" onClick={() => onSave('test body')}>Save</button>
+    </div>
+  ),
+}));
+
+vi.mock('../../components/editor/WikilinkAutocomplete', () => ({
+  default: ({ onSelect, onClose }: { query: string; onSelect: (t: string) => void; onClose: () => void }) => (
+    <div data-testid="wikilink-popup">
+      <button data-testid="wikilink-select" onClick={() => onSelect('My Linked Note')}>select</button>
+      <button data-testid="wikilink-close"  onClick={() => onClose()}>close</button>
+    </div>
+  ),
+  useWikilinkDetector: () => ({
+    wikilinkQuery:  null as string | null,
+    insertWikilink: vi.fn(),
+  }),
+}));
+
+// Expose wikilinkQuery as a module-level variable so individual tests can
+// override it before rendering.
 let wikilinkQueryValue: string | null = null;
 let mockInsertWikilink = vi.fn();
 
@@ -69,7 +64,6 @@ vi.mock('../../components/editor/WikilinkAutocomplete', () => ({
   },
   useWikilinkDetector: () => ({
     wikilinkQuery:  wikilinkQueryValue,
-    anchorRect:     null,
     insertWikilink: mockInsertWikilink,
   }),
 }));
@@ -107,28 +101,38 @@ vi.mock('../../components/layout/SplitPane', () => ({
   ),
 }));
 
-vi.mock('../../components/NoteEditor', () => ({
-  default: ({ onSave }: { onSave: (body: string) => void }) => (
-    <div data-testid="note-editor">
-      <button data-testid="editor-save" onClick={() => onSave('test body')}>Save</button>
-    </div>
-  ),
-}));
-
-import NoteEditorPage from '../NoteEditorPage';
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function makeQueryClient() {
   return new QueryClient({
     defaultOptions: {
-      queries:   { retry: false, gcTime: 0, staleTime: 0 },
+      queries: { retry: false, gcTime: 0, staleTime: 0 },
       mutations: { retry: false },
     },
   });
 }
 
+const NOTE_STUB = {
+  note_id: 'abc123',
+  id:      'abc123',
+  title:   'Test Note',
+  slug:    'test-note',
+  body:    '# Hello',
+  note_type: 'permanent',
+  status:    'inbox',
+  folder:    '10-zettelkasten',
+  tags:      [] as string[],
+  word_count:  2,
+  is_deleted:  false,
+  vector_indexed: false,
+  graph_indexed:  false,
+  frontmatter:   {},
+  outgoing_links: [] as unknown[],
+  incoming_links: [] as unknown[],
+};
+
 function renderNewNote() {
   const qc = makeQueryClient();
+  mockListNotes.mockResolvedValue({ items: [] });
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={['/notes/new']}>
@@ -143,6 +147,8 @@ function renderNewNote() {
 
 function renderEditNote() {
   const qc = makeQueryClient();
+  mockGetNote.mockResolvedValue(NOTE_STUB);
+  mockListNotes.mockResolvedValue({ items: [NOTE_STUB] });
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={['/notes/abc123']}>
@@ -154,12 +160,17 @@ function renderEditNote() {
   );
 }
 
-beforeEach(() => {
+// Lazy import after mocks are registered
+let NoteEditorPage: React.ComponentType;
+beforeEach(async () => {
+  vi.resetModules();
+  NoteEditorPage = (await import('../NoteEditorPage')).default;
+  mockGetNote.mockReset();
+  mockCreateNote.mockReset();
+  mockUpdateNote.mockReset();
+  mockListNotes.mockReset();
   wikilinkQueryValue = null;
   mockInsertWikilink = vi.fn();
-  mockMutateAsync.mockReset();
-  mockMutate.mockReset();
-  mockMutateAsync.mockResolvedValue(NOTE_STUB);
 });
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -176,14 +187,17 @@ describe('NoteEditorPage — new note flow', () => {
     expect(screen.queryByTestId('template-gallery')).toBeNull();
   });
 
-  it('save button triggers a mutation in new note mode', async () => {
+  it('save button calls createNote', async () => {
+    mockCreateNote.mockResolvedValue({ ...NOTE_STUB, id: 'new1', note_id: 'new1' });
     renderNewNote();
+    // Close template gallery first
     await waitFor(() => screen.getByTestId('template-gallery'));
     fireEvent.click(screen.getByText('Close'));
+    // Click the hidden save-btn
     await waitFor(() => screen.getByTestId('save-btn'));
     fireEvent.click(screen.getByTestId('save-btn'));
     await act(async () => { await new Promise((r) => setTimeout(r, 80)); });
-    expect(mockMutate).toHaveBeenCalled();
+    expect(mockCreateNote).toHaveBeenCalled();
   });
 });
 
@@ -193,12 +207,13 @@ describe('NoteEditorPage — edit note flow', () => {
     await waitFor(() => screen.getByTestId('note-editor'), { timeout: 3000 });
   });
 
-  it('save button calls updateMutation in edit mode', async () => {
+  it('save button calls updateNote', async () => {
+    mockUpdateNote.mockResolvedValue(NOTE_STUB);
     renderEditNote();
     await waitFor(() => screen.getByTestId('save-btn'), { timeout: 3000 });
     fireEvent.click(screen.getByTestId('save-btn'));
     await act(async () => { await new Promise((r) => setTimeout(r, 80)); });
-    expect(mockMutate).toHaveBeenCalled();
+    expect(mockUpdateNote).toHaveBeenCalled();
   });
 
   it('does not show template gallery in edit mode', async () => {
@@ -207,7 +222,7 @@ describe('NoteEditorPage — edit note flow', () => {
     expect(screen.queryByTestId('template-gallery')).toBeNull();
   });
 
-  it('wikilink onSelect in edit mode calls insertWikilink', async () => {
+  it('wikilink onSelect in edit mode calls insertWikilink (lines 176-181)', async () => {
     wikilinkQueryValue = 'World';
     renderEditNote();
     await waitFor(() => screen.getByTestId('wikilink-popup'), { timeout: 3000 });
