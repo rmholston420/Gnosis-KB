@@ -7,7 +7,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { AiSidebar } from '../AiSidebar';
-import type { LinkSuggestResult, SummarizeResult } from '../../../api/ai';
+import type { LinkSuggestResult } from '../../../api/ai';
 
 const linkFixture: LinkSuggestResult = {
   suggestions: [
@@ -15,48 +15,39 @@ const linkFixture: LinkSuggestResult = {
   ],
 };
 
-// These are plain variables that will be assigned below inside vi.mock.
-// They are declared with let so the factory closure can reference them
-// after the factory has already created the vi.fn() instances.
-let mockSuggestLinks: ReturnType<typeof vi.fn>;
-let mockSuggestTags: ReturnType<typeof vi.fn>;
-let mockSummarizeNote: ReturnType<typeof vi.fn>;
-let mockCritiqueNote: ReturnType<typeof vi.fn>;
-let mockOrphanAudit: ReturnType<typeof vi.fn>;
+// vi.hoisted() runs before vi.mock factories and before any module-level code,
+// so references to these variables inside the factory are always initialised.
+const {
+  mockSuggestLinks,
+  mockSuggestTags,
+  mockSummarizeNote,
+  mockCritiqueNote,
+  mockOrphanAudit,
+} = vi.hoisted(() => ({
+  mockSuggestLinks:  vi.fn(),
+  mockSuggestTags:   vi.fn(),
+  mockSummarizeNote: vi.fn(),
+  mockCritiqueNote:  vi.fn(),
+  mockOrphanAudit:   vi.fn(),
+}));
 
-// vi.mock is hoisted to the top of the file by Vitest's transformer.
-// The factory must NOT reference variables declared with const/let outside
-// the factory body that are only assigned AFTER the factory runs — that
-// causes a TDZ (Temporal Dead Zone) ReferenceError.
-//
-// Safe pattern: create vi.fn() instances inline inside the factory, then
-// assign them to the outer let variables so beforeEach / assertions can
-// reference them.
-vi.mock('../../../api/ai', () => {
-  mockSuggestLinks  = vi.fn();
-  mockSuggestTags   = vi.fn();
-  mockSummarizeNote = vi.fn();
-  mockCritiqueNote  = vi.fn();
-  mockOrphanAudit   = vi.fn();
-
-  return {
-    suggestLinks:      (...a: unknown[]) => mockSuggestLinks(...a),
-    suggestTags:       (...a: unknown[]) => mockSuggestTags(...a),
-    summarizeNote:     (...a: unknown[]) => mockSummarizeNote(...a),
-    critiqueNote:      (...a: unknown[]) => mockCritiqueNote(...a),
-    orphanAudit:       (...a: unknown[]) => mockOrphanAudit(...a),
-    streamingChatUrl:  vi.fn(() => ''),
-    chat:              vi.fn(),
-    getLinkSuggestions: vi.fn().mockResolvedValue([]),
-    chatQuery:         vi.fn(),
-    aiApi: {
-      suggestLinks:  (...a: unknown[]) => mockSuggestLinks(...a),
-      suggestTags:   (...a: unknown[]) => mockSuggestTags(...a),
-      summarizeNote: (...a: unknown[]) => mockSummarizeNote(...a),
-      critiqueNote:  (...a: unknown[]) => mockCritiqueNote(...a),
-    },
-  };
-});
+vi.mock('../../../api/ai', () => ({
+  suggestLinks:       (...a: unknown[]) => mockSuggestLinks(...a),
+  suggestTags:        (...a: unknown[]) => mockSuggestTags(...a),
+  summarizeNote:      (...a: unknown[]) => mockSummarizeNote(...a),
+  critiqueNote:       (...a: unknown[]) => mockCritiqueNote(...a),
+  orphanAudit:        (...a: unknown[]) => mockOrphanAudit(...a),
+  streamingChatUrl:   vi.fn(() => ''),
+  chat:               vi.fn(),
+  getLinkSuggestions: vi.fn().mockResolvedValue([]),
+  chatQuery:          vi.fn(),
+  aiApi: {
+    suggestLinks:  (...a: unknown[]) => mockSuggestLinks(...a),
+    suggestTags:   (...a: unknown[]) => mockSuggestTags(...a),
+    summarizeNote: (...a: unknown[]) => mockSummarizeNote(...a),
+    critiqueNote:  (...a: unknown[]) => mockCritiqueNote(...a),
+  },
+}));
 
 function Wrapper({ children }: { children: React.ReactNode }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });

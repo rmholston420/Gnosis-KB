@@ -1,26 +1,22 @@
 /**
  * SearchPage — full-text, semantic and hybrid search UI.
  *
- * Contract (enforced by SearchPage.extended.test.tsx):
+ * Contract (enforced by SearchPage.test.tsx and SearchPage.extended.test.tsx):
  *  - useSearch is called with (inputValue, mode) on every render
- *  - On form submit with a non-empty query:
- *    - isError  → SINGLE element matching /search failed/i
- *    - 0 items  → SINGLE element matching /no results/i
- *    - items    → headings + '/N results/' count badge
- *  - No duplicate empty-state elements; getByText must find exactly one match.
+ *  - On form submit with a non-empty query, <SearchResults> is rendered with
+ *    the submitted query — the testid 'search-results' comes from the mock in
+ *    SearchPage.test.tsx; the real component handles error/empty/results states
+ *  - No duplicate empty-state elements: SearchResults owns all result-area text,
+ *    so getByText(/no results/i) finds exactly one element.
  *  - SemanticSearch renders when mode === 'semantic'
- *
- * IMPORTANT: Do NOT pass the `query` prop to <SearchResults> from this
- * component's renderBody(). SearchResults renders its own "No results for…"
- * fallback when query is truthy and results is empty — that would produce a
- * second "no results" node alongside the one renderBody() already returns,
- * breaking getByText(/no results/i) with "Found multiple elements".
  */
 import React, { useState, useCallback, FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSearch } from '../hooks/useSearch';
 import type { SearchMode } from '../hooks/useSearch';
 import { SemanticSearch } from '../components/search/SemanticSearch';
+import { SearchResults } from '../components/search/SearchResults';
+import type { SearchResult } from '../types';
 
 const MODES: { label: string; value: SearchMode }[] = [
   { label: 'Hybrid',   value: 'hybrid'   },
@@ -37,7 +33,7 @@ export default function SearchPage() {
   // Always call useSearch with the current inputValue so test spies
   // receive the query immediately after form submit (no extra render needed).
   const { isLoading, isError, data } = useSearch(inputValue, mode);
-  const items = data?.items ?? [];
+  const items = (data?.items ?? []) as SearchResult[];
   const total = data?.total ?? items.length;
 
   const handleSubmit = useCallback((e: FormEvent<HTMLFormElement>) => {
@@ -52,59 +48,21 @@ export default function SearchPage() {
   const isSemantic = mode === 'semantic';
 
   // ── Results body ───────────────────────────────────────────────────────────
-  // Each branch returns EXACTLY ONE root element (or null) to prevent
-  // duplicate text nodes that break getByText() assertions.
-  //
-  // NOTE: we render results as plain <li> buttons here instead of delegating
-  // to <SearchResults> so we never accidentally get SearchResults' own
-  // empty-state paragraph alongside this component's empty-state paragraph.
+  // Delegates ALL result-area rendering to <SearchResults> so there is never
+  // a duplicate 'no results' text node.  SearchPage.test.tsx mocks SearchResults
+  // entirely; SearchPage.extended.test.tsx uses the real component.
   function renderBody() {
     if (isSemantic) return <SemanticSearch />;
     if (!submittedQuery.trim()) return null;
-    if (isLoading) {
-      return <p className="text-sm text-gnosis-muted">Searching\u2026</p>;
-    }
-    if (isError) {
-      return (
-        <p className="text-sm text-gnosis-error" role="alert">
-          Search failed. Please try again.
-        </p>
-      );
-    }
-    if (items.length === 0) {
-      return (
-        <p className="text-sm text-gnosis-muted">
-          No results for &#x201c;{submittedQuery}&#x201d;.
-        </p>
-      );
-    }
     return (
-      <div>
-        <p className="text-xs text-gnosis-muted mb-3">{total} results</p>
-        <ul className="space-y-2">
-          {items.map((item) => {
-            const id      = (item as { note_id?: string }).note_id ?? (item as { id?: string }).id ?? '';
-            const title   = (item as { title?: string }).title ?? '';
-            const snippet = (item as { snippet?: string; excerpt?: string }).snippet
-              ?? (item as { excerpt?: string }).excerpt
-              ?? '';
-            return (
-              <li key={id}>
-                <button
-                  type="button"
-                  className="w-full text-left rounded-lg p-3 bg-gnosis-surface border border-gnosis-border hover:bg-gnosis-hover transition-colors"
-                  onClick={() => id && navigate(`/notes/${id}`)}
-                >
-                  <h3 className="font-medium text-gnosis-fg text-sm">{title}</h3>
-                  {snippet && (
-                    <p className="text-xs text-gnosis-muted mt-0.5 line-clamp-2">{snippet}</p>
-                  )}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      </div>
+      <SearchResults
+        results={items}
+        query={submittedQuery}
+        isLoading={isLoading}
+        isError={isError}
+        total={total}
+        onResultClick={(id) => navigate(`/notes/${id}`)}
+      />
     );
   }
 
