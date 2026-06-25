@@ -51,7 +51,11 @@ export default function TemplatesPage() {
         note_type: tpl.noteType,
         status:    'draft',
       });
-      navigate(`/notes/${note.note_id}/edit`);
+      // note.id is the canonical field; note.note_id is a legacy alias some
+      // backends return — fall back to it so both shapes work.
+      const noteId = (note as { id?: string; note_id?: string }).id
+                  ?? (note as { note_id?: string }).note_id;
+      if (noteId) navigate(`/notes/${noteId}`);
     } finally {
       setCreating(null);
     }
@@ -71,7 +75,7 @@ export default function TemplatesPage() {
           {TEMPLATES.map((tpl) => (
             <button
               key={tpl.id}
-              onClick={() => handleCreate(tpl)}
+              onClick={() => void handleCreate(tpl)}
               disabled={creating === tpl.id}
               className="flex flex-col gap-2 p-5 rounded-xl text-left
                          bg-gnosis-surface border border-gnosis-border
