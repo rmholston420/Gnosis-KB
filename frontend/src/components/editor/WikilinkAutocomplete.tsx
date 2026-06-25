@@ -82,6 +82,7 @@ export interface WikilinkDetectorResult {
   insertWikilink: (title: string) => void;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useWikilinkDetector(
   ref: RefObject<HTMLTextAreaElement | HTMLDivElement | null>,
   value: string,

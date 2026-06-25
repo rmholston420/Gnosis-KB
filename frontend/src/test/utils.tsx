@@ -1,4 +1,3 @@
-// eslint-disable-next-line react-refresh/only-export-components
 import React from 'react';
 import { render, type RenderOptions } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -7,6 +6,7 @@ import { MemoryRouter } from 'react-router-dom';
 /**
  * Creates a fresh QueryClient per test (no shared state between tests).
  */
+// eslint-disable-next-line react-refresh/only-export-components
 export function makeQueryClient() {
   return new QueryClient({
     defaultOptions: {
@@ -25,7 +25,6 @@ interface WrapperProps {
  * Wraps children in the providers every component needs:
  * QueryClientProvider + MemoryRouter
  */
-// eslint-disable-next-line react-refresh/only-export-components
 export function AllProviders({ children, initialEntries = ['/'] }: WrapperProps) {
   const qc = makeQueryClient();
   return (
@@ -53,4 +52,5 @@ export function renderWithProviders(
   });
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export * from '@testing-library/react';
