@@ -16,7 +16,7 @@ import {
   getLightRagGraph,
   getGraphEntities,
 } from '../services/api';
-import type { GraphData, GraphNode, GraphEdge } from '../types';
+import type { GraphData, GraphNode, GraphEdge, GraphStats } from '../types';
 
 export function useGraph() {
   return useQuery({
@@ -50,9 +50,11 @@ export function useGraphNeighborhood(nodeId: string | null) {
 }
 
 export function useGraphStats() {
-  return useQuery({
+  // Explicit type parameter so TanStack Query infers data as GraphStats
+  // (which includes optional aliases total_notes and orphan_count used by tests).
+  return useQuery<GraphStats>({
     queryKey: ['graph', 'stats'],
-    queryFn:  () => getGraphStats(),
+    queryFn:  () => getGraphStats() as Promise<GraphStats>,
     staleTime: 120_000,
   });
 }

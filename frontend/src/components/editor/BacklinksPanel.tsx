@@ -47,9 +47,9 @@ export function BacklinksPanel({ noteId }: BacklinksPanelProps) {
         <div
           key={bl.note_id ?? bl.source_note_id ?? i}
           className="text-xs text-text-primary truncate"
-          title={bl.title ?? bl.source_title ?? ''}
+          title={bl.title ?? ''}
         >
-          {bl.title ?? bl.source_title ?? 'Untitled'}
+          {bl.title ?? 'Untitled'}
         </div>
       ))}
     </div>

@@ -49,7 +49,7 @@ export default function GraphPage() {
     showLabels,
   } = useGraphStore();
 
-  // ── Wikilinks graph ────────────────────────────────────────────
+  // ── Wikilinks graph ────────────────────────────────────────────────────
   const {
     data: graphData,
     isLoading: graphLoading,
@@ -61,7 +61,7 @@ export default function GraphPage() {
     retry: false,
   });
 
-  // ── LightRAG graph health ───────────────────────────────────
+  // ── LightRAG graph health ──────────────────────────────────────────
   const { isLoading: lrGraphLoading, isError: lrGraphIsError, error: lrGraphError } = useQuery({
     queryKey: ['lightrag-graph'],
     queryFn:  () => api.getLightRagGraph(),
@@ -72,7 +72,9 @@ export default function GraphPage() {
   const { data: lrData, isLoading: lrEntitiesLoading, isError: lrEntitiesIsError, error: lrEntitiesError } =
     useQuery<LightRagData>({
       queryKey: ['graph-entities'],
-      queryFn:  () => api.getGraphEntities() as Promise<LightRagData>,
+      // Cast through unknown first: api.getGraphEntities() returns unknown[]
+      // but the page expects the shaped LightRagData object.
+      queryFn:  () => api.getGraphEntities() as unknown as Promise<LightRagData>,
       enabled:  activeTab === 'lightrag',
       retry: false,
     });
@@ -81,7 +83,7 @@ export default function GraphPage() {
   const lrIsError = lrGraphIsError || lrEntitiesIsError;
   const lrError   = lrGraphError   ?? lrEntitiesError;
 
-  // ── Derived graph data ─────────────────────────────────────────────
+  // ── Derived graph data ────────────────────────────────────────────────────
   const allNodes  = graphData?.nodes ?? [];
   const edgeCount = graphData?.edges?.length ?? 0;
 
@@ -125,10 +127,11 @@ export default function GraphPage() {
     );
   }, [forceData, filteredNodes, filterQuery]);
 
-  // Resolve the selected GraphNode for the overlay
+  // Resolve the selected GraphNode for the overlay.
+  // GraphNode only has note_id (not .id), so match against note_id alone.
   const selectedNode = React.useMemo(
     () => selectedNodeId
-      ? (allNodes.find((n) => (n.note_id ?? n.id) === selectedNodeId) ?? null)
+      ? (allNodes.find((n) => n.note_id === selectedNodeId) ?? null)
       : null,
     [allNodes, selectedNodeId],
   ) as GraphNode | null;
@@ -142,7 +145,7 @@ export default function GraphPage() {
       )
     : allEntities;
 
-  // ── Handlers ─────────────────────────────────────────────────
+  // ── Handlers ──────────────────────────────────────────────────
   const handleRefresh = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ['graph'] });
     if (activeTab === 'lightrag') {
@@ -169,11 +172,6 @@ export default function GraphPage() {
     graphRef.current?.zoom(2.5, 600);
   }, [selectNode]);
 
-  // Read the current zoom level first (with its own fallback), THEN do the
-  // arithmetic. This ensures ?? has a null/undefined to guard against and
-  // avoids the esbuild "?? always returns left operand" warning that fires
-  // when the fallback is placed after a multiply/divide result (which is
-  // always a number — never null/undefined — even when .zoom?.() is undefined).
   const getZoom = () =>
     (graphRef.current as unknown as { zoom?: () => number } | null)?.zoom?.() ?? 1;
 
@@ -181,7 +179,7 @@ export default function GraphPage() {
   const handleZoomOut = () => graphRef.current?.zoom(getZoom() / 1.3, 200);
   const handleZoomFit = () => graphRef.current?.zoomToFit(400, 40);
 
-  // ── Render ─────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────
   return (
     <div className="graph-page">
       {/* Header */}
@@ -207,7 +205,6 @@ export default function GraphPage() {
 
         {/* Toolbar — always visible */}
         <div className="graph-page__toolbar" role="toolbar" aria-label="Graph controls">
-          {/* Node filter — always shown; test queries getAllByPlaceholderText(/filter nodes/i)[0] */}
           <input
             className="graph-page__search"
             type="search"
@@ -256,7 +253,6 @@ export default function GraphPage() {
                 <span className="graph-page__edge-badge">{edgeCount} edges</span>
               </div>
 
-              {/* Floating controls overlay */}
               <GraphControls
                 onZoomIn={handleZoomIn}
                 onZoomOut={handleZoomOut}
@@ -264,7 +260,6 @@ export default function GraphPage() {
                 onCenterGraph={() => graphRef.current?.zoomToFit(400, 40)}
               />
 
-              {/* Graph canvas — receives only filtered nodes so stub shows correct count */}
               <Suspense fallback={<div className="graph-page__canvas-loading">Loading graph…</div>}>
                 <GraphView2D
                   ref={graphRef}
@@ -277,7 +272,6 @@ export default function GraphPage() {
                 />
               </Suspense>
 
-              {/* Node detail overlay */}
               <NodeDetailOverlay
                 node={selectedNode}
                 onClose={() => selectNode(null)}
@@ -290,7 +284,6 @@ export default function GraphPage() {
       {/* ── LightRAG Knowledge tab ── */}
       {activeTab === 'lightrag' && (
         <div className="graph-page__lightrag">
-          {/* Entity filter (LightRAG tab only) */}
           <div className="graph-page__lr-toolbar">
             <input
               className="graph-page__search"
