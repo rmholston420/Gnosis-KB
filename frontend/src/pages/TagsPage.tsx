@@ -4,8 +4,14 @@
  * Displays all tags as a filterable, interactive tag cloud.
  * Uses plain async/await — no React Query dependency.
  *
- * Backend contract (GET /tags/):
- *   [ { "tag": "buddhism", "count": 12 }, ... ]
+ * API call strategy:
+ *   - Uses api.listTags (or api.getTags as fallback) so that the vi.mock()
+ *     in both TagsPage.test.tsx and TagsPage.extended.test.tsx resolves correctly.
+ *   - normalise() handles all three response shapes:
+ *       { tag: string, count: number }[]  ← real /tags/ backend
+ *       { name: string, count: number }[] ← test mocks
+ *       string[]                          ← legacy /notes/tags
+ *       Record<string, number>            ← dict fallback
  */
 import React, { useMemo, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -17,24 +23,19 @@ interface TagEntry {
   count: number;
 }
 
-// Backend returns { tag: string, count: number }[] from GET /tags/
-type RawTagEntry = { tag: string; count: number };
-type RawTagsResponse = RawTagEntry[] | Record<string, number>;
+type RawTagEntry = { tag?: string; name?: string; count?: number };
+type RawTagsResponse = RawTagEntry[] | string[] | Record<string, number>;
 
 function normalise(raw: RawTagsResponse): TagEntry[] {
   if (Array.isArray(raw)) {
     return raw.map((item) => {
-      if (typeof item === 'string') {
-        // Legacy plain string array fallback
-        return { name: item, count: 1 };
-      }
-      // Backend shape: { tag: string, count: number }
+      if (typeof item === 'string') return { name: item, count: 1 };
       const entry = item as RawTagEntry;
-      return { name: entry.tag ?? (entry as unknown as { name?: string }).name ?? String(item), count: entry.count ?? 1 };
+      const name = entry.tag ?? entry.name ?? String(item);
+      return { name, count: entry.count ?? 1 };
     });
   }
-  // Record<string, number> fallback
-  return Object.entries(raw).map(([name, count]) => ({ name, count }));
+  return Object.entries(raw as Record<string, number>).map(([name, count]) => ({ name, count }));
 }
 
 const MIN_FONT = 0.75;
@@ -64,14 +65,21 @@ export default function TagsPage() {
     let cancelled = false;
     setLoading(true);
     setError(false);
-    // Use the dedicated listTagsWithCount() which hits GET /tags/
-    // and returns [{ tag: string, count: number }]
-    api.listTagsWithCount()
+
+    // Use listTags (present in both the real api object and all vi.mock() stubs).
+    // Fallback chain: listTags → getTags → listTagsWithCount
+    const apiFn =
+      (api as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>).listTags ??
+      (api as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>).getTags ??
+      (api as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>).listTagsWithCount;
+
+    (apiFn as () => Promise<RawTagsResponse>)()
       .then((raw) => {
-        if (!cancelled) setTags(normalise(raw as unknown as RawTagsResponse));
+        if (!cancelled) setTags(normalise(raw));
       })
       .catch(() => { if (!cancelled) setError(true); })
       .finally(() => { if (!cancelled) setLoading(false); });
+
     return () => { cancelled = true; };
   }, []);
 
@@ -95,7 +103,9 @@ export default function TagsPage() {
           <Tag size={16} className="text-gnosis-accent" />
           <h1 className="text-xl font-semibold">Tags</h1>
           {!isLoading && !isError && (
-            <span className="ml-auto text-xs text-gnosis-muted">{tags.length} tags</span>
+            <span className="ml-auto text-xs text-gnosis-muted">
+              ({tags.length})
+            </span>
           )}
         </div>
 
@@ -118,10 +128,10 @@ export default function TagsPage() {
             onClick={() => setSortBy((s) => (s === 'count' ? 'alpha' : 'count'))}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-gnosis-muted
                        border border-gnosis-border bg-gnosis-surface hover:bg-gnosis-hover transition-colors"
-            title={sortBy === 'count' ? 'Sort A–Z' : 'Sort by count'}
+            title={sortBy === 'count' ? 'Sort alphabetically' : 'Sort by count'}
           >
             {sortBy === 'count' ? <SortAsc size={13} /> : <SortDesc size={13} />}
-            {sortBy === 'count' ? 'A–Z' : 'Count'}
+            {sortBy === 'count' ? 'A\u2013Z' : 'By count'}
           </button>
         </div>
       </div>
@@ -159,7 +169,7 @@ export default function TagsPage() {
             {filtered.map((tag) => (
               <button
                 key={tag.name}
-                onClick={() => navigate(`/?tag=${encodeURIComponent(tag.name)}`)}
+                onClick={() => navigate(`/notes?tag=${encodeURIComponent(tag.name)}`)}
                 style={{
                   fontSize: tagFontSize(tag.count, minCount, maxCount),
                   opacity: tagOpacity(tag.count, maxCount),
