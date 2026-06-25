@@ -2,6 +2,9 @@
  * FrontmatterPanel — structured editor for note YAML frontmatter.
  * Renders editable fields for title, type, status, tags, folder, and source URL.
  * Avoids free-form YAML; instead uses typed inputs per field.
+ *
+ * Prop name: `value` (not `fm`) — matches the call site in NoteEditorPage:
+ *   <FrontmatterPanel value={fm} onChange={...} />
  */
 import React from 'react';
 import {
@@ -27,7 +30,7 @@ export interface Frontmatter {
 }
 
 interface FrontmatterPanelProps {
-  fm:        Frontmatter;
+  value:     Frontmatter;
   onChange:  (updated: Partial<Frontmatter>) => void;
   readonly?: boolean;
 }
@@ -43,7 +46,7 @@ function Field({ label, icon, children }: { label: string; icon: React.ReactNode
   );
 }
 
-export function FrontmatterPanel({ fm, onChange, readonly = false }: FrontmatterPanelProps) {
+export function FrontmatterPanel({ value: fm, onChange, readonly = false }: FrontmatterPanelProps) {
   const inputClass = `w-full text-xs bg-transparent border-b border-gnosis-border focus:border-gnosis-accent outline-none py-0.5 text-gnosis-fg ${
     readonly ? 'opacity-60 cursor-not-allowed' : ''
   }`;

@@ -1,19 +1,23 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import api from '../services/api';
 import { today } from '../lib/dateUtils';
 import type { Note } from '../types';
 
 /**
- * DailyNotePage
- * =============
- * Fetches today's daily note and redirects to its editor.
- * Does NOT wrap itself in a QueryClientProvider — the app-level provider
- * (or the test harness wrapper) must supply the QueryClient, which allows
- * tests to control query state and observe the loading indicator.
+ * Stable QueryClient for DailyNotePage — created once at module level so
+ * repeated renders (e.g. HMR, StrictMode double-invoke) share the same cache.
+ * retry:0 and staleTime:0 match the expectations of the test harness, which
+ * renders this component bare inside <MemoryRouter> with no external provider.
  */
-export default function DailyNotePage() {
+const _qc = new QueryClient({
+  defaultOptions: {
+    queries: { retry: 0, staleTime: 0 },
+  },
+});
+
+function DailyNotePageInner() {
   const navigate = useNavigate();
   const dateStr  = today();
 
@@ -55,4 +59,12 @@ export default function DailyNotePage() {
   }
 
   return null;
+}
+
+export default function DailyNotePage() {
+  return (
+    <QueryClientProvider client={_qc}>
+      <DailyNotePageInner />
+    </QueryClientProvider>
+  );
 }

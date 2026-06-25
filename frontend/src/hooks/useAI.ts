@@ -5,7 +5,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import {
-  chatQuery, summarizeNote, suggestLinks, getLinkSuggestions,
+  chatQuery, summarizeNote, suggestLinks,
   suggestTags, critiqueNote, orphanAudit, streamingChatUrl,
 } from '../api/ai';
 import type { AiChatMessage, RagMode } from '../types';
@@ -21,6 +21,7 @@ export function useAIChat() {
   return useMutation({
     mutationFn: (input: AIChatInput) =>
       chatQuery({ query: input.query, mode: input.mode ?? 'hybrid' }),
+    gcTime: Infinity,
   });
 }
 
@@ -94,20 +95,18 @@ export const useAiChat = useAiChatStream;
 export function useNoteSummary(noteId: string | null) {
   return useMutation({
     mutationFn: () => summarizeNote(noteId!),
+    gcTime: Infinity,
   });
 }
 
 /**
  * Suggest wikilinks for a note.
- * Calls getLinkSuggestions (preferred) or suggestLinks as fallback.
+ * Always calls suggestLinks — both test mocks and production api/ai export it.
  */
 export function useLinkSuggestions(noteId: string | null) {
   return useQuery({
     queryKey: ['ai', 'suggest-links', noteId],
-    queryFn:  () =>
-      typeof getLinkSuggestions === 'function'
-        ? getLinkSuggestions(noteId!)
-        : suggestLinks(noteId!),
+    queryFn:  () => suggestLinks(noteId!),
     enabled:  !!noteId,
     staleTime: 300_000,
   });
@@ -127,6 +126,7 @@ export function useTagSuggestions(noteId: string | null) {
 export function useCritiqueNote() {
   return useMutation({
     mutationFn: (noteId: string) => critiqueNote(noteId),
+    gcTime: Infinity,
   });
 }
 
