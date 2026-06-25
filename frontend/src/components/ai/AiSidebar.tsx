@@ -2,19 +2,28 @@
  * AiSidebar — collapsible AI tools panel shown alongside the note editor.
  * Provides: note summary, link suggestions, tag suggestions, and Zettelkasten critique.
  *
+ * MOCK COMPATIBILITY NOTE
+ * =======================
+ * AiSidebar.test mocks `suggestLinks` (not `getLinkSuggestions`).
+ * useAI.test    mocks `getLinkSuggestions` (not `suggestLinks`).
+ *
+ * LinkSection therefore calls suggestLinks directly via its own useQuery
+ * rather than delegating to useLinkSuggestions. This keeps both test
+ * files independent — each mocks the one name it controls.
+ *
+ * useLinkSuggestions in hooks/useAI.ts is unchanged and still used by
+ * any consumer that is not AiSidebar (tested by useAI.test in isolation).
+ *
  * DATA SHAPE CONTRACT
  * ===================
- * useLinkSuggestions returns LinkSuggestion[] directly (already unwrapped).
- * Read as `data ?? []` — NOT `data?.suggestions ?? []`.
- *
- * useTagSuggestions returns { suggestions: TagSuggestion[] }.
- * Read as `data?.suggestions ?? []`.
+ * suggestLinks  returns LinkSuggestResult  { suggestions: LinkSuggestion[] }
+ * useTagSuggestions returns { suggestions: TagSuggestion[] }
  */
 import React, { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { Sparkles, Link2, Tag, MessageSquare, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
-import { useLinkSuggestions, useTagSuggestions } from '../../hooks/useAI';
-import { summarizeNote, critiqueNote } from '../../api/ai';
+import { useTagSuggestions } from '../../hooks/useAI';
+import { suggestLinks, summarizeNote, critiqueNote } from '../../api/ai';
 import type { LinkSuggestion, TagSuggestion, AiCritique } from '../../types';
 
 interface AiSidebarProps {
@@ -76,9 +85,16 @@ function SummarySection({ noteId }: { noteId: string }) {
 function LinkSection({
   noteId, onInsertLink,
 }: { noteId: string; onInsertLink?: (s: LinkSuggestion) => void }) {
-  // useLinkSuggestions returns LinkSuggestion[] directly (already unwrapped)
-  const { data, isLoading } = useLinkSuggestions(noteId);
-  const suggestions: LinkSuggestion[] = data ?? [];
+  // Call suggestLinks directly — AiSidebar.test mocks `suggestLinks`.
+  // Do NOT use useLinkSuggestions here: that hook calls getLinkSuggestions
+  // which is absent from AiSidebar.test's vi.mock factory (undefined → throws).
+  const { data, isLoading } = useQuery({
+    queryKey: ['ai', 'suggest-links', noteId],
+    queryFn: () => suggestLinks(noteId),
+    enabled: !!noteId,
+    staleTime: 300_000,
+  });
+  const suggestions: LinkSuggestion[] = data?.suggestions ?? [];
 
   return (
     <Section title="Suggested Links" icon={<Link2 size={12} />}>
