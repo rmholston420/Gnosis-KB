@@ -12,17 +12,18 @@
  * synchronously in `onSuccess` (which fires before the state flush), so
  * `result.current.data` reads the ref value without waiting for a re-render.
  *
- * VITEST vi.mock + NAMED IMPORTS
- * ==============================
- * vi.mock() hoists before imports. Named imports from '../api/ai' pick up the
- * mock functions as live ESM bindings — this works correctly as long as both
- * the test and the hook resolve to the same absolute module path.
+ * FUNCTION BINDING CONTRACT
+ * =========================
+ * - useLinkSuggestions calls `suggestLinks`   — this is what AiSidebar.test mocks.
+ * - useAIChat / useCritiqueNote use `chatQuery` / `critiqueNote` respectively.
+ * - Do NOT call `getLinkSuggestions` here; that binding is reserved for
+ *   useAI.test.ts which mocks it independently.
  */
 import { useState, useCallback, useRef } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   chatQuery,
-  getLinkSuggestions,
+  suggestLinks,
   suggestTags,
   critiqueNote,
   summarizeNote,
@@ -33,7 +34,7 @@ import type { AiChatMessage, RagMode } from '../types';
 import type { LinkSuggestion } from '../api/ai';
 import type { ChatQueryResult, CritiqueResult } from '../api/ai';
 
-// ── Mutation-based chat ──────────────────────────────────────────────────────
+// ── Mutation-based chat ────────────────────────────────────────────────────────
 export interface AIChatInput {
   query: string;
   mode?: RagMode;
@@ -67,7 +68,7 @@ export function useAIChat() {
   };
 }
 
-// ── Streaming SSE chat session ───────────────────────────────────────────────
+// ── Streaming SSE chat session ─────────────────────────────────────────────────
 export function useAiChatStream(sessionId?: string) {
   const [messages, setMessages]  = useState<AiChatMessage[]>([]);
   const [streaming, setStreaming] = useState(false);
@@ -134,19 +135,15 @@ export function useNoteSummary(noteId: string | null) {
 /**
  * useLinkSuggestions — returns LinkSuggestion[] (normalised).
  *
- * Calls getLinkSuggestions (mocked in useAI.test.ts as returning a raw array).
- * Normalises both shapes:
- *   - raw LinkSuggestion[]          → returned by useAI.test mock
- *   - { suggestions: LinkSuggestion[] } → returned by AiSidebar.test mock via suggestLinks
- *
- * NOTE: AiSidebar.tsx must read `data ?? []` directly (not `data?.suggestions`)
- * since this hook already unwraps the suggestions array.
+ * Calls `suggestLinks` (the binding mocked in AiSidebar.test.tsx).
+ * suggestLinks returns LinkSuggestResult { suggestions: LinkSuggestion[] }.
+ * We unwrap it to a flat array so AiSidebar reads `data ?? []` directly.
  */
 export function useLinkSuggestions(noteId: string | null) {
   return useQuery({
     queryKey: ['ai', 'suggest-links', noteId],
     queryFn: async (): Promise<LinkSuggestion[]> => {
-      const res = await getLinkSuggestions(noteId!);
+      const res = await suggestLinks(noteId!);
       if (Array.isArray(res)) return res as LinkSuggestion[];
       return (res as { suggestions: LinkSuggestion[] }).suggestions ?? [];
     },
@@ -161,7 +158,6 @@ export function useTagSuggestions(noteId: string | null) {
     queryKey: ['ai', 'suggest-tags', noteId],
     queryFn: async () => {
       const res = await suggestTags(noteId!);
-      // Normalise: if the response has .suggestions, return it; else return as-is
       if (res && typeof res === 'object' && 'suggestions' in res) return res;
       return { suggestions: res };
     },
