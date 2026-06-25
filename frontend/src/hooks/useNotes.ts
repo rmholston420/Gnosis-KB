@@ -11,17 +11,22 @@ type AnyRecord = Record<string, unknown>;
 
 export const NOTES_KEY = 'notes';
 
-const apiListNotes = api.listNotes ?? listNotes;
-const apiGetNote = api.getNote ?? getNote;
-const apiCreateNote = api.createNote ?? createNote;
-const apiUpdateNote = api.updateNote ?? updateNote;
-const apiDeleteNote = api.deleteNote ?? deleteNote;
-const apiGetDailyNote = api.getDailyNote ?? getDailyNote;
+// Resolve API functions at call-time (not module load-time) so test mocks
+// that only partially stub the default export don't throw at import.
+function getApiListNotes() { return (api as AnyRecord).listNotes as typeof listNotes ?? listNotes; }
+function getApiGetNote() { return (api as AnyRecord).getNote as typeof getNote ?? getNote; }
+function getApiCreateNote() { return (api as AnyRecord).createNote as typeof createNote ?? createNote; }
+function getApiUpdateNote() { return (api as AnyRecord).updateNote as typeof updateNote ?? updateNote; }
+function getApiDeleteNote() { return (api as AnyRecord).deleteNote as typeof deleteNote ?? deleteNote; }
+function getApiGetDailyNote() {
+  const fn = (api as AnyRecord).getDailyNote as typeof getDailyNote | undefined;
+  return fn ?? getDailyNote;
+}
 
 export function useNotes(params: Parameters<typeof listNotes>[0] = {}) {
   return useQuery({
     queryKey: [NOTES_KEY, params],
-    queryFn: () => apiListNotes(params).then((res) => (res.items ?? res ?? []) as unknown as Note[]),
+    queryFn: () => getApiListNotes()(params).then((res) => (res.items ?? res ?? []) as unknown as Note[]),
     staleTime: 30_000,
   });
 }
@@ -29,7 +34,7 @@ export function useNotes(params: Parameters<typeof listNotes>[0] = {}) {
 export function useNotesList(params: Parameters<typeof listNotes>[0] = {}) {
   return useQuery({
     queryKey: [NOTES_KEY, 'list', params],
-    queryFn: () => apiListNotes(params).then((res) => (res.items ?? res ?? []) as unknown as Note[]),
+    queryFn: () => getApiListNotes()(params).then((res) => (res.items ?? res ?? []) as unknown as Note[]),
     staleTime: 30_000,
   });
 }
@@ -37,7 +42,7 @@ export function useNotesList(params: Parameters<typeof listNotes>[0] = {}) {
 export function useNoteList(params: Parameters<typeof listNotes>[0] = {}) {
   return useQuery({
     queryKey: [NOTES_KEY, 'list', params],
-    queryFn: () => apiListNotes(params) as unknown as Promise<NoteListResponse>,
+    queryFn: () => getApiListNotes()(params) as unknown as Promise<NoteListResponse>,
     staleTime: 30_000,
   });
 }
@@ -45,7 +50,7 @@ export function useNoteList(params: Parameters<typeof listNotes>[0] = {}) {
 export function useNote(id: string | null) {
   return useQuery({
     queryKey: [NOTES_KEY, id],
-    queryFn: () => apiGetNote(id!) as unknown as Promise<Note>,
+    queryFn: () => getApiGetNote()(id!) as unknown as Promise<Note>,
     enabled: !!id,
     staleTime: 30_000,
   });
@@ -54,7 +59,7 @@ export function useNote(id: string | null) {
 export function useCreateNote() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: NoteCreate) => apiCreateNote(data as unknown as AnyRecord) as Promise<Note>,
+    mutationFn: (data: NoteCreate) => getApiCreateNote()(data as unknown as AnyRecord) as Promise<Note>,
     onSuccess: () => qc.invalidateQueries({ queryKey: [NOTES_KEY] }),
   });
 }
@@ -67,7 +72,7 @@ export function useUpdateNote(_noteId?: string) {
       const payload = 'payload' in vars
         ? vars.payload
         : (({ id: _id, ...rest }: NoteUpdate & { id: string }) => rest)(vars as NoteUpdate & { id: string });
-      return apiUpdateNote(id, payload as unknown as AnyRecord) as Promise<Note>;
+      return getApiUpdateNote()(id, payload as unknown as AnyRecord) as Promise<Note>;
     },
     onSuccess: (_data, vars) => qc.invalidateQueries({ queryKey: [NOTES_KEY, vars.id] }),
   });
@@ -77,7 +82,7 @@ export function useSaveNote() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ noteId, payload }: { noteId: string; payload: NoteUpdate }) =>
-      apiUpdateNote(noteId, payload as unknown as AnyRecord) as Promise<Note>,
+      getApiUpdateNote()(noteId, payload as unknown as AnyRecord) as Promise<Note>,
     onSuccess: (_data, vars) => qc.invalidateQueries({ queryKey: [NOTES_KEY, vars.noteId] }),
   });
 }
@@ -85,7 +90,7 @@ export function useSaveNote() {
 export function useDeleteNote() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => apiDeleteNote(id),
+    mutationFn: (id: string) => getApiDeleteNote()(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: [NOTES_KEY] }),
   });
 }
@@ -94,11 +99,11 @@ export function useDailyNote(dateStr?: string) {
   const d = dateStr ?? new Date().toISOString().slice(0, 10);
   return useQuery({
     queryKey: [NOTES_KEY, 'daily', d],
-    queryFn: () => apiGetDailyNote(d) as unknown as Promise<Note>,
+    queryFn: () => getApiGetDailyNote()(d) as unknown as Promise<Note>,
     staleTime: 60_000,
   });
 }
 
 export function listNotes_hook(params: Parameters<typeof listNotes>[0] = {}) {
-  return apiListNotes(params).then((res) => (res.items ?? res ?? []) as unknown as Note[]);
+  return getApiListNotes()(params).then((res) => (res.items ?? res ?? []) as unknown as Note[]);
 }

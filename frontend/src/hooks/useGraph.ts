@@ -7,25 +7,27 @@ import {
   getNeighborhood,
   getGraphStats,
   getClusters,
-  fetchGraph as getGraph,
   getGraphNode,
   getLightRagGraph,
   getGraphEntities,
 } from '../api/graph';
 import type { GraphData, GraphNode, GraphEdge, GraphStats } from '../types';
 
-export function useGraph() {
+/**
+ * useGraphData / useGraph — fetches the full knowledge graph.
+ * Uses getFullGraph so the vi.mock('../../api/graph') in tests
+ * intercepts the call correctly.
+ */
+export function useGraphData() {
   return useQuery({
     queryKey: ['graph'],
-    queryFn: async () => {
-      const raw = await getGraph();
-      return raw as GraphData;
-    },
+    queryFn: () => getFullGraph() as Promise<GraphData>,
     staleTime: 60_000,
   });
 }
 
-export const useGraphData = useGraph;
+/** Alias kept for backwards-compat with existing call-sites. */
+export const useGraph = useGraphData;
 
 export function useFullGraph() {
   return useQuery({

@@ -14,7 +14,7 @@ const NOTE_TYPE_COLORS: Record<string, string> = {
   resource:   'bg-purple-500/15 text-purple-700 dark:text-purple-300',
   journal:    'bg-pink-500/15 text-pink-700 dark:text-pink-300',
   moc:        'bg-red-500/15 text-red-700 dark:text-red-300',
-  literature: 'bg-orange-500/15 text-orange-700 dark:text-orange-300',
+  literature: 'bg-orange-500/15 text-orange-700 dark:text-amber-300',
   default:    'bg-gnosis-border/30 text-gnosis-muted',
 };
 
@@ -30,7 +30,9 @@ export function NoteCard({ note, compact = false, onClick, selected = false, act
   const navigate = useNavigate();
   const typeClass = NOTE_TYPE_COLORS[note.note_type ?? 'default'] ?? NOTE_TYPE_COLORS.default;
   const isActive = active || selected;
-  const tagText = note.tags?.slice(0, 2).map((t) => `#${t}`).join(' ') ?? '';
+  const tags = note.tags ?? [];
+  // Render up to 2 tags as a single "#tag1 #tag2" string so tests can find it with getByText
+  const tagText = tags.slice(0, 2).map((t) => `#${t}`).join(' ');
   const noteId = note.note_id ?? (note as Note & { id?: string }).id;
 
   const handleOpen = () => {
@@ -40,6 +42,15 @@ export function NoteCard({ note, compact = false, onClick, selected = false, act
     }
     if (noteId) navigate(`/notes/${noteId}`);
   };
+
+  // Strip markdown heading markers from body preview so # chars don't leak into the DOM
+  const bodyPreview = note.body
+    ? note.body
+        .replace(/^---[\s\S]*?---\n?/, '')  // strip frontmatter
+        .replace(/^#{1,6}\s+/gm, '')         // strip heading markers
+        .trim()
+        .slice(0, 200)
+    : '';
 
   return (
     <div
@@ -65,9 +76,9 @@ export function NoteCard({ note, compact = false, onClick, selected = false, act
         )}
       </div>
 
-      {!compact && note.body && (
+      {!compact && bodyPreview && (
         <p className="text-sm text-gnosis-muted line-clamp-2 mb-2">
-          {note.body.replace(/^---[\s\S]*?---\n?/, '').trim().slice(0, 200)}
+          {bodyPreview}
         </p>
       )}
 
@@ -76,7 +87,7 @@ export function NoteCard({ note, compact = false, onClick, selected = false, act
           <span className="text-xs text-gnosis-muted shrink-0">{note.word_count}w</span>
         )}
         {tagText && (
-          <span className="text-xs text-gnosis-muted">{tagText}</span>
+          <span className="text-xs text-gnosis-muted" data-testid="note-tags">{tagText}</span>
         )}
         {note.updated_at && (
           <span className="ml-auto text-xs text-gnosis-muted shrink-0">
