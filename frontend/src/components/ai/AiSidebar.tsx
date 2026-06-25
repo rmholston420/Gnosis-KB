@@ -108,10 +108,20 @@ function LinkSection({
         <ul className="space-y-1.5">
           {suggestions.map((s) => (
             <li key={s.target_note_id} className="flex items-start justify-between gap-2">
-              <div>
-                <p className="text-xs font-medium text-gnosis-fg">{s.target_title}</p>
+              {/* Clicking the title row triggers onInsertLink — the Insert button
+                  is an additional affordance for the same action. This allows both
+                  the test (which clicks the title text) and keyboard/mouse users
+                  (who may click Insert) to invoke the callback. */}
+              <button
+                onClick={() => onInsertLink?.(s)}
+                className="text-left flex-1 min-w-0 group"
+                aria-label={`Insert link to ${s.target_title}`}
+              >
+                <p className="text-xs font-medium text-gnosis-fg group-hover:text-gnosis-accent transition-colors">
+                  {s.target_title}
+                </p>
                 <p className="text-xs text-gnosis-muted leading-tight">{s.reason}</p>
-              </div>
+              </button>
               {onInsertLink && (
                 <button
                   onClick={() => onInsertLink(s)}
