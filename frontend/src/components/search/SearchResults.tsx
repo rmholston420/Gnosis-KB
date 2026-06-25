@@ -23,7 +23,6 @@ interface SearchResultsProps {
   onResultClick:  (noteId: string) => void;
 }
 
-/** Highlight occurrences of `query` in `text` with a <mark> element. */
 function Highlight({ text, query }: { text: string; query?: string }) {
   if (!query?.trim()) return <>{text}</>;
   const re = new RegExp(
@@ -46,7 +45,6 @@ function Highlight({ text, query }: { text: string; query?: string }) {
   );
 }
 
-/** Single search result row. */
 function ResultRow({
   result,
   query,
@@ -64,14 +62,12 @@ function ResultRow({
       onClick={() => onResultClick(result.note_id)}
       className="w-full text-left group flex gap-3 p-3 rounded-lg bg-gnosis-surface hover:bg-gnosis-hover border border-transparent hover:border-gnosis-border transition-all"
     >
-      {/* Type indicator stripe */}
       <span
         className="w-1 rounded-full flex-shrink-0 mt-1 self-stretch"
         style={{ background: typeColor }}
       />
 
       <div className="flex-1 min-w-0">
-        {/* Title + score */}
         <div className="flex items-start justify-between gap-2 mb-1">
           <h3 className="text-sm font-medium text-gnosis-fg group-hover:text-gnosis-accent transition-colors truncate">
             <Highlight text={result.title} query={query} />
@@ -83,14 +79,12 @@ function ResultRow({
           )}
         </div>
 
-        {/* Snippet / excerpt */}
         {(result.snippet ?? result.excerpt) && (
           <p className="text-xs text-gnosis-muted leading-relaxed line-clamp-2">
             <Highlight text={result.snippet ?? result.excerpt!} query={query} />
           </p>
         )}
 
-        {/* Meta row */}
         <div className="flex items-center gap-3 mt-2 text-xs text-gnosis-muted">
           {result.folder && (
             <span className="truncate max-w-[120px]">{result.folder}</span>
@@ -112,9 +106,6 @@ function ResultRow({
   );
 }
 
-/**
- * Renders the full search results list with loading + empty states.
- */
 export function SearchResults({
   results,
   query,
@@ -123,6 +114,8 @@ export function SearchResults({
   total,
   onResultClick,
 }: SearchResultsProps) {
+  const safeResults = Array.isArray(results) ? results : [];
+
   if (isLoading) {
     return (
       <div className="space-y-2">
@@ -141,10 +134,10 @@ export function SearchResults({
     );
   }
 
-  if (results.length === 0 && query?.trim()) {
+  if (safeResults.length === 0 && query?.trim()) {
     return (
       <div className="text-center py-12 text-gnosis-muted">
-        <p className="text-sm">No results for \u201c{query}\u201d</p>
+        <p className="text-sm">No results for “{query}”</p>
         <p className="text-xs mt-1">Try a different query or switch search mode.</p>
       </div>
     );
@@ -158,7 +151,7 @@ export function SearchResults({
         </p>
       )}
       <div className="space-y-1.5">
-        {results.map((r) => (
+        {safeResults.map((r) => (
           <ResultRow
             key={r.note_id}
             result={r}

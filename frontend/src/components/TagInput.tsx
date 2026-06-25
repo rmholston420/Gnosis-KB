@@ -24,19 +24,18 @@ export function TagInput({
   value,
   tags,
   onChange,
-  placeholder = 'Add tag\u2026',
+  placeholder = 'Add tag…',
   disabled,
 }: TagInputProps) {
-  // Resolve canonical list — prefer `value`, fall back to `tags`.
   const currentTags = value ?? tags ?? [];
 
-  const [input, setInput]       = useState('');
-  const [open,  setOpen]        = useState(false);
+  const [input, setInput] = useState('');
+  const [open, setOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const { data: tagData } = useQuery({
     queryKey: ['tags'],
-    queryFn:  () => api.listTags(),
+    queryFn: () => api.listTags(),
     staleTime: 60_000,
   });
 
@@ -86,7 +85,7 @@ export function TagInput({
           key={tag}
           className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-gnosis-accent/20 text-gnosis-accent text-xs"
         >
-          #{tag}
+          {tag}
           {!disabled && (
             <button
               type="button"
@@ -94,7 +93,7 @@ export function TagInput({
               className="hover:text-red-400 transition-colors"
               aria-label={`Remove tag ${tag}`}
             >
-              \xd7
+              ×
             </button>
           )}
         </span>
@@ -119,7 +118,7 @@ export function TagInput({
                 onMouseDown={(e) => { e.preventDefault(); addTag(tag); }}
                 className="w-full text-left px-3 py-1.5 text-xs hover:bg-gnosis-border transition-colors"
               >
-                #{tag}
+                {tag}
               </button>
             </li>
           ))}

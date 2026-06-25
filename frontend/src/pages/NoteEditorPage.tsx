@@ -38,31 +38,29 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, PanelRight, PanelRightClose, Eye, Pencil } from 'lucide-react';
 import { Loader2 } from 'lucide-react';
-// Named imports so vi.spyOn(notesApi, 'getNote') works in NoteEditorPage.test.tsx
 import { getNote, createNote, updateNote, listNotes } from '../api/notes';
 import api from '../services/api';
 import NoteEditor from '../components/NoteEditor';
-import { useAppStore }          from '../store/useAppStore';
-import { SplitPane }            from '../components/layout/SplitPane';
+import { useAppStore } from '../store/useAppStore';
+import { SplitPane } from '../components/layout/SplitPane';
 import { FrontmatterPanel, type Frontmatter } from '../components/editor/FrontmatterPanel';
-import { BacklinksPanel }       from '../components/editor/BacklinksPanel';
-import { AiSidebar }            from '../components/ai/AiSidebar';
-import { MarkdownPreview }      from '../components/shared/MarkdownPreview';
+import { BacklinksPanel } from '../components/editor/BacklinksPanel';
+import { AiSidebar } from '../components/ai/AiSidebar';
+import { MarkdownPreview } from '../components/shared/MarkdownPreview';
 import WikilinkAutocomplete, { useWikilinkDetector } from '../components/editor/WikilinkAutocomplete';
 import { NoteTemplateGallery } from '../components/notes/NoteTemplateGallery';
-import type { NoteTemplate }   from '../components/notes/NoteTemplateGallery';
+import type { NoteTemplate } from '../components/notes/NoteTemplateGallery';
 import type { Note, NoteCreate, NoteType, LinkSuggestion } from '../types';
 
-// ---- helpers ---------------------------------------------------------------
 function noteToFrontmatter(note: Note): Frontmatter {
   return {
-    title:       note.title ?? '',
-    note_type:   note.note_type ?? 'permanent',
-    status:      note.status   ?? 'inbox',
-    tags:        note.tags     ?? [],
-    folder:      note.folder   ?? '',
-    source_url:  note.source_url ?? '',
-    created_at:  note.created_at  ?? '',
+    title: note.title ?? '',
+    note_type: note.note_type ?? 'permanent',
+    status: note.status ?? 'inbox',
+    tags: note.tags ?? [],
+    folder: note.folder ?? '',
+    source_url: note.source_url ?? '',
+    created_at: note.created_at ?? '',
     modified_at: note.modified_at ?? '',
   };
 }
@@ -70,20 +68,15 @@ function noteToFrontmatter(note: Note): Frontmatter {
 export default function NoteEditorPage() {
   const { id } = useParams<{ id?: string }>();
   const [searchParams] = useSearchParams();
-  const navigate        = useNavigate();
-  const queryClient     = useQueryClient();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { setActiveNoteId } = useAppStore();
 
-  // Right-panel (AI + backlinks) visibility
   const [showRightPanel, setShowRightPanel] = useState(true);
-  // Edit vs Preview mode
   const [previewMode, setPreviewMode] = useState(false);
-
-  // ---- Template gallery (new-note flow) -----------------------------------
   const [showTemplateGallery, setShowTemplateGallery] = useState(!id);
-  const [chosenTemplate, setChosenTemplate]           = useState<NoteTemplate | null>(null);
+  const [chosenTemplate, setChosenTemplate] = useState<NoteTemplate | null>(null);
 
-  // ---- Wikilink autocomplete ----------------------------------------------
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [bodyValue, setBodyValue] = useState('');
   const { wikilinkQuery, insertWikilink } = useWikilinkDetector(
@@ -92,50 +85,51 @@ export default function NoteEditorPage() {
     setBodyValue,
   );
 
-  // ---- Frontmatter local state (new note) ----------------------------------
   const [fmOverride, setFmOverride] = useState<Partial<Frontmatter>>({});
 
-  // ---- AI sidebar: insert link callback -----------------------------------
   const handleInsertLink = useCallback((s: LinkSuggestion) => {
     const wikilink = `[[${s.target_title}]]`;
     if (textareaRef.current) {
-      const el    = textareaRef.current;
+      const el = textareaRef.current;
       const start = el.selectionStart;
-      const end   = el.selectionEnd;
-      const next  = bodyValue.slice(0, start) + wikilink + bodyValue.slice(end);
+      const end = el.selectionEnd;
+      const next = bodyValue.slice(0, start) + wikilink + bodyValue.slice(end);
       setBodyValue(next);
     }
   }, [bodyValue]);
 
-  // ---- Data fetching (using named api/notes imports for spy compatibility) -
   const { data: note, isLoading } = useQuery<Note>({
     queryKey: ['note', id],
-    queryFn:  () => getNote(id!) as Promise<Note>,
-    enabled:  !!id,
+    queryFn: () => getNote(id!) as Promise<Note>,
+    enabled: !!id,
   });
 
-  // TanStack Query v5: onSuccess was removed — hydrate bodyValue via effect
   useEffect(() => {
     if (note && !bodyValue) {
       setBodyValue(note.body ?? '');
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [note]);
+  }, [note, bodyValue]);
 
-  // All note titles for wikilink resolution in preview mode.
-  // listNotes() returns Note[] directly (not { items: Note[] }).
-  const { data: allNotes } = useQuery<Note[]>({
+  const { data: allNotes } = useQuery<unknown>({
     queryKey: ['notes'],
-    queryFn:  () => listNotes() as Promise<Note[]>,
+    queryFn: () => listNotes() as Promise<unknown>,
   });
+
+  const safeAllNotes = useMemo<Note[]>(() => {
+    if (Array.isArray(allNotes)) return allNotes as Note[];
+    if (allNotes && typeof allNotes === 'object' && Array.isArray((allNotes as { items?: unknown }).items)) {
+      return (allNotes as { items: Note[] }).items;
+    }
+    return [];
+  }, [allNotes]);
 
   const titleToId = useMemo(() => {
     const map: Record<string, string> = {};
-    for (const n of (allNotes ?? [])) {
+    for (const n of safeAllNotes) {
       if (n.title) map[n.title] = n.note_id ?? n.id;
     }
     return map;
-  }, [allNotes]);
+  }, [safeAllNotes]);
 
   const createMutation = useMutation({
     mutationFn: (data: NoteCreate) => createNote(data) as Promise<Note>,
@@ -156,14 +150,12 @@ export default function NoteEditorPage() {
     },
   });
 
-  // ---- Handlers ------------------------------------------------------------
   function handleTemplateSelect(template: NoteTemplate) {
     setChosenTemplate(template);
     setShowTemplateGallery(false);
     setBodyValue(template.body);
   }
 
-  // ---- Loading -------------------------------------------------------------
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -172,23 +164,21 @@ export default function NoteEditorPage() {
     );
   }
 
-  // ---- Derived values (safe: isLoading is false here) ----------------------
   const activeNoteId = id ?? null;
   const fm: Frontmatter = note
     ? { ...noteToFrontmatter(note), ...fmOverride }
     : {
-        title:       searchParams.get('title') ?? '',
-        note_type:   chosenTemplate?.note_type ?? 'permanent',
-        status:      'inbox',
-        tags:        [],
-        folder:      chosenTemplate?.folder ?? '10-zettelkasten',
-        source_url:  '',
-        created_at:  '',
+        title: searchParams.get('title') ?? '',
+        note_type: chosenTemplate?.note_type ?? 'permanent',
+        status: 'inbox',
+        tags: [],
+        folder: chosenTemplate?.folder ?? '10-zettelkasten',
+        source_url: '',
+        created_at: '',
         modified_at: '',
         ...fmOverride,
       };
 
-  // ---- Right panel (AI + backlinks) ----------------------------------------
   const rightPanel = (
     <div className="h-full flex flex-col overflow-y-auto">
       <AiSidebar
@@ -204,7 +194,6 @@ export default function NoteEditorPage() {
     </div>
   );
 
-  // ---- Edit/Preview toggle toolbar (shared between both flows) -------------
   function EditPreviewToolbar() {
     return (
       <div className="flex-shrink-0 px-3 py-1.5 border-b border-border flex items-center gap-1">
@@ -213,9 +202,7 @@ export default function NoteEditorPage() {
           aria-label="Edit"
           aria-pressed={!previewMode}
           className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-            !previewMode
-              ? 'bg-bg-elevated text-text-primary'
-              : 'text-text-muted hover:text-text-primary'
+            !previewMode ? 'bg-bg-elevated text-text-primary' : 'text-text-muted hover:text-text-primary'
           }`}
         >
           <Pencil size={11} /> Edit
@@ -225,9 +212,7 @@ export default function NoteEditorPage() {
           aria-label="Preview"
           aria-pressed={previewMode}
           className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-            previewMode
-              ? 'bg-bg-elevated text-text-primary'
-              : 'text-text-muted hover:text-text-primary'
+            previewMode ? 'bg-bg-elevated text-text-primary' : 'text-text-muted hover:text-text-primary'
           }`}
         >
           <Eye size={11} /> Preview
@@ -236,32 +221,30 @@ export default function NoteEditorPage() {
     );
   }
 
-  // ---- Editor area (shared between new + edit flows) ----------------------
   function editorArea(saveHandler: (body: string, title?: string) => Promise<void>, isPending: boolean) {
     const blankNote: Note = note ?? {
-      note_id:        '',
-      id:             '',
-      title:          fm.title,
-      slug:           '',
-      body:           bodyValue || chosenTemplate?.body || '',
-      note_type:      fm.note_type as NoteType,
-      status:         fm.status as Note['status'],
-      folder:         fm.folder,
-      word_count:     0,
-      is_deleted:     false,
+      note_id: '',
+      id: '',
+      title: fm.title,
+      slug: '',
+      body: bodyValue || chosenTemplate?.body || '',
+      note_type: fm.note_type as NoteType,
+      status: fm.status as Note['status'],
+      folder: fm.folder,
+      word_count: 0,
+      is_deleted: false,
       vector_indexed: false,
-      created_at:     '',
-      updated_at:     '',
-      modified_at:    '',
-      frontmatter:    {},
-      tags:           fm.tags,
+      created_at: '',
+      updated_at: '',
+      modified_at: '',
+      frontmatter: {},
+      tags: fm.tags,
       outgoing_links: [],
       incoming_links: [],
     };
 
     return (
       <div className="flex flex-col h-full">
-        {/* Frontmatter panel — prop is `fm` (canonical contract) */}
         <FrontmatterPanel
           fm={fm}
           onChange={(patch) => setFmOverride((prev) => ({ ...prev, ...patch }))}
@@ -269,14 +252,10 @@ export default function NoteEditorPage() {
 
         <EditPreviewToolbar />
 
-        {/* Editor or preview */}
         <div className="flex-1 overflow-hidden relative">
           {previewMode ? (
             <div className="h-full overflow-y-auto px-6 py-4">
-              <MarkdownPreview
-                content={bodyValue}
-                titleToId={titleToId}
-              />
+              <MarkdownPreview content={bodyValue} titleToId={titleToId} />
             </div>
           ) : (
             <>
@@ -301,9 +280,7 @@ export default function NoteEditorPage() {
     );
   }
 
-  // ---- New note flow (no id param) -----------------------------------------
   if (!id) {
-    // Show template gallery until user picks one
     if (showTemplateGallery) {
       return (
         <NoteTemplateGallery
@@ -337,18 +314,17 @@ export default function NoteEditorPage() {
           </button>
         </div>
 
-        {/* save button exposed for tests */}
         <button
           data-testid="save-btn"
           className="sr-only"
           aria-hidden="true"
           onClick={() => {
             void createMutation.mutate({
-              title:     fm.title || 'Untitled',
-              body:      bodyValue,
-              folder:    fm.folder,
+              title: fm.title || 'Untitled',
+              body: bodyValue,
+              folder: fm.folder,
               note_type: fm.note_type as NoteType,
-              tags:      fm.tags,
+              tags: fm.tags,
             });
           }}
         />
@@ -361,9 +337,9 @@ export default function NoteEditorPage() {
                   await createMutation.mutateAsync({
                     title: title || fm.title || 'Untitled',
                     body,
-                    folder:    fm.folder,
+                    folder: fm.folder,
                     note_type: fm.note_type as NoteType,
-                    tags:      fm.tags,
+                    tags: fm.tags,
                   });
                 },
                 createMutation.isPending,
@@ -377,9 +353,9 @@ export default function NoteEditorPage() {
                 await createMutation.mutateAsync({
                   title: title || fm.title || 'Untitled',
                   body,
-                  folder:    fm.folder,
+                  folder: fm.folder,
                   note_type: fm.note_type as NoteType,
-                  tags:      fm.tags,
+                  tags: fm.tags,
                 });
               },
               createMutation.isPending,
@@ -390,7 +366,6 @@ export default function NoteEditorPage() {
     );
   }
 
-  // ---- Edit existing note --------------------------------------------------
   if (!note) return <div className="p-6 text-accent-red">Note not found.</div>;
 
   return (
@@ -411,7 +386,6 @@ export default function NoteEditorPage() {
         </button>
       </div>
 
-      {/* save button exposed for tests */}
       <button
         data-testid="save-btn"
         className="sr-only"

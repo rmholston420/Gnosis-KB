@@ -24,7 +24,11 @@ export function BacklinksPanel({ noteId }: BacklinksPanelProps) {
     staleTime: 30_000,
   });
 
-  if (!noteId) return null;
+  if (!noteId) {
+    return (
+      <div className="text-xs text-text-faint py-2">No note selected.</div>
+    );
+  }
 
   if (isLoading) {
     return (

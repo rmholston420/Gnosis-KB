@@ -43,7 +43,7 @@ interface QueryResult {
 const EXAMPLE_QUERIES = [
   {
     label: 'Draft Zettelkasten notes',
-    query: "FROM notes WHERE note_type = 'fleeting' ORDER BY created_at DESC",
+    query: "FROM notes WHERE note_type = 'zettelkasten' ORDER BY created_at DESC",
   },
   {
     label: 'Unlinked permanent notes',
@@ -64,17 +64,12 @@ export default function QueryPage() {
   const [result, setResult] = useState<QueryResult | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
-
-  // Save dialog
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [saveName, setSaveName] = useState('');
-
-  // Saved queries
   const [savedQueries, setSavedQueries] = useState<SavedQuery[]>([]);
   const [loadingQueries, setLoadingQueries] = useState(true);
   const [expandedId, setExpandedId] = useState<number | string | null>(null);
 
-  // Load saved queries on mount
   useEffect(() => {
     axios
       .get<SavedQuery[]>('/api/queries')
@@ -83,7 +78,6 @@ export default function QueryPage() {
       .finally(() => setLoadingQueries(false));
   }, []);
 
-  // ---- Run -----------------------------------------------------------------
   async function handleRun(query = queryText) {
     const q = query.trim();
     if (!q) return;
@@ -100,7 +94,6 @@ export default function QueryPage() {
     }
   }
 
-  // ---- Save ----------------------------------------------------------------
   async function handleSaveConfirm() {
     if (!saveName.trim()) return;
     try {
@@ -110,28 +103,23 @@ export default function QueryPage() {
       });
       setSavedQueries((prev) => [...prev, res.data]);
     } catch {
-      // ignore
     }
     setShowSaveDialog(false);
     setSaveName('');
   }
 
-  // ---- Delete saved query -------------------------------------------------
   async function handleDelete(id: number | string) {
     try {
       await axios.delete(`/api/query/saved/${id}`);
       setSavedQueries((prev) => prev.filter((q) => q.id !== id));
       if (expandedId === id) setExpandedId(null);
     } catch {
-      // ignore
     }
   }
 
   return (
     <div className="flex h-full bg-gnosis-bg text-gnosis-fg">
-      {/* ── Example / Saved sidebar ─────────────────────────────────────── */}
       <aside className="w-64 shrink-0 border-r border-gnosis-border px-4 py-6 overflow-y-auto">
-        {/* Examples */}
         <h2 className="text-xs font-semibold uppercase tracking-wider text-gnosis-muted mb-3">
           Examples
         </h2>
@@ -150,7 +138,6 @@ export default function QueryPage() {
           ))}
         </ul>
 
-        {/* Saved queries */}
         <h2 className="text-xs font-semibold uppercase tracking-wider text-gnosis-muted mt-6 mb-3">
           Saved
         </h2>
@@ -162,19 +149,15 @@ export default function QueryPage() {
           <ul className="space-y-1">
             {savedQueries.map((sq) => (
               <li key={sq.id} className="rounded border border-gnosis-border overflow-hidden">
-                {/* Accordion header */}
                 <button
                   type="button"
-                  onClick={() =>
-                    setExpandedId((prev) => (prev === sq.id ? null : sq.id))
-                  }
+                  onClick={() => setExpandedId((prev) => (prev === sq.id ? null : sq.id))}
                   className="w-full text-left px-2 py-1.5 text-xs text-gnosis-muted
                              hover:text-gnosis-fg hover:bg-gnosis-surface transition-colors"
                 >
                   {sq.name}
                 </button>
 
-                {/* Accordion body */}
                 {expandedId === sq.id && (
                   <div className="bg-gnosis-surface px-2 pb-2">
                     <pre className="text-xs text-gnosis-muted whitespace-pre-wrap break-all mb-2 mt-1">
@@ -209,11 +192,9 @@ export default function QueryPage() {
         )}
       </aside>
 
-      {/* ── Main query area ──────────────────────────────────────────────── */}
       <div className="flex-1 flex flex-col px-6 py-6 overflow-hidden">
         <h1 className="text-lg font-semibold text-gnosis-fg mb-4">Query</h1>
 
-        {/* Textarea */}
         <textarea
           value={queryText}
           onChange={(e) => setQueryText(e.target.value)}
@@ -224,7 +205,6 @@ export default function QueryPage() {
                      focus:ring-gnosis-accent resize-none"
         />
 
-        {/* Action buttons */}
         <div className="flex gap-2 mt-3">
           <button
             type="button"
@@ -246,7 +226,6 @@ export default function QueryPage() {
           </button>
         </div>
 
-        {/* Results */}
         <div className="mt-6 flex-1 overflow-y-auto">
           {isRunning && (
             <p className="text-sm text-gnosis-muted animate-pulse">Running query…</p>
@@ -299,7 +278,6 @@ export default function QueryPage() {
         </div>
       </div>
 
-      {/* ── Save dialog ──────────────────────────────────────────────────── */}
       {showSaveDialog && (
         <div
           role="dialog"
@@ -330,7 +308,6 @@ export default function QueryPage() {
               >
                 Cancel
               </button>
-              {/* Label is 'Save' — extended test uses within(dialog).getByRole('button', { name: /save/i }) */}
               <button
                 type="button"
                 onClick={() => void handleSaveConfirm()}
