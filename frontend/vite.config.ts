@@ -29,9 +29,11 @@ export default defineConfig({
   server: {
     port: 5273,
     proxy: {
-      // All API calls use /api/v1 prefix — proxy the whole namespace to backend.
+      // All API calls use /api/v1 prefix — proxy through nginx reverse proxy.
+      // The backend container port (8010) is intentionally not exposed to the
+      // host; all traffic routes through nginx on port 8080.
       '/api/v1': {
-        target: 'http://localhost:8010',
+        target: 'http://localhost:8080',
         changeOrigin: true,
       },
     },
