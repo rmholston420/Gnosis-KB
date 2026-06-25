@@ -86,7 +86,11 @@ export default function NoteEditorPage() {
   // ---- Wikilink autocomplete ----------------------------------------------
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [bodyValue, setBodyValue] = useState('');
-  const { wikilinkQuery, insertWikilink } = useWikilinkDetector(textareaRef, bodyValue, setBodyValue);
+  const { wikilinkQuery, insertWikilink } = useWikilinkDetector(
+    textareaRef as React.RefObject<HTMLTextAreaElement | HTMLDivElement | null>,
+    bodyValue,
+    setBodyValue,
+  );
 
   // ---- Frontmatter local state (new note) ----------------------------------
   const [fmOverride, setFmOverride] = useState<Partial<Frontmatter>>({});
@@ -118,15 +122,16 @@ export default function NoteEditorPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [note]);
 
-  // All note titles for wikilink resolution in preview mode
-  const { data: allNotes } = useQuery<{ items: Note[] }>({
+  // All note titles for wikilink resolution in preview mode.
+  // listNotes() returns Note[] directly (not { items: Note[] }).
+  const { data: allNotes } = useQuery<Note[]>({
     queryKey: ['notes'],
-    queryFn:  () => listNotes() as Promise<{ items: Note[] }>,
+    queryFn:  () => listNotes() as Promise<Note[]>,
   });
 
   const titleToId = useMemo(() => {
     const map: Record<string, string> = {};
-    for (const n of (allNotes?.items ?? [])) {
+    for (const n of (allNotes ?? [])) {
       if (n.title) map[n.title] = n.note_id ?? n.id;
     }
     return map;
@@ -234,20 +239,22 @@ export default function NoteEditorPage() {
   // ---- Editor area (shared between new + edit flows) ----------------------
   function editorArea(saveHandler: (body: string, title?: string) => Promise<void>, isPending: boolean) {
     const blankNote: Note = note ?? {
-      note_id:       '',
-      id:            '',
-      title:         fm.title,
-      slug:          '',
-      body:          bodyValue || chosenTemplate?.body || '',
-      note_type:     fm.note_type as NoteType,
-      status:        fm.status as Note['status'],
-      folder:        fm.folder,
-      word_count:    0,
-      is_deleted:    false,
+      note_id:        '',
+      id:             '',
+      title:          fm.title,
+      slug:           '',
+      body:           bodyValue || chosenTemplate?.body || '',
+      note_type:      fm.note_type as NoteType,
+      status:         fm.status as Note['status'],
+      folder:         fm.folder,
+      word_count:     0,
+      is_deleted:     false,
       vector_indexed: false,
-      graph_indexed:  false,
-      frontmatter:   {},
-      tags:          fm.tags,
+      created_at:     '',
+      updated_at:     '',
+      modified_at:    '',
+      frontmatter:    {},
+      tags:           fm.tags,
       outgoing_links: [],
       incoming_links: [],
     };
@@ -267,21 +274,20 @@ export default function NoteEditorPage() {
           {previewMode ? (
             <div className="h-full overflow-y-auto px-6 py-4">
               <MarkdownPreview
-                body={bodyValue}
+                content={bodyValue}
                 titleToId={titleToId}
               />
             </div>
           ) : (
             <>
               <NoteEditor
-                note={blankNote}
-                value={bodyValue}
-                onChange={setBodyValue}
-                onSave={saveHandler}
-                isSaving={isPending}
-                textareaRef={textareaRef}
+                note={{ ...blankNote, body: bodyValue }}
+                onSave={async (body, title) => saveHandler(body, title)}
+                isLoading={isPending}
+                onBodyChange={setBodyValue}
+                textareaRef={textareaRef as unknown as React.RefObject<HTMLDivElement>}
               />
-              {wikilinkQuery !== null && (
+              {wikilinkQuery && (
                 <WikilinkAutocomplete
                   query={wikilinkQuery}
                   onSelect={(title) => insertWikilink(title)}

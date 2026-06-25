@@ -24,11 +24,11 @@ const linkFixture: LinkSuggestResult = {
 
 // Mock the entire api/ai module so both the bare function imports used by
 // hooks/useAI AND the aiApi namespace object are intercepted.
-const mockSuggestLinks   = vi.fn();
-const mockSuggestTags    = vi.fn();
-const mockSummarizeNote  = vi.fn();
-const mockCritiqueNote   = vi.fn();
-const mockOrphanAudit    = vi.fn();
+const mockSuggestLinks    = vi.fn();
+const mockSuggestTags     = vi.fn();
+const mockSummarizeNote   = vi.fn();
+const mockCritiqueNote    = vi.fn();
+const mockOrphanAudit     = vi.fn();
 const mockStreamingChatUrl = vi.fn(() => '');
 
 vi.mock('../../../api/ai', () => ({
@@ -37,7 +37,8 @@ vi.mock('../../../api/ai', () => ({
   summarizeNote:     (...a: unknown[]) => mockSummarizeNote(...a),
   critiqueNote:      (...a: unknown[]) => mockCritiqueNote(...a),
   orphanAudit:       (...a: unknown[]) => mockOrphanAudit(...a),
-  streamingChatUrl:  (...a: unknown[]) => mockStreamingChatUrl(...a),
+  // Use mockStreamingChatUrl directly — avoids TS2556 spread-on-unknown[] error
+  streamingChatUrl:  mockStreamingChatUrl,
   chat:              vi.fn(),
   // aiApi namespace used by AiSidebar's SummarySection / CritiqueSection
   aiApi: {

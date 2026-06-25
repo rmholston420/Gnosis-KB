@@ -36,24 +36,27 @@ describe('graphUtils', () => {
   });
 
   it('getNeighbours returns direct neighbours', () => {
-    const fg = toForceGraph(sampleGraph);
-    const neighbours = getNeighbours(fg, 'b');
+    const { nodes, links } = toForceGraph(sampleGraph);
+    // Signature: getNeighbours(nodeId, nodes, edges)
+    const neighbours = getNeighbours('b', nodes, links);
     const ids = neighbours.map((n) => n.id);
     expect(ids).toContain('a');
     expect(ids).toContain('c');
   });
 
   it('computeGraphStats returns correct counts', () => {
-    const fg    = toForceGraph(sampleGraph);
-    const stats = computeGraphStats(fg);
-    expect(stats.nodeCount).toBe(3);
-    expect(stats.linkCount).toBe(2);
-    expect(stats.orphanCount).toBe(0);
+    const { nodes, links } = toForceGraph(sampleGraph);
+    // Signature: computeGraphStats(nodes, edges)
+    const stats = computeGraphStats(nodes, links);
+    expect(stats.total_nodes).toBe(3);
+    expect(stats.total_edges).toBe(2);
+    expect(stats.isolated_count).toBe(0);
   });
 
   it('filterToNeighborhood excludes distant nodes', () => {
-    const fg       = toForceGraph(sampleGraph);
-    const filtered = filterToNeighborhood(fg, 'a', 1);
+    const { nodes, links } = toForceGraph(sampleGraph);
+    // Signature: filterToNeighborhood(focalId, nodes, edges)
+    const filtered = filterToNeighborhood('a', nodes, links);
     const ids      = filtered.nodes.map((n) => n.id);
     expect(ids).toContain('a');
     expect(ids).toContain('b');

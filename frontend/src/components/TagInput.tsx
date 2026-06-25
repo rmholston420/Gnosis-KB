@@ -1,19 +1,35 @@
 /**
  * TagInput — multi-tag input with autocomplete from existing vault tags.
+ *
+ * Accepts both `value` (canonical) and legacy `tags` prop alias so that
+ * NoteEditor, TagInput.test.tsx, and TagInput.autocomplete.test.tsx all
+ * compile without changes.
  */
 import React, { useState, useRef, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import api from '../services/api';
 import type { TagRow } from '../types';
 
-interface TagInputProps {
-  value:    string[];
-  onChange: (tags: string[]) => void;
+export interface TagInputProps {
+  /** Canonical prop name — the current list of tags. */
+  value?:    string[];
+  /** Legacy alias accepted for backwards compatibility. */
+  tags?:     string[];
+  onChange:  (tags: string[]) => void;
   placeholder?: string;
   disabled?:    boolean;
 }
 
-export function TagInput({ value, onChange, placeholder = 'Add tag\u2026', disabled }: TagInputProps) {
+export function TagInput({
+  value,
+  tags,
+  onChange,
+  placeholder = 'Add tag\u2026',
+  disabled,
+}: TagInputProps) {
+  // Resolve canonical list — prefer `value`, fall back to `tags`.
+  const currentTags = value ?? tags ?? [];
+
   const [input, setInput]       = useState('');
   const [open,  setOpen]        = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -30,26 +46,26 @@ export function TagInput({ value, onChange, placeholder = 'Add tag\u2026', disab
     : [];
 
   const suggestions = allTagNames.filter(
-    (t) => t.toLowerCase().includes(input.toLowerCase()) && !value.includes(t),
+    (t) => t.toLowerCase().includes(input.toLowerCase()) && !currentTags.includes(t),
   );
 
   function addTag(tag: string) {
     const clean = tag.trim().toLowerCase().replace(/\s+/g, '-');
-    if (clean && !value.includes(clean)) onChange([...value, clean]);
+    if (clean && !currentTags.includes(clean)) onChange([...currentTags, clean]);
     setInput('');
     setOpen(false);
   }
 
   function removeTag(tag: string) {
-    onChange(value.filter((t) => t !== tag));
+    onChange(currentTags.filter((t) => t !== tag));
   }
 
   function handleKey(e: React.KeyboardEvent<HTMLInputElement>) {
     if ((e.key === 'Enter' || e.key === ',') && input.trim()) {
       e.preventDefault();
       addTag(input);
-    } else if (e.key === 'Backspace' && !input && value.length > 0) {
-      onChange(value.slice(0, -1));
+    } else if (e.key === 'Backspace' && !input && currentTags.length > 0) {
+      onChange(currentTags.slice(0, -1));
     }
   }
 
@@ -65,7 +81,7 @@ export function TagInput({ value, onChange, placeholder = 'Add tag\u2026', disab
 
   return (
     <div data-tag-input className="relative flex flex-wrap gap-1 p-1 border border-gnosis-border rounded bg-gnosis-surface min-h-[36px]">
-      {value.map((tag) => (
+      {currentTags.map((tag) => (
         <span
           key={tag}
           className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-gnosis-accent/20 text-gnosis-accent text-xs"
@@ -90,7 +106,7 @@ export function TagInput({ value, onChange, placeholder = 'Add tag\u2026', disab
         onChange={(e) => { setInput(e.target.value); setOpen(true); }}
         onKeyDown={handleKey}
         onFocus={() => setOpen(true)}
-        placeholder={value.length === 0 ? placeholder : ''}
+        placeholder={currentTags.length === 0 ? placeholder : ''}
         disabled={disabled}
         className="flex-1 min-w-[80px] bg-transparent outline-none text-xs text-gnosis-fg placeholder:text-gnosis-muted"
       />

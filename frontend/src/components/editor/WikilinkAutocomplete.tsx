@@ -3,6 +3,10 @@
  *
  * Also exports useWikilinkDetector — a hook that monitors a textarea ref
  * for [[ patterns and returns the current query string + an insertWikilink helper.
+ *
+ * anchorRect is optional — when omitted the popup falls back to a fixed
+ * position near the top-left of the viewport so callers that do not track
+ * cursor position (e.g. NoteEditorPage simple mode) still work.
  */
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import type { Dispatch, SetStateAction, RefObject } from 'react';
@@ -11,10 +15,11 @@ import api from '../../services/api';
 import type { Note } from '../../types';
 
 export interface WikilinkAutocompleteProps {
-  query:      string;
-  anchorRect: DOMRect;
-  onSelect:   (title: string) => void;
-  onClose:    () => void;
+  query:       string;
+  /** Optional — when provided the popup anchors below the cursor rect. */
+  anchorRect?: DOMRect | null;
+  onSelect:    (title: string) => void;
+  onClose:     () => void;
 }
 
 export function WikilinkAutocomplete({
@@ -53,8 +58,8 @@ export function WikilinkAutocomplete({
 
   const style: React.CSSProperties = {
     position: 'fixed',
-    top:      anchorRect.bottom + 4,
-    left:     anchorRect.left,
+    top:      anchorRect ? anchorRect.bottom + 4 : 96,
+    left:     anchorRect ? anchorRect.left      : 96,
     zIndex:   9999,
   };
 
@@ -87,6 +92,8 @@ export default WikilinkAutocomplete;
 
 export interface WikilinkDetectorResult {
   wikilinkQuery:  string;
+  /** Always null in the current implementation — reserved for cursor-tracking. */
+  anchorRect:     DOMRect | null;
   insertWikilink: (title: string) => void;
 }
 
@@ -126,5 +133,5 @@ export function useWikilinkDetector(
     setWikilinkQuery('');
   }, [setValue]);
 
-  return { wikilinkQuery, insertWikilink };
+  return { wikilinkQuery, anchorRect: null, insertWikilink };
 }
