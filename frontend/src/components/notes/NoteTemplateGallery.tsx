@@ -4,6 +4,11 @@
  * Modal/overlay shown when the user clicks "New Note".
  * The user picks a template; the parent receives it via onSelect.
  *
+ * Templates are defined client-side — no backend endpoint is required.
+ * Previously called api.listTemplates() which hit /notes/templates and
+ * received a 404 because FastAPI's /notes/{id} catch-all treated
+ * "templates" as a note ID.
+ *
  * Props
  * -----
  *   onSelect(template) — called with the chosen template object
@@ -11,7 +16,6 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import api from '../../services/api';
 import './NoteTemplateGallery.css';
 
 export interface NoteTemplate {
@@ -29,6 +33,72 @@ interface Props {
   onClose: () => void;
 }
 
+const BUILT_IN_TEMPLATES: NoteTemplate[] = [
+  {
+    id: 'blank',
+    name: 'Blank Note',
+    description: 'Start with a completely empty note.',
+    note_type: 'permanent',
+    folder: '10-zettelkasten',
+    body: '',
+    icon: 'file',
+  },
+  {
+    id: 'permanent',
+    name: 'Permanent Note',
+    description: 'A fully developed idea in your own words — the core Zettelkasten atom.',
+    note_type: 'permanent',
+    folder: '10-zettelkasten',
+    body: '## Idea\n\n\n\n## Context\n\n\n\n## Links\n\n- [[]]\n',
+    icon: 'zap',
+  },
+  {
+    id: 'literature',
+    name: 'Literature Note',
+    description: 'Capture key ideas from a book, article, or video with source attribution.',
+    note_type: 'literature',
+    folder: '20-literature',
+    body: '## Source\n\n- **Title:**\n- **Author:**\n- **URL:**\n\n## Key Points\n\n\n\n## My Take\n\n',
+    icon: 'book-open',
+  },
+  {
+    id: 'fleeting',
+    name: 'Fleeting Note',
+    description: 'A quick capture for a passing thought — process it later.',
+    note_type: 'fleeting',
+    folder: '00-inbox',
+    body: '<!-- Quick capture — develop this into a permanent note later -->\n\n',
+    icon: 'file',
+  },
+  {
+    id: 'moc',
+    name: 'Map of Content',
+    description: 'An index note that organises links to related permanent notes.',
+    note_type: 'moc',
+    folder: '30-moc',
+    body: '## Overview\n\n\n\n## Notes\n\n- [[]]\n- [[]]\n- [[]]\n\n## Questions\n\n',
+    icon: 'map',
+  },
+  {
+    id: 'daily',
+    name: 'Daily Note',
+    description: 'Journal template for daily reflections, tasks, and captures.',
+    note_type: 'fleeting',
+    folder: '00-inbox',
+    body: '## Morning\n\n\n\n## Tasks\n\n- [ ] \n- [ ] \n\n## Evening Reflection\n\n',
+    icon: 'sun',
+  },
+  {
+    id: 'meeting',
+    name: 'Meeting Note',
+    description: 'Structured template for meetings with attendees, agenda, and action items.',
+    note_type: 'permanent',
+    folder: '40-projects',
+    body: '## Meeting: \n\n**Date:** \n**Attendees:** \n\n## Agenda\n\n1. \n\n## Notes\n\n\n\n## Action Items\n\n- [ ] \n',
+    icon: 'users',
+  },
+];
+
 const ICON_MAP: Record<string, string> = {
   file: '\u{1F4C4}',
   zap: '\u26A1',
@@ -40,27 +110,8 @@ const ICON_MAP: Record<string, string> = {
 };
 
 export function NoteTemplateGallery({ onSelect, onClose }: Props) {
-  const [templates, setTemplates] = useState<NoteTemplate[]>([]);
-  const [_loading, _setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState<string>(BUILT_IN_TEMPLATES[0].id);
   const dialogRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    api.listTemplates()
-      .then((data) => {
-        const tpls = (data as unknown as NoteTemplate[]);
-        setTemplates(tpls);
-        _setLoading(false);
-        if (tpls.length > 0) {
-          setActiveId(tpls[0].id);
-        }
-      })
-      .catch((err: unknown) => {
-        _setLoading(false);
-        setError(err instanceof Error ? err.message : 'Failed to load templates');
-      });
-  }, []);
 
   // Focus trap
   useEffect(() => {
@@ -86,8 +137,7 @@ export function NoteTemplateGallery({ onSelect, onClose }: Props) {
     return () => el.removeEventListener('keydown', handleKey);
   }, [onClose]);
 
-  const active = templates.find((t) => t.id === activeId) ?? null;
-  const loading = _loading;
+  const active = BUILT_IN_TEMPLATES.find((t) => t.id === activeId) ?? BUILT_IN_TEMPLATES[0];
 
   return (
     <div
@@ -108,75 +158,56 @@ export function NoteTemplateGallery({ onSelect, onClose }: Props) {
           >\xD7</button>
         </div>
 
-        {loading && <p className="template-gallery-loading">Loading templates\u2026</p>}
-        {error   && <p className="template-gallery-error">{error}</p>}
+        <div className="template-gallery-body">
+          <ul
+            role="list"
+            className="template-gallery-list"
+            aria-label="Templates"
+          >
+            {BUILT_IN_TEMPLATES.map((t) => (
+              <li
+                key={t.id}
+                aria-selected={t.id === activeId}
+                className={`template-gallery-list-item${ t.id === activeId ? ' active' : '' }`}
+                onClick={() => setActiveId(t.id)}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setActiveId(t.id); }}
+                tabIndex={0}
+              >
+                <span className="template-gallery-icon" aria-hidden="true">
+                  {ICON_MAP[t.icon] ?? '\u{1F4C4}'}
+                </span>
+                {t.name}
+              </li>
+            ))}
+          </ul>
 
-        {!loading && !error && (
-          <div className="template-gallery-body">
-            {/*
-              role="list" is explicit here because CSS resets (e.g. list-style:none)
-              strip the implicit ARIA list role from <ul> in some browsers, and
-              getByRole('list') in tests depends on this being present.
-            */}
-            <ul
-              role="list"
-              className="template-gallery-list"
-              aria-label="Templates"
-            >
-              {templates.map((t) => (
-                <li key={t.id}
-                  aria-selected={t.id === activeId}
-                  className={`template-gallery-list-item${ t.id === activeId ? ' active' : '' }`}
-                  onClick={() => setActiveId(t.id)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setActiveId(t.id); }}
-                  tabIndex={0}
-                >
-                  <span className="template-gallery-icon" aria-hidden="true">
-                    {ICON_MAP[t.icon] ?? '\u{1F4C4}'}
-                  </span>
-                  {t.name}
-                </li>
-              ))}
-            </ul>
-
-            {/* Preview panel */}
-            <div className="template-gallery-preview">
-              {active ? (
-                <>
-                  <p className="template-gallery-preview-desc">{active.description}</p>
-                  <pre className="template-gallery-preview-body">{active.body}</pre>
-                  <button
-                    className="template-gallery-use-btn"
-                    onClick={() => onSelect(active)}
-                  >
-                    Use this template
-                  </button>
-                </>
-              ) : (
-                <p className="template-gallery-preview-empty">Select a template to preview it.</p>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Footer: Start blank + Cancel */}
-        <div className="template-gallery-footer">
-          {!loading && !error && (
+          {/* Preview panel */}
+          <div className="template-gallery-preview">
+            <p className="template-gallery-preview-desc">{active.description}</p>
+            {active.body ? (
+              <pre className="template-gallery-preview-body">{active.body}</pre>
+            ) : (
+              <p className="template-gallery-preview-empty" style={{ fontStyle: 'italic' }}>
+                Empty canvas — write anything.
+              </p>
+            )}
             <button
-              className="template-gallery-blank-btn"
-              onClick={() => onSelect({
-                id: '__blank__',
-                name: 'Blank',
-                description: 'Start with an empty note.',
-                note_type: 'permanent',
-                folder: '10-zettelkasten',
-                body: '',
-                icon: 'file',
-              })}
+              className="template-gallery-use-btn"
+              onClick={() => onSelect(active)}
             >
-              Start blank
+              Use this template
             </button>
-          )}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="template-gallery-footer">
+          <button
+            className="template-gallery-blank-btn"
+            onClick={() => onSelect(BUILT_IN_TEMPLATES[0])}
+          >
+            Start blank
+          </button>
           <button
             className="template-gallery-cancel-btn"
             onClick={onClose}
