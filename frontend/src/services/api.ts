@@ -4,11 +4,15 @@
  * This is the single source of truth consumed by all tests, hooks, and pages.
  * Key contract (enforced by test suite):
  *   - updateNote uses PUT (not PATCH)
- *   - createNote posts to /api/notes/ (trailing slash)
+ *   - createNote posts to /api/v1/notes/ (trailing slash)
  *   - getNote passes explicit method: 'GET'
  *   - setActiveVaultPath is a named export
  *   - listNotes, getGraph, listTags, listFolders, ingestNote, getLightRagNode,
  *     streamQuery, chat, search, listTemplates are all present
+ *
+ * BASE URL:
+ *   The backend mounts ALL routers under the /api/v1 prefix (see gnosis/main.py).
+ *   VITE_API_BASE_URL defaults to /api/v1 so the Vite proxy forwards correctly.
  */
 import { useVaultStore } from '../store/useVaultStore';
 import type { GraphEntitySummary } from '../types';
@@ -16,7 +20,7 @@ import type { GraphEntitySummary } from '../types';
 // Re-export so pages can import from one place
 export type { GraphEntitySummary };
 
-const BASE = (import.meta as { env?: { VITE_API_BASE_URL?: string } }).env?.VITE_API_BASE_URL ?? '/api';
+const BASE = (import.meta as { env?: { VITE_API_BASE_URL?: string } }).env?.VITE_API_BASE_URL ?? '/api/v1';
 
 let _activeVaultPath: string | null = null;
 
@@ -196,7 +200,6 @@ export function getGraph() {
 
 /**
  * getFullGraph — alias kept for backwards-compat; redirects to getGraph().
- * The old path /graph (no slash) was incorrect — use /graph/ instead.
  */
 export function getFullGraph() {
   return getGraph();
@@ -291,18 +294,10 @@ export interface ProviderInfo {
   models: string[];
 }
 
-/**
- * getProviders — fetch AI provider info from the health endpoint.
- * Returns a ProviderInfo-shaped object. Rejects on network/API error so that
- * SettingsPage can display its existing "Could not load provider info" error state.
- */
 export function getProviders(): Promise<ProviderInfo> {
   return request<ProviderInfo>('/health/providers');
 }
 
-/**
- * setModel — update the active AI model.
- */
 export function setModel(model: string): Promise<unknown> {
   return request<unknown>('/health/providers/model', {
     method: 'POST',
@@ -310,9 +305,6 @@ export function setModel(model: string): Promise<unknown> {
   });
 }
 
-/**
- * exportVault — download the vault as a zip or json blob.
- */
 export function exportVault(format: 'markdown' | 'json'): Promise<Blob> {
   return fetch(`${BASE}/export/vault?format=${format}`, {
     headers: authHeaders(),
@@ -322,9 +314,6 @@ export function exportVault(format: 'markdown' | 'json'): Promise<Blob> {
   });
 }
 
-/**
- * syncObsidian — trigger an Obsidian vault sync.
- */
 export function syncObsidian(): Promise<void> {
   return request<void>('/vault/sync/obsidian', { method: 'POST' });
 }

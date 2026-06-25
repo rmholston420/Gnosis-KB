@@ -29,7 +29,8 @@ export default defineConfig({
   server: {
     port: 5273,
     proxy: {
-      '/api': {
+      // All API calls use /api/v1 prefix — proxy the whole namespace to backend.
+      '/api/v1': {
         target: 'http://localhost:8002',
         changeOrigin: true,
       },
