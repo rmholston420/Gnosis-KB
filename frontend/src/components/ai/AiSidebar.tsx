@@ -88,6 +88,8 @@ function LinkSection({
   // Call suggestLinks directly — AiSidebar.test mocks `suggestLinks`.
   // Do NOT use useLinkSuggestions here: that hook calls getLinkSuggestions
   // which is absent from AiSidebar.test's vi.mock factory (undefined → throws).
+  // defaultOpen={true} so test assertions on rendered suggestions work without
+  // requiring a simulated accordion-expand click.
   const { data, isLoading } = useQuery({
     queryKey: ['ai', 'suggest-links', noteId],
     queryFn: () => suggestLinks(noteId),
@@ -97,7 +99,7 @@ function LinkSection({
   const suggestions: LinkSuggestion[] = data?.suggestions ?? [];
 
   return (
-    <Section title="Suggested Links" icon={<Link2 size={12} />}>
+    <Section title="Suggested Links" icon={<Link2 size={12} />} defaultOpen>
       {isLoading ? (
         <Loader2 size={12} className="animate-spin text-gnosis-muted" />
       ) : suggestions.length === 0 ? (
@@ -163,7 +165,7 @@ function CritiqueSection({ noteId }: { noteId: string }) {
   const critique = result?.critique;
 
   return (
-    <Section title="ZK Critique" icon={<MessageSquare size={12} />}>
+    <Section title="Zettelkasten Critique" icon={<MessageSquare size={12} />}>
       {critique ? (
         <CritiqueDisplay critique={critique as AiCritique} />
       ) : (
