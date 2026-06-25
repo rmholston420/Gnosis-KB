@@ -13,6 +13,14 @@ import {
   ChevronLeft,
   ChevronRight,
   Plus,
+  BarChart2,
+  Map,
+  Terminal,
+  BookOpen,
+  Download,
+  Puzzle,
+  LayoutTemplate,
+  ArrowLeftRight,
 } from 'lucide-react';
 
 interface NavItem {
@@ -22,15 +30,25 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { to: '/',           icon: <Home size={16} />,      label: 'Notes' },
-  { to: '/search',     icon: <Search size={16} />,    label: 'Search' },
-  { to: '/ai',         icon: <Zap size={16} />,       label: 'AI Chat' },
-  { to: '/graph',      icon: <GitBranch size={16} />, label: 'Graph' },
-  { to: '/daily',      icon: <Calendar size={16} />,  label: 'Daily Note' },
-  { to: '/tags',       icon: <Tag size={16} />,       label: 'Tags' },
-  { to: '/backlinks',  icon: <Link2 size={16} />,     label: 'Backlinks' },
-  { to: '/vault-sync', icon: <RefreshCw size={16} />, label: 'Vault Sync' },
-  { to: '/settings',   icon: <Settings size={16} />,  label: 'Settings' },
+  // ── Core ──────────────────────────────────────────────────────────────────
+  { to: '/',            icon: <Home size={16} />,           label: 'Notes' },
+  { to: '/search',      icon: <Search size={16} />,         label: 'Search' },
+  { to: '/ai',          icon: <Zap size={16} />,            label: 'AI Chat' },
+  { to: '/graph',       icon: <GitBranch size={16} />,      label: 'Graph' },
+  { to: '/daily',       icon: <Calendar size={16} />,       label: 'Daily Note' },
+  { to: '/tags',        icon: <Tag size={16} />,            label: 'Tags' },
+  { to: '/backlinks',   icon: <Link2 size={16} />,          label: 'Backlinks' },
+  { to: '/vault-sync',  icon: <RefreshCw size={16} />,      label: 'Vault Sync' },
+  { to: '/settings',    icon: <Settings size={16} />,       label: 'Settings' },
+  // ── Knowledge tools ───────────────────────────────────────────────────────
+  { to: '/analytics',   icon: <BarChart2 size={16} />,      label: 'Analytics' },
+  { to: '/moc',         icon: <Map size={16} />,            label: 'MOC Generator' },
+  { to: '/query',       icon: <Terminal size={16} />,       label: 'Query' },
+  { to: '/review',      icon: <BookOpen size={16} />,       label: 'Review' },
+  { to: '/ingest',      icon: <Download size={16} />,       label: 'Ingest' },
+  { to: '/plugins',     icon: <Puzzle size={16} />,         label: 'Plugins' },
+  { to: '/templates',   icon: <LayoutTemplate size={16} />, label: 'Templates' },
+  { to: '/sync',        icon: <ArrowLeftRight size={16} />, label: 'Sync' },
 ];
 
 export default function Sidebar() {

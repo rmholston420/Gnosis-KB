@@ -21,6 +21,15 @@ const TagsPage          = lazy(() => import('@/pages/TagsPage'));
 const BacklinksPage     = lazy(() => import('@/pages/BacklinksPage'));
 const VaultSyncPage     = lazy(() => import('@/pages/VaultSyncPage'));
 const NotFoundPage      = lazy(() => import('@/pages/NotFoundPage'));
+// ── Previously orphaned pages — now wired in ──────────────────────────────────
+const AnalyticsPage     = lazy(() => import('@/pages/AnalyticsPage'));
+const MocPage           = lazy(() => import('@/pages/MocPage'));
+const QueryPage         = lazy(() => import('@/pages/QueryPage'));
+const ReviewPage        = lazy(() => import('@/pages/ReviewPage'));
+const IngestPage        = lazy(() => import('@/pages/IngestPage'));
+const PluginsPage       = lazy(() => import('@/pages/PluginsPage'));
+const TemplatesPage     = lazy(() => import('@/pages/TemplatesPage'));
+const SyncPage          = lazy(() => import('@/pages/SyncPage'));
 
 // ── Auth guard ────────────────────────────────────────────────────────────────
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -56,7 +65,7 @@ export function AppRoutes() {
       <Route path="/login"    element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
 
-      {/* Protected */}
+      {/* Protected — core */}
       <Route path="/" element={<PrivateRoute><NotesPage /></PrivateRoute>} />
       <Route path="/notes/new" element={<PrivateRoute><NoteEditorPage /></PrivateRoute>} />
       <Route path="/notes/:id" element={<PrivateRoute><NoteEditorPage /></PrivateRoute>} />
@@ -69,6 +78,16 @@ export function AppRoutes() {
       <Route path="/backlinks" element={<PrivateRoute><BacklinksPage /></PrivateRoute>} />
       <Route path="/vault-sync" element={<PrivateRoute><VaultSyncPage /></PrivateRoute>} />
       <Route path="/settings" element={<PrivateRoute><SettingsPage /></PrivateRoute>} />
+
+      {/* Protected — previously orphaned pages */}
+      <Route path="/analytics"  element={<PrivateRoute><AnalyticsPage /></PrivateRoute>} />
+      <Route path="/moc"        element={<PrivateRoute><MocPage /></PrivateRoute>} />
+      <Route path="/query"      element={<PrivateRoute><QueryPage /></PrivateRoute>} />
+      <Route path="/review"     element={<PrivateRoute><ReviewPage /></PrivateRoute>} />
+      <Route path="/ingest"     element={<PrivateRoute><IngestPage /></PrivateRoute>} />
+      <Route path="/plugins"    element={<PrivateRoute><PluginsPage /></PrivateRoute>} />
+      <Route path="/templates"  element={<PrivateRoute><TemplatesPage /></PrivateRoute>} />
+      <Route path="/sync"       element={<PrivateRoute><SyncPage /></PrivateRoute>} />
 
       {/* Catch-all */}
       <Route path="*" element={<NotFoundPage />} />
