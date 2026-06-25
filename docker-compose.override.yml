@@ -3,8 +3,10 @@
 # =============================================================================
 # Docker Compose automatically merges this file with docker-compose.yml when
 # you run `docker compose up` locally.  It switches Nginx to the plain-HTTP
-# dev config (port 8080, no TLS) and exposes the api/ui ports directly so
+# dev config (port 8003, no TLS) and exposes the api/ui ports directly so
 # you can hit them without going through the proxy.
+#
+# NOTE: Port 8080 is reserved for Open WebUI on this machine.
 #
 # In production: delete or rename this file so it is NOT picked up.
 # =============================================================================
@@ -16,10 +18,10 @@ services:
       - ./nginx/nginx.dev.conf:/etc/nginx/nginx.conf:ro
       # No cert volumes needed for local dev
     ports:
-      - "8080:8080"   # plain HTTP only
+      - "8003:8003"   # plain HTTP only
     # Silence the health-check warning about missing certs at startup
     healthcheck:
-      test: ['CMD', 'wget', '-q', '--spider', 'http://localhost:8080/health']
+      test: ['CMD', 'wget', '-q', '--spider', 'http://localhost:8003/health']
 
   api:
     # Expose API port directly for dev tools / curl
