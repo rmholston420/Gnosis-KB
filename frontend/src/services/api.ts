@@ -13,6 +13,11 @@
  * BASE URL:
  *   The backend mounts ALL routers under the /api/v1 prefix (see gnosis/main.py).
  *   VITE_API_BASE_URL defaults to /api/v1 so the Vite proxy forwards correctly.
+ *
+ * TRAILING SLASH POLICY:
+ *   FastAPI routers redirect /notes → /notes/ with a 307. Browsers follow the
+ *   redirect but strip the Authorization header on cross-origin hops. To avoid
+ *   silent 401s, all collection endpoints use a trailing slash directly.
  */
 import { useVaultStore } from '../store/useVaultStore';
 import type { GraphEntitySummary } from '../types';
@@ -80,7 +85,8 @@ export function listNotes(params: {
   const q = new URLSearchParams();
   Object.entries(params).forEach(([k, v]) => { if (v != null) q.set(k, String(v)); });
   const qs = q.toString();
-  return request<{ items: unknown[]; total: number }>(`/notes${qs ? `?${qs}` : ''}`);
+  // Trailing slash avoids FastAPI 307 redirect which strips Authorization header
+  return request<{ items: unknown[]; total: number }>(`/notes/${qs ? `?${qs}` : ''}`);
 }
 
 export function getNote(id: string) {
