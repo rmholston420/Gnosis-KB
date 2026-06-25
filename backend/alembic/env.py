@@ -23,14 +23,19 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
-def get_url() -> str:
-    """Return the synchronous database URL for migrations."""
+def get_async_url() -> str:
+    """Return the async (asyncpg) database URL for the async migration engine."""
+    return get_settings().database_url
+
+
+def get_sync_url() -> str:
+    """Return the synchronous (psycopg2) database URL for offline migrations."""
     return get_settings().database_url_sync
 
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode without a DB connection."""
-    url = get_url()
+    url = get_sync_url()
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -49,9 +54,13 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 async def run_async_migrations() -> None:
-    """Run migrations using an async engine."""
+    """Run migrations using an async engine.
+
+    The URL passed here MUST use the asyncpg driver — async_engine_from_config
+    will raise InvalidRequestError if a sync driver (psycopg2) is supplied.
+    """
     configuration = config.get_section(config.config_ini_section, {})
-    configuration["sqlalchemy.url"] = get_url()
+    configuration["sqlalchemy.url"] = get_async_url()  # asyncpg URL
     connectable = async_engine_from_config(
         configuration,
         prefix="sqlalchemy.",
