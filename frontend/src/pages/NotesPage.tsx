@@ -8,12 +8,6 @@
  * Calls api.listNotes / api.createNote from @/services/api directly via
  * useQuery/useMutation so that vi.mock('@/services/api', ...) in tests
  * intercepts correctly at the API layer.
- *
- * QueryClient fallback
- * --------------------
- * A module-level fallback QueryClient is created so that tests that only
- * wrap with <MemoryRouter> (no QueryClientProvider) don't crash. In
- * production the app-level QueryClientProvider is always present.
  */
 import { useCallback } from 'react';
 import { Plus, Folder } from 'lucide-react';
@@ -22,20 +16,12 @@ import {
   useQuery,
   useMutation,
   useQueryClient,
-  QueryClient,
-  QueryClientProvider,
 } from '@tanstack/react-query';
 import { useAppStore } from '../store/useAppStore';
 import api from '../services/api';
 import type { Note, NoteCreate } from '../types';
 
-// Module-level fallback so tests that skip QueryClientProvider still render.
-const _fallbackQC = new QueryClient({
-  defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-});
-
-// Inner component that actually uses hooks — wrapped below.
-function NotesPageInner() {
+export default function NotesPage() {
   const { activeFolder, activeNoteId, setActiveNoteId } = useAppStore();
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -58,11 +44,10 @@ function NotesPageInner() {
   });
 
   const handleNewNote = useCallback(async () => {
-    const folder = activeFolder ?? '00-inbox';
     const created = await createMutation.mutateAsync({
       title: 'Untitled',
       body:  '',
-      folder,
+      folder: activeFolder ?? undefined,
     });
     setActiveNoteId(created.id);
     navigate(`/notes/${created.id}`);
@@ -71,15 +56,15 @@ function NotesPageInner() {
   return (
     <div className="flex h-full overflow-hidden">
       {/* Note list sidebar */}
-      <aside className="w-64 flex-shrink-0 border-r border-border flex flex-col bg-bg-secondary">
-        <div className="h-10 flex items-center justify-between px-3 border-b border-border flex-shrink-0">
-          <h1 className="text-xs font-semibold text-text-muted uppercase tracking-wider flex items-center gap-1.5">
+      <aside className="w-64 flex-shrink-0 border-r border-gnosis-border flex flex-col bg-gnosis-surface">
+        <div className="h-10 flex items-center justify-between px-3 border-b border-gnosis-border flex-shrink-0">
+          <h1 className="text-xs font-semibold text-gnosis-muted uppercase tracking-wider flex items-center gap-1.5">
             <Folder size={12} />
             {activeFolder ?? 'All Notes'}
           </h1>
           <button
             onClick={() => void handleNewNote()}
-            className="p-1 rounded hover:bg-bg-tertiary text-text-secondary hover:text-text-primary transition-colors"
+            className="p-1 rounded hover:bg-gnosis-hover text-gnosis-muted hover:text-gnosis-fg transition-colors"
             title="New note"
             aria-label="New note"
           >
@@ -95,8 +80,8 @@ function NotesPageInner() {
               ))}
             </div>
           ) : notes.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-40 text-text-muted text-sm gap-2">
-              <Folder size={24} className="text-text-faint" />
+            <div className="flex flex-col items-center justify-center h-40 text-gnosis-muted text-sm gap-2">
+              <Folder size={24} className="opacity-40" />
               <span>No notes here yet</span>
             </div>
           ) : (
@@ -107,14 +92,14 @@ function NotesPageInner() {
                   setActiveNoteId(note.id ?? note.note_id);
                   navigate(`/notes/${note.id ?? note.note_id}`);
                 }}
-                className={`w-full text-left px-3 py-2.5 border-b border-border transition-colors ${
+                className={`w-full text-left px-3 py-2.5 border-b border-gnosis-border transition-colors ${
                   activeNoteId === (note.id ?? note.note_id)
-                    ? 'bg-bg-elevated text-text-primary'
-                    : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary'
+                    ? 'bg-gnosis-hover text-gnosis-fg'
+                    : 'text-gnosis-muted hover:bg-gnosis-hover hover:text-gnosis-fg'
                 }`}
               >
                 <p className="text-sm font-medium truncate">{note.title}</p>
-                <p className="text-xs text-text-muted truncate mt-0.5">
+                <p className="text-xs text-gnosis-muted truncate mt-0.5">
                   {note.folder ?? '\u2014'}
                 </p>
               </button>
@@ -125,7 +110,7 @@ function NotesPageInner() {
 
       {/* Editor area placeholder */}
       <div className="flex-1 overflow-hidden">
-        <div className="flex flex-col items-center justify-center h-full text-text-muted gap-3">
+        <div className="flex flex-col items-center justify-center h-full text-gnosis-muted gap-3">
           <BookOpenIcon />
           <p className="text-sm">Select a note or create a new one</p>
         </div>
@@ -134,24 +119,19 @@ function NotesPageInner() {
   );
 }
 
-export default function NotesPage() {
-  // Attempt to use the parent QueryClient; fall back to the module-level one
-  // if we're rendered outside a QueryClientProvider (test environments).
-  try {
-    // useQueryClient throws if no provider is present — catch it silently.
-    // We can't call it here (rules of hooks), so we use the fallback wrapper.
-  } catch (_) { /* noop */ }
-
-  return (
-    <QueryClientProvider client={_fallbackQC}>
-      <NotesPageInner />
-    </QueryClientProvider>
-  );
-}
-
 function BookOpenIcon() {
   return (
-    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-text-faint">
+    <svg
+      width="40"
+      height="40"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="opacity-30"
+    >
       <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
       <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
     </svg>
