@@ -39,11 +39,20 @@ function authHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const vaultState = typeof useVaultStore !== 'undefined'
-    ? (useVaultStore.getState?.() ?? null)
-    : null;
-  const ownerId = (vaultState as Record<string, unknown> | null)?.activeVaultOwnerId;
-  if (ownerId != null) headers['X-Vault-Owner-Id'] = String(ownerId);
+  // Guard against localStorage being blocked (private browsing, sandboxed
+  // iframes, or zustand-persist throwing during store hydration). A failure
+  // here must NEVER prevent the HTTP request from being sent — the backend
+  // health/providers endpoint is public and doesn't need these headers.
+  try {
+    const vaultState = typeof useVaultStore !== 'undefined'
+      ? (useVaultStore.getState?.() ?? null)
+      : null;
+    const ownerId = (vaultState as Record<string, unknown> | null)?.activeVaultOwnerId;
+    if (ownerId != null) headers['X-Vault-Owner-Id'] = String(ownerId);
+  } catch {
+    // Store not yet initialised or localStorage unavailable — continue without header
+  }
+
   if (_activeVaultPath) headers['X-Vault-Path'] = _activeVaultPath;
   return headers;
 }

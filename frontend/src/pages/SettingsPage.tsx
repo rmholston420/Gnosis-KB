@@ -48,6 +48,8 @@ export default function SettingsPage() {
   const [providerError, setProviderError]   = useState(false);
   const [selectedModel, setSelectedModel]   = useState('');
   const [saveState, setSaveState]           = useState<'idle' | 'saving' | 'saved'>('idle');
+  // Incrementing this triggers a fresh load attempt (used by Retry button)
+  const [loadKey, setLoadKey]               = useState(0);
 
   const [exportFormat, setExportFormat]     = useState<'markdown' | 'json'>('markdown');
   const [exporting, setExporting]           = useState(false);
@@ -56,7 +58,7 @@ export default function SettingsPage() {
   const [syncing, setSyncing]               = useState(false);
   const [syncStatus, setSyncStatus]         = useState<'idle' | 'active' | 'error'>('idle');
 
-  // Load provider info
+  // Load provider info — re-runs whenever loadKey changes (retry)
   useEffect(() => {
     let mounted = true;
     setProviderLoading(true);
@@ -70,7 +72,7 @@ export default function SettingsPage() {
       .catch(() => { if (mounted) setProviderError(true); })
       .finally(() => { if (mounted) setProviderLoading(false); });
     return () => { mounted = false; };
-  }, []);
+  }, [loadKey]);
 
   const handleSaveModel = async () => {
     if (!providerInfo || selectedModel === providerInfo.model) return;
@@ -147,6 +149,14 @@ export default function SettingsPage() {
           <div className="flex items-center gap-2 text-sm text-red-400">
             <XCircle size={14} />
             <span>Could not load provider info.</span>
+            <button
+              type="button"
+              onClick={() => setLoadKey((k) => k + 1)}
+              className="ml-2 flex items-center gap-1 text-xs text-text-muted hover:text-text-primary transition-colors"
+            >
+              <RefreshCw size={11} />
+              Retry
+            </button>
           </div>
         )}
 
