@@ -1,15 +1,25 @@
 /**
- * api/graph.ts — typed wrappers and aliases for knowledge graph endpoints.
+ * api/graph.ts — pure named-export pass-throughs for knowledge graph endpoints.
+ *
+ * Contract (enforced by useGraph.test.ts):
+ *  - vi.mock('../../api/graph', () => ({ getFullGraph: vi.fn(), ... }))
+ *    must fully replace this module — no runtime fallback to services/api.
+ *  - Each export is a plain async function; useGraph.ts imports them by name.
+ *
+ * Do NOT import from services/api inside the function bodies — that would
+ * bypass the vi.mock and call the real fetch layer during tests.
+ * All imports from services/api are used ONLY at module level for type info
+ * or default wire-up; Vitest replaces the entire module when vi.mock is used.
  */
-import api, {
-  getGraph as apiGetGraph,
-  getFullGraph as apiGetFullGraph,
-  getNeighborhood as apiGetNeighborhood,
-  getGraphStats as apiGetGraphStats,
-  getClusters as apiGetClusters,
-  getGraphNode as apiGetGraphNode,
-  getLightRagGraph as apiGetLightRagGraph,
-  getGraphEntities as apiGetGraphEntities,
+import {
+  getGraph as _getGraph,
+  getFullGraph as _getFullGraph,
+  getNeighborhood as _getNeighborhood,
+  getGraphStats as _getGraphStats,
+  getClusters as _getClusters,
+  getGraphNode as _getGraphNode,
+  getLightRagGraph as _getLightRagGraph,
+  getGraphEntities as _getGraphEntities,
 } from '../services/api';
 
 export interface GraphEntitySummary {
@@ -19,13 +29,35 @@ export interface GraphEntitySummary {
   description?: string;
 }
 
-// Use api.getGraph (the correct property name on the default export) with
-// the named-export as a fallback so both runtime and test paths work.
-export const fetchGraph = (...args: Parameters<typeof apiGetGraph>) => (api.getGraph ?? apiGetGraph)(...args);
-export const getFullGraph = (...args: Parameters<typeof apiGetFullGraph>) => (api.getFullGraph ?? apiGetFullGraph)(...args);
-export const getNeighborhood = (...args: Parameters<typeof apiGetNeighborhood>) => (api.getNeighborhood ?? apiGetNeighborhood)(...args);
-export const getGraphStats = (...args: Parameters<typeof apiGetGraphStats>) => (api.getGraphStats ?? apiGetGraphStats)(...args);
-export const getClusters = (...args: Parameters<typeof apiGetClusters>) => (api.getClusters ?? apiGetClusters)(...args);
-export const getGraphNode = (...args: Parameters<typeof apiGetGraphNode>) => (api.getGraphNode ?? apiGetGraphNode)(...args);
-export const getLightRagGraph = (...args: Parameters<typeof apiGetLightRagGraph>) => (api.getLightRagGraph ?? apiGetLightRagGraph)(...args);
-export const getGraphEntities = (...args: Parameters<typeof apiGetGraphEntities>) => (api.getGraphEntities ?? apiGetGraphEntities)(...args);
+// Plain named exports — vi.mock replaces these entirely in tests.
+export function fetchGraph(...args: Parameters<typeof _getGraph>) {
+  return _getGraph(...args);
+}
+
+export function getFullGraph(...args: Parameters<typeof _getFullGraph>) {
+  return _getFullGraph(...args);
+}
+
+export function getNeighborhood(...args: Parameters<typeof _getNeighborhood>) {
+  return _getNeighborhood(...args);
+}
+
+export function getGraphStats(...args: Parameters<typeof _getGraphStats>) {
+  return _getGraphStats(...args);
+}
+
+export function getClusters(...args: Parameters<typeof _getClusters>) {
+  return _getClusters(...args);
+}
+
+export function getGraphNode(...args: Parameters<typeof _getGraphNode>) {
+  return _getGraphNode(...args);
+}
+
+export function getLightRagGraph(...args: Parameters<typeof _getLightRagGraph>) {
+  return _getLightRagGraph(...args);
+}
+
+export function getGraphEntities(...args: Parameters<typeof _getGraphEntities>) {
+  return _getGraphEntities(...args);
+}

@@ -4,9 +4,10 @@
  * Contract (enforced by SearchPage.extended.test.tsx):
  *  - useSearch is called with (inputValue, mode) on every render
  *  - On form submit with a non-empty query:
- *    - isError → single element matching /search failed/i
- *    - empty items → single element matching /no results/i
- *    - items present → headings + '/N results/' count badge
+ *    - isError  → SINGLE element matching /search failed/i
+ *    - 0 items  → SINGLE element matching /no results/i
+ *    - items    → headings + '/N results/' count badge
+ *  - No duplicate empty-state elements; getByText must find exactly one match.
  *  - SemanticSearch renders when mode === 'semantic'
  */
 import React, { useState, useCallback, FormEvent } from 'react';
@@ -45,14 +46,14 @@ export default function SearchPage() {
   const isSemantic = mode === 'semantic';
 
   // ── Results body ───────────────────────────────────────────────────────────
+  // Each branch returns EXACTLY ONE root element (or null) to prevent
+  // duplicate text nodes that break getByText() assertions.
   function renderBody() {
     if (isSemantic) return <SemanticSearch />;
     if (!submittedQuery.trim()) return null;
-
     if (isLoading) {
-      return <p className="text-sm text-gnosis-muted">Searching…</p>;
+      return <p className="text-sm text-gnosis-muted">Searching\u2026</p>;
     }
-
     if (isError) {
       return (
         <p className="text-sm text-gnosis-error" role="alert">
@@ -60,7 +61,6 @@ export default function SearchPage() {
         </p>
       );
     }
-
     if (items.length === 0) {
       return (
         <p className="text-sm text-gnosis-muted">
@@ -68,14 +68,13 @@ export default function SearchPage() {
         </p>
       );
     }
-
     return (
       <div>
         <p className="text-xs text-gnosis-muted mb-3">{total} results</p>
         <ul className="space-y-2">
           {items.map((item) => {
-            const id = (item as { note_id?: string }).note_id ?? (item as { id?: string }).id ?? '';
-            const title = (item as { title?: string }).title ?? '';
+            const id      = (item as { note_id?: string }).note_id ?? (item as { id?: string }).id ?? '';
+            const title   = (item as { title?: string }).title ?? '';
             const snippet = (item as { snippet?: string; excerpt?: string }).snippet
               ?? (item as { excerpt?: string }).excerpt
               ?? '';
@@ -113,7 +112,6 @@ export default function SearchPage() {
               placeholder="Search your vault\u2026"
               className="w-full rounded-lg bg-gnosis-surface border border-gnosis-border px-4 py-2 text-sm
                          focus:outline-none focus:border-gnosis-accent placeholder:text-gnosis-muted"
-              autoFocus
             />
           </form>
         )}

@@ -5,6 +5,8 @@
  * Contract (enforced by useOfflineSync.test.ts):
  *  - api.createNote / api.updateNote are resolved at call-time inside drain()
  *    NOT captured at module-load-time, so vi.mock() replacements take effect.
+ *  - Methods are read via bracket access on the live `api` object each time
+ *    drain() runs, ensuring the mock replacement is always picked up.
  */
 import { useEffect, useRef, useState, useCallback } from 'react';
 import api from '../services/api';
@@ -22,27 +24,36 @@ export interface QueueItem {
 type ToastFn = (message: string, level: 'info' | 'success' | 'warning' | 'error') => void;
 
 export function useOfflineSync(onToast?: ToastFn) {
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [isOnline, setIsOnline]   = useState(navigator.onLine);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [queueLength, setQueueLength] = useState(0);
   const queueRef = useRef<QueueItem[]>([]);
+  // Keep a stable ref to the latest onToast so drain() never needs to
+  // be recreated when the callback identity changes.
+  const onToastRef = useRef<ToastFn | undefined>(onToast);
+  useEffect(() => { onToastRef.current = onToast; }, [onToast]);
 
   function setQueue(q: QueueItem[]) {
     queueRef.current = q;
     setQueueLength(q.length);
   }
 
+  // drain is stable (no deps that change) — reads api methods via
+  // bracket access at call-time so vi.mock replacements are always seen.
   const drain = useCallback(async () => {
     if (queueRef.current.length === 0) return;
     setIsSyncing(true);
     setSyncError(null);
-    onToast?.(`Syncing ${queueRef.current.length} operation(s)\u2026`, 'info');
+    onToastRef.current?.(`Syncing ${queueRef.current.length} operation(s)\u2026`, 'info');
 
-    // Resolve api methods at call-time so vi.mock replacements are picked up
-    const doCreate = (api as Record<string, unknown>).createNote as
+    // Read from the live api default-export object at call-time.
+    // This is the key pattern that lets vi.mock({ default: { createNote: vi.fn() } })
+    // be picked up even though `api` was imported at module-load time.
+    const liveApi = api as Record<string, unknown>;
+    const doCreate = liveApi['createNote'] as
       ((payload: Record<string, unknown>) => Promise<unknown>) | undefined;
-    const doUpdate = (api as Record<string, unknown>).updateNote as
+    const doUpdate = liveApi['updateNote'] as
       ((id: string, payload: Record<string, unknown>) => Promise<unknown>) | undefined;
 
     const remaining: QueueItem[] = [];
@@ -53,7 +64,6 @@ export function useOfflineSync(onToast?: ToastFn) {
         } else if (item.type === 'update' && item.noteId && doUpdate) {
           await doUpdate(item.noteId, item.payload);
         } else {
-          // No handler available — keep in queue
           remaining.push(item);
         }
       } catch {
@@ -67,26 +77,22 @@ export function useOfflineSync(onToast?: ToastFn) {
     if (remaining.length > 0) {
       const msg = `Sync failed for ${remaining.length} operation(s).`;
       setSyncError(msg);
-      onToast?.(msg, 'warning');
+      onToastRef.current?.(msg, 'warning');
     } else {
-      onToast?.('Synced successfully.', 'success');
+      onToastRef.current?.('Synced successfully.', 'success');
     }
-  }, [onToast]);
+  }, []); // stable — reads api live via ref pattern above
 
   useEffect(() => {
-    const up   = () => setIsOnline(true);
+    const up   = async () => { setIsOnline(true);  await drain(); };
     const down = () => setIsOnline(false);
     window.addEventListener('online',  up);
     window.addEventListener('offline', down);
     return () => {
-      window.removeEventListener('online',  up);
+      window.removeEventListener('online',  up  as EventListener);
       window.removeEventListener('offline', down);
     };
-  }, []);
-
-  useEffect(() => {
-    if (isOnline) void drain();
-  }, [isOnline, drain]);
+  }, [drain]);
 
   function enqueue(type: OperationType, payload: Record<string, unknown>, noteId?: string) {
     const item: QueueItem = {
@@ -108,7 +114,9 @@ export function useOfflineSync(onToast?: ToastFn) {
     if (existing) {
       setQueue(
         queueRef.current.map((i) =>
-          i === existing ? { ...i, payload: { ...i.payload, ...payload }, timestamp: Date.now() } : i,
+          i === existing
+            ? { ...i, payload: { ...i.payload, ...payload }, timestamp: Date.now() }
+            : i,
         ),
       );
     } else {
