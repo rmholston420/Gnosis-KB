@@ -16,6 +16,11 @@ Schema matches current SQLAlchemy models exactly:
   - saved_queries
   - shared_vaults
   - shared_vault_members
+
+NOTE: Written for PostgreSQL.
+  - Auto-increment PKs use SERIAL (not SQLite AUTOINCREMENT)
+  - Timestamps use TIMESTAMP (not SQLite DATETIME)
+  - Boolean defaults use TRUE/FALSE (not 1/0)
 """
 
 from __future__ import annotations
@@ -41,13 +46,13 @@ def upgrade() -> None:
     conn.execute(
         sa.text("""
         CREATE TABLE IF NOT EXISTS users (
-            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            id                  SERIAL       PRIMARY KEY,
             email               VARCHAR(320) NOT NULL UNIQUE,
             hashed_password     VARCHAR(200) NOT NULL,
             full_name           VARCHAR(200),
-            is_active           BOOLEAN      NOT NULL DEFAULT 1,
-            is_superuser        BOOLEAN      NOT NULL DEFAULT 0,
-            created_at          DATETIME     DEFAULT CURRENT_TIMESTAMP,
+            is_active           BOOLEAN      NOT NULL DEFAULT TRUE,
+            is_superuser        BOOLEAN      NOT NULL DEFAULT FALSE,
+            created_at          TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
             vault_slug          VARCHAR(80)  UNIQUE,
             vault_path          TEXT,
             vault_display_name  VARCHAR(200)
@@ -74,12 +79,12 @@ def upgrade() -> None:
             folder         VARCHAR(100),
             source_url     TEXT,
             word_count     INTEGER       DEFAULT 0,
-            created_at     DATETIME      DEFAULT CURRENT_TIMESTAMP,
-            modified_at    DATETIME,
+            created_at     TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+            modified_at    TIMESTAMP,
             last_reviewed  DATE,
-            is_deleted     BOOLEAN       NOT NULL DEFAULT 0,
-            vector_indexed BOOLEAN       NOT NULL DEFAULT 0,
-            graph_indexed  BOOLEAN       NOT NULL DEFAULT 0,
+            is_deleted     BOOLEAN       NOT NULL DEFAULT FALSE,
+            vector_indexed BOOLEAN       NOT NULL DEFAULT FALSE,
+            graph_indexed  BOOLEAN       NOT NULL DEFAULT FALSE,
             frontmatter    TEXT,
             owner_id       INTEGER       REFERENCES users(id) ON DELETE CASCADE
         )
@@ -121,7 +126,7 @@ def upgrade() -> None:
     conn.execute(
         sa.text("""
         CREATE TABLE IF NOT EXISTS links (
-            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            id        SERIAL      PRIMARY KEY,
             source_id VARCHAR(20) NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
             target_id VARCHAR(20) NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
             link_text VARCHAR(500) NOT NULL,
@@ -139,15 +144,15 @@ def upgrade() -> None:
     conn.execute(
         sa.text("""
         CREATE TABLE IF NOT EXISTS attachments (
-            id                INTEGER PRIMARY KEY AUTOINCREMENT,
-            note_id           VARCHAR(20) NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+            id                SERIAL       PRIMARY KEY,
+            note_id           VARCHAR(20)  NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
             filename          VARCHAR(500)  NOT NULL,
             original_filename VARCHAR(500)  NOT NULL,
             file_path         VARCHAR(1000) NOT NULL,
             mime_type         VARCHAR(100) DEFAULT 'application/octet-stream',
             file_size         INTEGER      DEFAULT 0,
             extracted_text    TEXT,
-            uploaded_at       DATETIME     DEFAULT CURRENT_TIMESTAMP
+            uploaded_at       TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
         )
     """)
     )
@@ -168,8 +173,8 @@ def upgrade() -> None:
             repetitions INTEGER     NOT NULL DEFAULT 0,
             due_date    DATE,
             last_quality INTEGER,
-            created_at  DATETIME    DEFAULT CURRENT_TIMESTAMP,
-            updated_at  DATETIME
+            created_at  TIMESTAMP   DEFAULT CURRENT_TIMESTAMP,
+            updated_at  TIMESTAMP
         )
     """)
     )
@@ -186,13 +191,13 @@ def upgrade() -> None:
     conn.execute(
         sa.text("""
         CREATE TABLE IF NOT EXISTS saved_queries (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            owner_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            id          SERIAL       PRIMARY KEY,
+            owner_id    INTEGER      NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             name        VARCHAR(200) NOT NULL,
             query       TEXT         NOT NULL,
             filters     TEXT,
-            created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at  DATETIME
+            created_at  TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+            updated_at  TIMESTAMP
         )
     """)
     )
@@ -206,10 +211,10 @@ def upgrade() -> None:
     conn.execute(
         sa.text("""
         CREATE TABLE IF NOT EXISTS shared_vaults (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            owner_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            id         SERIAL       PRIMARY KEY,
+            owner_id   INTEGER      NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             name       VARCHAR(200) NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
         )
     """)
     )
@@ -223,11 +228,11 @@ def upgrade() -> None:
     conn.execute(
         sa.text("""
         CREATE TABLE IF NOT EXISTS shared_vault_members (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            vault_id   INTEGER NOT NULL REFERENCES shared_vaults(id) ON DELETE CASCADE,
-            member_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            id         SERIAL      PRIMARY KEY,
+            vault_id   INTEGER     NOT NULL REFERENCES shared_vaults(id) ON DELETE CASCADE,
+            member_id  INTEGER     NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             permission VARCHAR(50) NOT NULL DEFAULT 'viewer',
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP   DEFAULT CURRENT_TIMESTAMP,
             UNIQUE (vault_id, member_id)
         )
     """)
@@ -254,4 +259,4 @@ def downgrade() -> None:
         "notes",
         "users",
     ):
-        conn.execute(sa.text(f"DROP TABLE IF EXISTS {tbl}"))
+        conn.execute(sa.text(f"DROP TABLE IF EXISTS {tbl} CASCADE"))
