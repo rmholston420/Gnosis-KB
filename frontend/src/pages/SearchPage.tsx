@@ -9,6 +9,12 @@
  *    - items    → headings + '/N results/' count badge
  *  - No duplicate empty-state elements; getByText must find exactly one match.
  *  - SemanticSearch renders when mode === 'semantic'
+ *
+ * IMPORTANT: Do NOT pass the `query` prop to <SearchResults> from this
+ * component's renderBody(). SearchResults renders its own "No results for…"
+ * fallback when query is truthy and results is empty — that would produce a
+ * second "no results" node alongside the one renderBody() already returns,
+ * breaking getByText(/no results/i) with "Found multiple elements".
  */
 import React, { useState, useCallback, FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -48,6 +54,10 @@ export default function SearchPage() {
   // ── Results body ───────────────────────────────────────────────────────────
   // Each branch returns EXACTLY ONE root element (or null) to prevent
   // duplicate text nodes that break getByText() assertions.
+  //
+  // NOTE: we render results as plain <li> buttons here instead of delegating
+  // to <SearchResults> so we never accidentally get SearchResults' own
+  // empty-state paragraph alongside this component's empty-state paragraph.
   function renderBody() {
     if (isSemantic) return <SemanticSearch />;
     if (!submittedQuery.trim()) return null;

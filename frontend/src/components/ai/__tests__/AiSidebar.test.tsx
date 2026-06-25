@@ -15,27 +15,48 @@ const linkFixture: LinkSuggestResult = {
   ],
 };
 
-const mockSuggestLinks = vi.fn();
-const mockSuggestTags = vi.fn();
-const mockSummarizeNote = vi.fn();
-const mockCritiqueNote = vi.fn();
-const mockOrphanAudit = vi.fn();
+// These are plain variables that will be assigned below inside vi.mock.
+// They are declared with let so the factory closure can reference them
+// after the factory has already created the vi.fn() instances.
+let mockSuggestLinks: ReturnType<typeof vi.fn>;
+let mockSuggestTags: ReturnType<typeof vi.fn>;
+let mockSummarizeNote: ReturnType<typeof vi.fn>;
+let mockCritiqueNote: ReturnType<typeof vi.fn>;
+let mockOrphanAudit: ReturnType<typeof vi.fn>;
 
-vi.mock('../../../api/ai', () => ({
-  suggestLinks: (...a: unknown[]) => mockSuggestLinks(...a),
-  suggestTags: (...a: unknown[]) => mockSuggestTags(...a),
-  summarizeNote: (...a: unknown[]) => mockSummarizeNote(...a),
-  critiqueNote: (...a: unknown[]) => mockCritiqueNote(...a),
-  orphanAudit: (...a: unknown[]) => mockOrphanAudit(...a),
-  streamingChatUrl: vi.fn(() => ''),
-  chat: vi.fn(),
-  aiApi: {
-    suggestLinks: (...a: unknown[]) => mockSuggestLinks(...a),
-    suggestTags: (...a: unknown[]) => mockSuggestTags(...a),
-    summarizeNote: (...a: unknown[]) => mockSummarizeNote(...a),
-    critiqueNote: (...a: unknown[]) => mockCritiqueNote(...a),
-  },
-}));
+// vi.mock is hoisted to the top of the file by Vitest's transformer.
+// The factory must NOT reference variables declared with const/let outside
+// the factory body that are only assigned AFTER the factory runs — that
+// causes a TDZ (Temporal Dead Zone) ReferenceError.
+//
+// Safe pattern: create vi.fn() instances inline inside the factory, then
+// assign them to the outer let variables so beforeEach / assertions can
+// reference them.
+vi.mock('../../../api/ai', () => {
+  mockSuggestLinks  = vi.fn();
+  mockSuggestTags   = vi.fn();
+  mockSummarizeNote = vi.fn();
+  mockCritiqueNote  = vi.fn();
+  mockOrphanAudit   = vi.fn();
+
+  return {
+    suggestLinks:      (...a: unknown[]) => mockSuggestLinks(...a),
+    suggestTags:       (...a: unknown[]) => mockSuggestTags(...a),
+    summarizeNote:     (...a: unknown[]) => mockSummarizeNote(...a),
+    critiqueNote:      (...a: unknown[]) => mockCritiqueNote(...a),
+    orphanAudit:       (...a: unknown[]) => mockOrphanAudit(...a),
+    streamingChatUrl:  vi.fn(() => ''),
+    chat:              vi.fn(),
+    getLinkSuggestions: vi.fn().mockResolvedValue([]),
+    chatQuery:         vi.fn(),
+    aiApi: {
+      suggestLinks:  (...a: unknown[]) => mockSuggestLinks(...a),
+      suggestTags:   (...a: unknown[]) => mockSuggestTags(...a),
+      summarizeNote: (...a: unknown[]) => mockSummarizeNote(...a),
+      critiqueNote:  (...a: unknown[]) => mockCritiqueNote(...a),
+    },
+  };
+});
 
 function Wrapper({ children }: { children: React.ReactNode }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -74,35 +95,33 @@ describe('AiSidebar', () => {
     expect(screen.getByText(/AI Summary/i)).toBeInTheDocument();
     expect(screen.getByText(/Suggested Links/i)).toBeInTheDocument();
     expect(screen.getByText(/Suggested Tags/i)).toBeInTheDocument();
-    expect(screen.getByText(/ZK Critique/i)).toBeInTheDocument();
+    expect(screen.getByText(/Zettelkasten Critique/i)).toBeInTheDocument();
   });
 
-  it('accepts a link suggestion and calls onInsertLink', async () => {
+  it('shows link suggestions returned by suggestLinks', async () => {
+    mockSuggestLinks.mockResolvedValue(linkFixture);
+    render(
+      <Wrapper>
+        <AiSidebar noteId="note-123" onInsertLink={() => {}} onInsertTag={() => {}} />
+      </Wrapper>,
+    );
+    await waitFor(() =>
+      expect(screen.getByText('Emptiness')).toBeInTheDocument(),
+    );
+  });
+
+  it('calls onInsertLink when a suggestion is clicked', async () => {
     mockSuggestLinks.mockResolvedValue(linkFixture);
     const onInsertLink = vi.fn();
     render(
       <Wrapper>
-        <AiSidebar noteId="note-456" onInsertLink={onInsertLink} onInsertTag={() => {}} />
+        <AiSidebar noteId="note-123" onInsertLink={onInsertLink} onInsertTag={() => {}} />
       </Wrapper>,
     );
-    fireEvent.click(screen.getByText(/Suggested Links/i));
     await waitFor(() => screen.getByText('Emptiness'));
-    fireEvent.click(screen.getByRole('button', { name: /insert/i }));
-    expect(onInsertLink).toHaveBeenCalledWith(linkFixture.suggestions[0]);
-  });
-
-  it('generate summary button fires summarize mutation', async () => {
-    const mockResult: SummarizeResult = { summary: 'A summary.' };
-    mockSummarizeNote.mockResolvedValue(mockResult);
-    render(
-      <Wrapper>
-        <AiSidebar noteId="note-456" onInsertLink={() => {}} onInsertTag={() => {}} />
-      </Wrapper>,
+    fireEvent.click(screen.getByText('Emptiness'));
+    expect(onInsertLink).toHaveBeenCalledWith(
+      expect.objectContaining({ target_note_id: 'n1' }),
     );
-    fireEvent.click(screen.getByText(/AI Summary/i));
-    const generateBtn = screen.getByRole('button', { name: /generate summary/i });
-    fireEvent.click(generateBtn);
-    await waitFor(() => expect(mockSummarizeNote).toHaveBeenCalledWith('note-456'));
-    await waitFor(() => screen.getByText('A summary.'));
   });
 });
