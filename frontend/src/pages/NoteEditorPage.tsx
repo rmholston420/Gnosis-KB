@@ -24,6 +24,9 @@
  *   WikilinkAutocomplete prop is `onClose` (not `onDismiss`) — the mock
  *   component fires onClose when the dismiss button is clicked.
  *
+ *   FrontmatterPanel prop is `fm` (not `value`) — matches FrontmatterPanel
+ *   component interface and FrontmatterPanel.test.tsx fixture.
+ *
  * TanStack Query v5 note
  * ----------------------
  *   onSuccess was removed from useQuery in TanStack Query v5.
@@ -251,9 +254,9 @@ export default function NoteEditorPage() {
 
     return (
       <div className="flex flex-col h-full">
-        {/* Frontmatter panel */}
+        {/* Frontmatter panel — prop is `fm` (canonical contract) */}
         <FrontmatterPanel
-          value={fm}
+          fm={fm}
           onChange={(patch) => setFmOverride((prev) => ({ ...prev, ...patch }))}
         />
 

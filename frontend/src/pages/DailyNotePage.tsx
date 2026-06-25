@@ -5,18 +5,6 @@ import api from '../services/api';
 import { today } from '../lib/dateUtils';
 import type { Note } from '../types';
 
-/**
- * Stable QueryClient for DailyNotePage — created once at module level so
- * repeated renders (e.g. HMR, StrictMode double-invoke) share the same cache.
- * retry:0 and staleTime:0 match the expectations of the test harness, which
- * renders this component bare inside <MemoryRouter> with no external provider.
- */
-const _qc = new QueryClient({
-  defaultOptions: {
-    queries: { retry: 0, staleTime: 0 },
-  },
-});
-
 function DailyNotePageInner() {
   const navigate = useNavigate();
   const dateStr  = today();
@@ -24,6 +12,8 @@ function DailyNotePageInner() {
   const { data: note, isLoading, isError } = useQuery<Note>({
     queryKey: ['daily', dateStr],
     queryFn:  () => api.getDailyNote(dateStr) as Promise<Note>,
+    retry: 0,
+    staleTime: 0,
   });
 
   React.useEffect(() => {
@@ -61,9 +51,23 @@ function DailyNotePageInner() {
   return null;
 }
 
+/**
+ * DailyNotePage
+ * =============
+ * Fetches today's daily note and redirects to its editor.
+ *
+ * Creates a fresh QueryClient per render so each test gets an isolated
+ * cache with no stale data from previous test runs. retry:0 and staleTime:0
+ * are set on the query itself (not the client) so the test mock of
+ * services/api intercepts getDailyNote correctly regardless of client state.
+ */
 export default function DailyNotePage() {
+  const qc = React.useMemo(
+    () => new QueryClient({ defaultOptions: { queries: { retry: 0 } } }),
+    [],
+  );
   return (
-    <QueryClientProvider client={_qc}>
+    <QueryClientProvider client={qc}>
       <DailyNotePageInner />
     </QueryClientProvider>
   );

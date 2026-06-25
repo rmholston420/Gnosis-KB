@@ -3,8 +3,11 @@
  * Renders editable fields for title, type, status, tags, folder, and source URL.
  * Avoids free-form YAML; instead uses typed inputs per field.
  *
- * Prop name: `value` (not `fm`) — matches the call site in NoteEditorPage:
- *   <FrontmatterPanel value={fm} onChange={...} />
+ * Prop contract (canonical):
+ *   <FrontmatterPanel fm={...} onChange={...} />
+ *
+ * NoteEditorPage must pass `fm={fm}` (not `value={fm}`).
+ * FrontmatterPanel.test.tsx also passes `fm={...}` — this is the source of truth.
  */
 import React from 'react';
 import {
@@ -30,7 +33,7 @@ export interface Frontmatter {
 }
 
 interface FrontmatterPanelProps {
-  value:     Frontmatter;
+  fm:        Frontmatter;
   onChange:  (updated: Partial<Frontmatter>) => void;
   readonly?: boolean;
 }
@@ -46,7 +49,7 @@ function Field({ label, icon, children }: { label: string; icon: React.ReactNode
   );
 }
 
-export function FrontmatterPanel({ value: fm, onChange, readonly = false }: FrontmatterPanelProps) {
+export function FrontmatterPanel({ fm, onChange, readonly = false }: FrontmatterPanelProps) {
   const inputClass = `w-full text-xs bg-transparent border-b border-gnosis-border focus:border-gnosis-accent outline-none py-0.5 text-gnosis-fg ${
     readonly ? 'opacity-60 cursor-not-allowed' : ''
   }`;
@@ -100,7 +103,7 @@ export function FrontmatterPanel({ value: fm, onChange, readonly = false }: Fron
           type="text"
           value={fm.tags.join(', ')}
           onChange={(e) => onChange({ tags: e.target.value.split(',').map((t) => t.trim()).filter(Boolean) })}
-          placeholder="tag1, tag2, \u2026"
+          placeholder="tag1, tag2, …"
           className={inputClass}
           disabled={readonly}
           aria-label="Note tags (comma separated)"
@@ -126,7 +129,7 @@ export function FrontmatterPanel({ value: fm, onChange, readonly = false }: Fron
           type="url"
           value={fm.source_url}
           onChange={(e) => onChange({ source_url: e.target.value })}
-          placeholder="https://\u2026"
+          placeholder="https://…"
           className={inputClass}
           disabled={readonly}
           aria-label="Source URL"
