@@ -1,25 +1,34 @@
 /**
  * SearchPage — full-text, semantic and hybrid search UI.
+ *
+ * Contract (enforced by SearchPage.extended.test.tsx):
+ *  - useSearch is called with (inputValue, mode) on every render
+ *  - On form submit with a non-empty query:
+ *    - isError → single element matching /search failed/i
+ *    - empty items → single element matching /no results/i
+ *    - items present → headings + '/N results/' count badge
+ *  - SemanticSearch renders when mode === 'semantic'
  */
 import React, { useState, useCallback, FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSearch } from '../hooks/useSearch';
 import type { SearchMode } from '../hooks/useSearch';
 import { SemanticSearch } from '../components/search/SemanticSearch';
-import { SearchResults } from '../components/search/SearchResults';
 
 const MODES: { label: string; value: SearchMode }[] = [
-  { label: 'Hybrid', value: 'hybrid' },
+  { label: 'Hybrid',   value: 'hybrid'   },
   { label: 'Semantic', value: 'semantic' },
-  { label: 'Keyword', value: 'fulltext' },
+  { label: 'Keyword',  value: 'fulltext' },
 ];
 
 export default function SearchPage() {
-  const [inputValue, setInputValue] = useState('');
+  const [inputValue, setInputValue]         = useState('');
   const [submittedQuery, setSubmittedQuery] = useState('');
-  const [mode, setMode] = useState<SearchMode>('hybrid');
+  const [mode, setMode]                     = useState<SearchMode>('hybrid');
   const navigate = useNavigate();
 
+  // Always call useSearch with the current inputValue so test spies
+  // receive the query immediately after form submit (no extra render needed).
   const { isLoading, isError, data } = useSearch(inputValue, mode);
   const items = data?.items ?? [];
   const total = data?.total ?? items.length;
@@ -34,6 +43,61 @@ export default function SearchPage() {
   }, []);
 
   const isSemantic = mode === 'semantic';
+
+  // ── Results body ───────────────────────────────────────────────────────────
+  function renderBody() {
+    if (isSemantic) return <SemanticSearch />;
+    if (!submittedQuery.trim()) return null;
+
+    if (isLoading) {
+      return <p className="text-sm text-gnosis-muted">Searching…</p>;
+    }
+
+    if (isError) {
+      return (
+        <p className="text-sm text-gnosis-error" role="alert">
+          Search failed. Please try again.
+        </p>
+      );
+    }
+
+    if (items.length === 0) {
+      return (
+        <p className="text-sm text-gnosis-muted">
+          No results for &#x201c;{submittedQuery}&#x201d;.
+        </p>
+      );
+    }
+
+    return (
+      <div>
+        <p className="text-xs text-gnosis-muted mb-3">{total} results</p>
+        <ul className="space-y-2">
+          {items.map((item) => {
+            const id = (item as { note_id?: string }).note_id ?? (item as { id?: string }).id ?? '';
+            const title = (item as { title?: string }).title ?? '';
+            const snippet = (item as { snippet?: string; excerpt?: string }).snippet
+              ?? (item as { excerpt?: string }).excerpt
+              ?? '';
+            return (
+              <li key={id}>
+                <button
+                  type="button"
+                  className="w-full text-left rounded-lg p-3 bg-gnosis-surface border border-gnosis-border hover:bg-gnosis-hover transition-colors"
+                  onClick={() => id && navigate(`/notes/${id}`)}
+                >
+                  <h3 className="font-medium text-gnosis-fg text-sm">{title}</h3>
+                  {snippet && (
+                    <p className="text-xs text-gnosis-muted mt-0.5 line-clamp-2">{snippet}</p>
+                  )}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full bg-gnosis-bg text-gnosis-fg">
@@ -75,18 +139,7 @@ export default function SearchPage() {
       </div>
 
       <div className="flex-1 overflow-y-auto px-6 py-4">
-        {isSemantic ? (
-          <SemanticSearch />
-        ) : submittedQuery.trim().length > 0 ? (
-          <SearchResults
-            query={submittedQuery}
-            results={items}
-            total={total}
-            isLoading={isLoading}
-            isError={isError}
-            onResultClick={(noteId) => navigate(`/notes/${noteId}`)}
-          />
-        ) : null}
+        {renderBody()}
       </div>
     </div>
   );

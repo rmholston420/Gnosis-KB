@@ -1,5 +1,14 @@
 /**
  * NoteCard — compact note list item / search result card.
+ *
+ * Contract (enforced by NoteCard.test.tsx):
+ *  - role="button" on the outer div (not wrapped in <Link>)
+ *  - onClick calls navigate(`/notes/${note.id}`)
+ *  - active=true  → className contains 'border-accent-blue'
+ *  - active=false → className contains 'border-border-subtle'
+ *  - word_count renders as '{n}w' plain text
+ *  - tags renders first 2 as single text '#tag1 #tag2'
+ *  - empty tags renders nothing matching /#/
  */
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -22,6 +31,7 @@ interface Props {
   note: Note;
   compact?: boolean;
   onClick?: (note: Note) => void;
+  /** @deprecated use active */
   selected?: boolean;
   active?: boolean;
 }
@@ -30,10 +40,9 @@ export function NoteCard({ note, compact = false, onClick, selected = false, act
   const navigate = useNavigate();
   const typeClass = NOTE_TYPE_COLORS[note.note_type ?? 'default'] ?? NOTE_TYPE_COLORS.default;
   const isActive = active || selected;
-  const tags = note.tags ?? [];
-  // Render up to 2 tags as a single "#tag1 #tag2" string so tests can find it with getByText
-  const tagText = tags.slice(0, 2).map((t) => `#${t}`).join(' ');
-  const noteId = note.note_id ?? (note as Note & { id?: string }).id;
+
+  // Prefer note.id (set by factory); fall back to note_id
+  const noteId = (note as Note & { id?: string }).id ?? note.note_id;
 
   const handleOpen = () => {
     if (onClick) {
@@ -43,7 +52,13 @@ export function NoteCard({ note, compact = false, onClick, selected = false, act
     if (noteId) navigate(`/notes/${noteId}`);
   };
 
-  // Strip markdown heading markers from body preview so # chars don't leak into the DOM
+  // Tags: render first 2 as a single '#tag1 #tag2' text node so tests can
+  // use getByText('#pkm #philosophy') without worrying about inner elements.
+  const tags = note.tags ?? [];
+  const tagText = tags.slice(0, 2).map((t) => `#${t}`).join(' ');
+
+  // Strip markdown heading markers from body preview so '#' heading chars
+  // don't collide with the queryByText(/#/) assertion for empty-tags.
   const bodyPreview = note.body
     ? note.body
         .replace(/^---[\s\S]*?---\n?/, '')  // strip frontmatter

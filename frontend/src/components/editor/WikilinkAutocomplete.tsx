@@ -1,5 +1,9 @@
 /**
  * WikilinkAutocomplete — floating autocomplete popup for [[wikilink]] syntax.
+ *
+ * Contract (enforced by tests):
+ *  - useWikilinkDetector initialises wikilinkQuery as null (not '')
+ *  - WikilinkAutocomplete requires QueryClientProvider (uses useQuery internally)
  */
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import type { Dispatch, SetStateAction, RefObject } from 'react';
@@ -88,6 +92,7 @@ export function useWikilinkDetector(
   value: string,
   setValue: Dispatch<SetStateAction<string>>,
 ): WikilinkDetectorResult {
+  // Must be null initially — tests assert result.current.wikilinkQuery === null
   const [wikilinkQuery, setWikilinkQuery] = useState<string | null>(null);
 
   useEffect(() => {

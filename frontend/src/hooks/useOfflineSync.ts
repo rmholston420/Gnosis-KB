@@ -1,9 +1,13 @@
 /**
  * useOfflineSync — queues note mutations while offline and replays them
  * when connectivity is restored.
+ *
+ * Contract (enforced by useOfflineSync.test.ts):
+ *  - api.createNote / api.updateNote are resolved at call-time inside drain()
+ *    NOT captured at module-load-time, so vi.mock() replacements take effect.
  */
 import { useEffect, useRef, useState, useCallback } from 'react';
-import api, { createNote, updateNote } from '../services/api';
+import api from '../services/api';
 
 export type OperationType = 'create' | 'update';
 
@@ -16,9 +20,6 @@ export interface QueueItem {
 }
 
 type ToastFn = (message: string, level: 'info' | 'success' | 'warning' | 'error') => void;
-
-const apiCreateNote = api.createNote ?? createNote;
-const apiUpdateNote = api.updateNote ?? updateNote;
 
 export function useOfflineSync(onToast?: ToastFn) {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -36,15 +37,24 @@ export function useOfflineSync(onToast?: ToastFn) {
     if (queueRef.current.length === 0) return;
     setIsSyncing(true);
     setSyncError(null);
-    onToast?.(`Syncing ${queueRef.current.length} operation(s)…`, 'info');
+    onToast?.(`Syncing ${queueRef.current.length} operation(s)\u2026`, 'info');
+
+    // Resolve api methods at call-time so vi.mock replacements are picked up
+    const doCreate = (api as Record<string, unknown>).createNote as
+      ((payload: Record<string, unknown>) => Promise<unknown>) | undefined;
+    const doUpdate = (api as Record<string, unknown>).updateNote as
+      ((id: string, payload: Record<string, unknown>) => Promise<unknown>) | undefined;
 
     const remaining: QueueItem[] = [];
     for (const item of queueRef.current) {
       try {
-        if (item.type === 'create') {
-          await apiCreateNote(item.payload);
-        } else if (item.type === 'update' && item.noteId) {
-          await apiUpdateNote(item.noteId, item.payload);
+        if (item.type === 'create' && doCreate) {
+          await doCreate(item.payload);
+        } else if (item.type === 'update' && item.noteId && doUpdate) {
+          await doUpdate(item.noteId, item.payload);
+        } else {
+          // No handler available — keep in queue
+          remaining.push(item);
         }
       } catch {
         remaining.push(item);
@@ -64,12 +74,12 @@ export function useOfflineSync(onToast?: ToastFn) {
   }, [onToast]);
 
   useEffect(() => {
-    const up = () => setIsOnline(true);
+    const up   = () => setIsOnline(true);
     const down = () => setIsOnline(false);
-    window.addEventListener('online', up);
+    window.addEventListener('online',  up);
     window.addEventListener('offline', down);
     return () => {
-      window.removeEventListener('online', up);
+      window.removeEventListener('online',  up);
       window.removeEventListener('offline', down);
     };
   }, []);
