@@ -21,6 +21,9 @@
  *   named imports from '../api/notes' (not from '../services/api') so the
  *   vi.spyOn intercepts them correctly.
  *
+ *   WikilinkAutocomplete prop is `onClose` (not `onDismiss`) — the mock
+ *   component fires onClose when the dismiss button is clicked.
+ *
  * TanStack Query v5 note
  * ----------------------
  *   onSuccess was removed from useQuery in TanStack Query v5.
@@ -161,7 +164,7 @@ export default function NoteEditorPage() {
     );
   }
 
-  // ---- Derived values ------------------------------------------------------
+  // ---- Derived values (safe: isLoading is false here) ----------------------
   const activeNoteId = id ?? null;
   const fm: Frontmatter = note
     ? { ...noteToFrontmatter(note), ...fmOverride }
@@ -279,7 +282,7 @@ export default function NoteEditorPage() {
                 <WikilinkAutocomplete
                   query={wikilinkQuery}
                   onSelect={(title) => insertWikilink(title)}
-                  onDismiss={() => insertWikilink('')}
+                  onClose={() => insertWikilink('')}
                 />
               )}
             </>

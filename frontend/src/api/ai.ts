@@ -18,9 +18,11 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export interface SummarizeResult   { summary:     string }
-export interface CritiqueResult    { critique:    AiCritique }
+export interface CritiqueResult    { overall_feedback: string; critique: AiCritique }
 export interface LinkSuggestResult { suggestions: LinkSuggestion[] }
 export interface TagSuggestResult  { suggestions: TagSuggestion[] }
+export interface ChatQueryResult   { answer: string; sources?: string[]; mode?: string }
+export interface OrphanAuditResult { orphans: string[] }
 
 // Re-export entity types so components don't need a separate import
 export type { LinkSuggestion, TagSuggestion, AiCritique };
@@ -63,5 +65,43 @@ export const aiApi = {
 
 export default aiApi;
 
-// ── Standalone named exports used by LinkSuggestions.tsx ────────────────────
-export const suggestLinks = aiApi.suggestLinks;
+// ── Standalone named exports used by hooks/useAI.ts ─────────────────────────
+
+/** Non-streaming chat query — returns { answer, sources, mode }. */
+export function chatQuery(
+  params: { query: string; mode?: string },
+): Promise<ChatQueryResult> {
+  return req<ChatQueryResult>('/api/ai/query', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+}
+
+/** Link suggestions (named export alias of aiApi.suggestLinks). */
+export const suggestLinks       = aiApi.suggestLinks;
+export const getLinkSuggestions = aiApi.suggestLinks;
+
+/** Tag suggestions (named export alias of aiApi.suggestTags). */
+export const suggestTags = aiApi.suggestTags;
+
+/** Zettelkasten critique (named export alias of aiApi.critiqueNote). */
+export function critiqueNote(noteId: string): Promise<CritiqueResult> {
+  return aiApi.critiqueNote(noteId);
+}
+
+/** Orphan audit — returns notes with no incoming or outgoing links. */
+export function orphanAudit(): Promise<OrphanAuditResult> {
+  return req<OrphanAuditResult>('/api/ai/orphan-audit', { method: 'POST' });
+}
+
+/** Build the SSE URL for streaming chat. */
+export function streamingChatUrl(
+  params: { message: string; mode?: string; session_id?: string },
+): string {
+  const p = new URLSearchParams({
+    message:    params.message,
+    mode:       params.mode ?? 'hybrid',
+    ...(params.session_id ? { session_id: params.session_id } : {}),
+  });
+  return `${BASE}/api/ai/stream?${p.toString()}`;
+}
