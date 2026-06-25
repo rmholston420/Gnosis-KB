@@ -2,6 +2,7 @@
  * SearchPage — full-text, semantic and hybrid search UI.
  */
 import React, { useState, useCallback, FormEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useSearch } from '../hooks/useSearch';
 import type { SearchMode } from '../hooks/useSearch';
 import { SemanticSearch } from '../components/search/SemanticSearch';
@@ -17,6 +18,7 @@ export default function SearchPage() {
   const [inputValue, setInputValue] = useState('');
   const [submittedQuery, setSubmittedQuery] = useState('');
   const [mode, setMode] = useState<SearchMode>('hybrid');
+  const navigate = useNavigate();
 
   const { isLoading, isError, data } = useSearch(inputValue, mode);
   const items = data?.items ?? [];
@@ -75,23 +77,16 @@ export default function SearchPage() {
       <div className="flex-1 overflow-y-auto px-6 py-4">
         {isSemantic ? (
           <SemanticSearch />
-        ) : (
-          <>
-            {isLoading && <p className="text-sm text-gnosis-muted animate-pulse">Searching\u2026</p>}
-            {isError && <p className="text-sm text-red-500">Search failed.</p>}
-            {submittedQuery.trim().length > 0 ? (
-              <SearchResults
-                query={submittedQuery}
-                items={items}
-                total={total}
-                isLoading={isLoading}
-                isError={isError}
-              />
-            ) : (
-              !isLoading && !isError && items.length === 0 && null
-            )}
-          </>
-        )}
+        ) : submittedQuery.trim().length > 0 ? (
+          <SearchResults
+            query={submittedQuery}
+            results={items}
+            total={total}
+            isLoading={isLoading}
+            isError={isError}
+            onResultClick={(noteId) => navigate(`/notes/${noteId}`)}
+          />
+        ) : null}
       </div>
     </div>
   );
