@@ -40,7 +40,7 @@ beforeEach(() => {
 describe('TagsPage', () => {
   it('renders page heading', () => {
     renderPage();
-    expect(screen.getByText(/tags/i)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /tags/i })).toBeInTheDocument();
   });
 
   it('renders tag names after loading', async () => {
