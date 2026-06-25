@@ -274,6 +274,60 @@ async def resolve_wikilink(
 
 
 # ---------------------------------------------------------------------------
+# Tags  (GET /notes/tags) -- BEFORE /{note_id}
+# Returns a plain string[] of distinct tag names for the current user.
+# Used by api.listTags() for autocomplete and tag-filter dropdowns.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/tags", summary="Distinct tag names for the current user")
+async def list_note_tags(
+    db: AsyncSession = Depends(get_db),
+    owner_ids: set[int] = Depends(get_vault_owner_ids),
+) -> list[str]:
+    """Return alphabetically sorted tag names visible to the requesting user."""
+    stmt = (
+        select(Tag.name)
+        .join(NoteTag, Tag.id == NoteTag.c.tag_id)
+        .join(Note, Note.id == NoteTag.c.note_id)
+        .where(
+            Note.owner_id.in_(owner_ids),
+            Note.is_deleted.is_(False),
+        )
+        .distinct()
+        .order_by(Tag.name.asc())
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    return list(rows)
+
+
+# ---------------------------------------------------------------------------
+# Folders  (GET /notes/folders) -- BEFORE /{note_id}
+# Returns a string[] of distinct folder names for the current user.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/folders", summary="Distinct folder names for the current user")
+async def list_note_folders(
+    db: AsyncSession = Depends(get_db),
+    owner_ids: set[int] = Depends(get_vault_owner_ids),
+) -> list[str]:
+    """Return sorted distinct folder values from notes visible to the requesting user."""
+    stmt = (
+        select(Note.folder)
+        .where(
+            Note.owner_id.in_(owner_ids),
+            Note.is_deleted.is_(False),
+            Note.folder.isnot(None),
+        )
+        .distinct()
+        .order_by(Note.folder.asc())
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    return [f for f in rows if f]
+
+
+# ---------------------------------------------------------------------------
 # Templates  (GET /notes/templates) -- BEFORE /{note_id}
 # ---------------------------------------------------------------------------
 
