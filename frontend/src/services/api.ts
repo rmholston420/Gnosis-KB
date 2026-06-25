@@ -95,8 +95,20 @@ export function deleteNote(id: string) {
   return request<unknown>(`/notes/${id}`, { method: 'DELETE' });
 }
 
+/**
+ * listTags — returns a plain string[] from /notes/tags.
+ * Used by autocomplete and tag-filter dropdowns.
+ */
 export function listTags() {
   return request<string[]>('/notes/tags');
+}
+
+/**
+ * listTagsWithCount — returns [{tag, count}] from the dedicated /tags/ router.
+ * Used by TagsPage for the interactive tag cloud with frequency weighting.
+ */
+export function listTagsWithCount() {
+  return request<Array<{ tag: string; count: number }>>('/tags/');
 }
 
 export function listFolders() {
@@ -174,12 +186,20 @@ export function getSimilarNotes(id: string, limit = 6) {
 
 // ── Graph ────────────────────────────────────────────────────────────────────────────
 
+/**
+ * getGraph — hits GET /graph/ (with trailing slash).
+ * This is the correct endpoint returning { nodes, edges }.
+ */
 export function getGraph() {
   return request<{ nodes: unknown[]; edges: unknown[] }>('/graph/');
 }
 
+/**
+ * getFullGraph — alias kept for backwards-compat; redirects to getGraph().
+ * The old path /graph (no slash) was incorrect — use /graph/ instead.
+ */
 export function getFullGraph() {
-  return request<unknown>('/graph');
+  return getGraph();
 }
 
 export function getLightRagGraph() {
@@ -262,12 +282,59 @@ export function triggerVaultSync() {
   return request<unknown>('/vault/sync', { method: 'POST' });
 }
 
+// ── Settings / Provider info ──────────────────────────────────────────────────────────
+
+export interface ProviderInfo {
+  provider: string;
+  model: string;
+  available: boolean;
+  models: string[];
+}
+
+/**
+ * getProviders — fetch AI provider info from the health endpoint.
+ * Returns a ProviderInfo-shaped object. Rejects on network/API error so that
+ * SettingsPage can display its existing "Could not load provider info" error state.
+ */
+export function getProviders(): Promise<ProviderInfo> {
+  return request<ProviderInfo>('/health/providers');
+}
+
+/**
+ * setModel — update the active AI model.
+ */
+export function setModel(model: string): Promise<unknown> {
+  return request<unknown>('/health/providers/model', {
+    method: 'POST',
+    body: JSON.stringify({ model }),
+  });
+}
+
+/**
+ * exportVault — download the vault as a zip or json blob.
+ */
+export function exportVault(format: 'markdown' | 'json'): Promise<Blob> {
+  return fetch(`${BASE}/export/vault?format=${format}`, {
+    headers: authHeaders(),
+  }).then(async (res) => {
+    if (!res.ok) throw new Error(`API ${res.status}`);
+    return res.blob();
+  });
+}
+
+/**
+ * syncObsidian — trigger an Obsidian vault sync.
+ */
+export function syncObsidian(): Promise<void> {
+  return request<void>('/vault/sync/obsidian', { method: 'POST' });
+}
+
 // ── Default export (legacy compat) ───────────────────────────────────────────────
 
 const api = {
   // notes
   listNotes, getNote, createNote, updateNote, deleteNote,
-  listTags, listFolders, listTemplates, getDailyNote,
+  listTags, listTagsWithCount, listFolders, listTemplates, getDailyNote,
   ingestFile, ingestUrl,
   // ai (on api object for legacy callers)
   summarizeNote, critiqueNote, suggestLinks,
@@ -282,6 +349,8 @@ const api = {
   chat, triggerAiAnalysis, generateLinkedNotes, getAiHistory,
   // vault
   triggerVaultSync,
+  // settings
+  getProviders, setModel, exportVault, syncObsidian,
   // util
   setActiveVaultPath, post,
 };

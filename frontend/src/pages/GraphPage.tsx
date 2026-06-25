@@ -50,6 +50,8 @@ export default function GraphPage() {
   } = useGraphStore();
 
   // ── Wikilinks graph ────────────────────────────────────────────────────
+  // NOTE: use api.getGraph() which hits /graph/ (with trailing slash).
+  // api.getFullGraph() hits /graph (no slash) which returns 404/307.
   const {
     data: graphData,
     isLoading: graphLoading,
@@ -57,7 +59,7 @@ export default function GraphPage() {
     error: graphError,
   } = useQuery<GraphData>({
     queryKey: ['graph'],
-    queryFn:  () => api.getFullGraph() as Promise<GraphData>,
+    queryFn:  () => api.getGraph() as Promise<GraphData>,
     retry: false,
   });
 

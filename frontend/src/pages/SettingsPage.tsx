@@ -9,7 +9,7 @@ import {
   XCircle,
   Loader2,
 } from 'lucide-react';
-import api from '../services/api';
+import api, { type ProviderInfo } from '../services/api';
 import { useAppStore, type RagMode } from '../store/useAppStore';
 
 const RAG_MODES: Array<{ value: RagMode; label: string; description: string }> = [
@@ -40,13 +40,6 @@ function SectionHeader({ icon, title, status }: { icon: React.ReactNode; title: 
   );
 }
 
-interface ProviderInfo {
-  provider: string;
-  model: string;
-  available: boolean;
-  models: string[];
-}
-
 export default function SettingsPage() {
   const { ragMode, setRagMode } = useAppStore();
 
@@ -68,8 +61,7 @@ export default function SettingsPage() {
     let mounted = true;
     setProviderLoading(true);
     setProviderError(false);
-    (api as unknown as { getProviders: () => Promise<ProviderInfo> })
-      .getProviders()
+    api.getProviders()
       .then((data) => {
         if (!mounted) return;
         setProviderInfo(data);
@@ -84,7 +76,7 @@ export default function SettingsPage() {
     if (!providerInfo || selectedModel === providerInfo.model) return;
     setSaveState('saving');
     try {
-      await (api as unknown as { setModel: (m: string) => Promise<unknown> }).setModel(selectedModel);
+      await api.setModel(selectedModel);
       setProviderInfo((prev) => prev ? { ...prev, model: selectedModel } : prev);
       setSaveState('saved');
       window.setTimeout(() => setSaveState('idle'), 1400);
@@ -97,7 +89,7 @@ export default function SettingsPage() {
     setExporting(true);
     setExportError('');
     try {
-      const blob = await (api as unknown as { exportVault: (f: string) => Promise<Blob> }).exportVault(exportFormat);
+      const blob = await api.exportVault(exportFormat);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -114,7 +106,7 @@ export default function SettingsPage() {
   const handleSync = async () => {
     setSyncing(true);
     try {
-      await (api as unknown as { syncObsidian: () => Promise<void> }).syncObsidian?.();
+      await api.syncObsidian();
       setSyncStatus('idle');
     } catch {
       setSyncStatus('error');
