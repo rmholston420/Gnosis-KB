@@ -1,82 +1,92 @@
 /**
- * hooks/useNotes.ts — TanStack Query hooks for note data.
+ * useNotes — TanStack Query hooks for note CRUD.
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import api from '../services/api';
-import { getBacklinks } from '../api/notes';
-import type { ListNotesParams } from '../api/notes';
-import type { Note, NoteCreate, NoteUpdate } from '../types';
+import {
+  listNotes, getNote, createNote, updateNote, deleteNote, getDailyNote,
+} from '../services/api';
+import type { Note, NoteCreate, NoteUpdate, NoteListResponse } from '../types';
 
-export const NOTES_KEY = 'notes';
-export const NOTE_KEY = 'note';
-export const BACKLINK_KEY = 'backlinks';
+// Allow NoteCreate/NoteUpdate to satisfy Record<string,unknown> at the call site
+type AnyRecord = Record<string, unknown>;
 
-export function useNotes(params: ListNotesParams = {}) {
-  return useQuery<Note[]>({
-    queryKey: [NOTES_KEY, params],
-    queryFn: () => api.listNotes(params) as Promise<Note[]>,
+export function useNotes(params: Parameters<typeof listNotes>[0] = {}) {
+  return useQuery({
+    queryKey: ['notes', params],
+    queryFn:  () =>
+      listNotes(params).then((res) => (res.items ?? []) as unknown as Note[]),
+    staleTime: 30_000,
   });
 }
 
-export const useNotesList = useNotes;
+export function useNoteList(params: Parameters<typeof listNotes>[0] = {}) {
+  return useQuery({
+    queryKey: ['notes', 'list', params],
+    queryFn:  () =>
+      listNotes(params) as unknown as Promise<NoteListResponse>,
+    staleTime: 30_000,
+  });
+}
 
-export function useNote(id?: string | null) {
-  return useQuery<Note>({
-    queryKey: [NOTE_KEY, id],
-    queryFn: () => api.getNote(id!) as Promise<Note>,
-    enabled: Boolean(id),
+export function useNote(id: string | null) {
+  return useQuery({
+    queryKey: ['notes', id],
+    queryFn:  () => getNote(id!) as unknown as Promise<Note>,
+    enabled:  !!id,
+    staleTime: 30_000,
   });
 }
 
 export function useCreateNote() {
   const qc = useQueryClient();
-  return useMutation<Note, Error, NoteCreate>({
-    mutationFn: (data) => api.createNote(data) as Promise<Note>,
-    onSuccess: () => qc.invalidateQueries({ queryKey: [NOTES_KEY] }),
+  return useMutation({
+    mutationFn: (data: NoteCreate) =>
+      createNote(data as unknown as AnyRecord) as Promise<Note>,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['notes'] }),
   });
 }
 
-export function useUpdateNote(id?: string) {
+export function useUpdateNote() {
   const qc = useQueryClient();
-  return useMutation<Note, Error, NoteUpdate | { id: string; payload: NoteUpdate }>({
-    mutationFn: (data) => {
-      if (id !== undefined) {
-        if ('id' in (data as { id?: string })) {
-          const payload = (data as { payload?: NoteUpdate }).payload ?? {};
-          return api.updateNote(id, payload) as Promise<Note>;
-        }
-        return api.updateNote(id, data as NoteUpdate) as Promise<Note>;
+  return useMutation({
+    mutationFn: ({ id, ...payload }: NoteUpdate & { id: string }) => {
+      if (payload && Object.keys(payload).length > 0) {
+        return updateNote(id, payload as unknown as AnyRecord) as Promise<Note>;
       }
-      const { id: noteId, payload } = data as { id: string; payload: NoteUpdate };
-      return api.updateNote(noteId, payload) as Promise<Note>;
+      return updateNote(id, payload as unknown as AnyRecord) as Promise<Note>;
     },
-    onSuccess: (_note, data) => {
-      const resolvedId = id ?? (data as { id?: string }).id;
-      if (resolvedId) qc.invalidateQueries({ queryKey: [NOTE_KEY, resolvedId] });
-      qc.invalidateQueries({ queryKey: [NOTES_KEY] });
-    },
+    onSuccess: (_data, vars) =>
+      qc.invalidateQueries({ queryKey: ['notes', vars.id] }),
+  });
+}
+
+export function useSaveNote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ noteId, payload }: { noteId: string; payload: NoteUpdate }) =>
+      updateNote(noteId, payload as unknown as AnyRecord) as Promise<Note>,
+    onSuccess: (_data, vars) =>
+      qc.invalidateQueries({ queryKey: ['notes', vars.noteId] }),
   });
 }
 
 export function useDeleteNote() {
   const qc = useQueryClient();
-  return useMutation<void, Error, string>({
-    mutationFn: (id) => api.deleteNote(id) as Promise<void>,
-    onSuccess: () => qc.invalidateQueries({ queryKey: [NOTES_KEY] }),
+  return useMutation({
+    mutationFn: (id: string) => deleteNote(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['notes'] }),
   });
 }
 
-export function useBacklinks(id?: string | null) {
+export function useDailyNote(dateStr: string) {
   return useQuery({
-    queryKey: [BACKLINK_KEY, id],
-    queryFn: () => getBacklinks(id!),
-    enabled: Boolean(id),
+    queryKey: ['notes', 'daily', dateStr],
+    queryFn:  () => getDailyNote(dateStr) as unknown as Promise<Note>,
+    staleTime: 60_000,
   });
 }
 
-export function useDailyNote(dateStr?: string) {
-  return useQuery<Note>({
-    queryKey: ['daily-note', dateStr ?? 'today'],
-    queryFn: () => api.getDailyNote(dateStr) as Promise<Note>,
-  });
+// Named re-export used by NoteEditorPage
+export function listNotes_hook(params: Parameters<typeof listNotes>[0] = {}) {
+  return listNotes(params).then((res) => (res.items ?? []) as unknown as Note[]);
 }

@@ -11,6 +11,10 @@
  *     streamQuery, chat, search, listTemplates are all present
  */
 import { useVaultStore } from '../store/useVaultStore';
+import type { GraphEntitySummary } from '../types';
+
+// Re-export so pages can import from one place
+export type { GraphEntitySummary };
 
 const BASE = (import.meta as any).env?.VITE_API_BASE_URL ?? '/api';
 
@@ -51,7 +55,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-// ─── Notes ────────────────────────────────────────────────────────────────────
+/** Generic POST helper for one-off authenticated calls (e.g. auth endpoints). */
+export function post<T>(path: string, body: unknown): Promise<T> {
+  return request<T>(path, { method: 'POST', body: JSON.stringify(body) });
+}
+
+// ── Notes ─────────────────────────────────────────────────────────────────────────────────
 
 export function listNotes(params: {
   note_type?: string;
@@ -59,8 +68,10 @@ export function listNotes(params: {
   folder?: string;
   status?: string;
   page?: number;
+  page_size?: number;
   limit?: number;
   q?: string;
+  search?: string;
 } = {}) {
   const q = new URLSearchParams();
   Object.entries(params).forEach(([k, v]) => { if (v != null) q.set(k, String(v)); });
@@ -96,7 +107,48 @@ export function listTemplates() {
   return request<unknown[]>('/notes/templates');
 }
 
-// ─── Search ───────────────────────────────────────────────────────────────────
+export function getDailyNote(date: string) {
+  return request<unknown>(`/notes/daily/${date}`);
+}
+
+export function ingestFile(file: File): Promise<unknown> {
+  const fd = new FormData();
+  fd.append('file', file);
+  return fetch(`${BASE}/notes/ingest/file`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: fd,
+  }).then(async (res) => {
+    if (!res.ok) throw new Error(`API ${res.status}`);
+    return res.json();
+  });
+}
+
+export function ingestUrl(url: string, _unused?: unknown) {
+  return request<unknown>('/notes/ingest/url', {
+    method: 'POST',
+    body: JSON.stringify({ url }),
+  });
+}
+
+// ── AI (convenience wrappers around api/ai standalone functions) ─────────────────
+// These live here so legacy code calling `api.summarizeNote` etc. still works.
+
+export function summarizeNote(id: string) {
+  return request<{ summary: string }>(`/ai/summarize/${id}`, { method: 'POST' });
+}
+
+export function critiqueNote(id: string) {
+  return request<unknown>(`/ai/critique/${id}`, { method: 'POST' });
+}
+
+export function suggestLinks(id: string) {
+  return request<{ suggestions: Array<{ title: string; reason: string }> }>(
+    `/ai/suggest-links/${id}`, { method: 'POST' },
+  );
+}
+
+// ── Search ──────────────────────────────────────────────────────────────────────────────
 
 export function search(
   q: string,
@@ -120,7 +172,7 @@ export function getSimilarNotes(id: string, limit = 6) {
   return request<unknown[]>(`/notes/${id}/similar?limit=${limit}`);
 }
 
-// ─── Graph ────────────────────────────────────────────────────────────────────
+// ── Graph ────────────────────────────────────────────────────────────────────────────
 
 export function getGraph() {
   return request<{ nodes: unknown[]; edges: unknown[] }>('/graph/');
@@ -142,7 +194,19 @@ export function getGraphNode(id: string) {
   return request<unknown>(`/graph/nodes/${id}`);
 }
 
-// ─── LightRAG ─────────────────────────────────────────────────────────────────
+export function getNeighborhood(id: string) {
+  return request<unknown>(`/graph/neighborhood/${id}`);
+}
+
+export function getGraphStats() {
+  return request<unknown>('/graph/stats');
+}
+
+export function getClusters() {
+  return request<unknown>('/graph/clusters');
+}
+
+// ── LightRAG ──────────────────────────────────────────────────────────────────────────
 
 export function ingestNote(id: string) {
   return request<unknown>(`/lightrag/ingest/${id}`, { method: 'POST' });
@@ -152,13 +216,6 @@ export function getLightRagNode(id: string) {
   return request<unknown>(`/lightrag/node/${id}`, { method: 'GET' });
 }
 
-/**
- * streamQuery — opens an EventSource SSE stream.
- * @param q       query string
- * @param onChunk called for each data token
- * @param onDone  called when '[DONE]' sentinel received or stream closes
- * @returns close function
- */
 export function streamQuery(
   q: string,
   onChunk: (token: string) => void,
@@ -167,18 +224,14 @@ export function streamQuery(
   const url = `${BASE}/lightrag/stream?q=${encodeURIComponent(q)}`;
   const es = new EventSource(url);
   es.onmessage = (evt: MessageEvent) => {
-    if (evt.data === '[DONE]') {
-      es.close();
-      onDone();
-    } else {
-      onChunk(evt.data);
-    }
+    if (evt.data === '[DONE]') { es.close(); onDone(); }
+    else { onChunk(evt.data); }
   };
   es.onerror = () => { es.close(); onDone(); };
   return () => es.close();
 }
 
-// ─── AI ───────────────────────────────────────────────────────────────────────
+// ── AI ───────────────────────────────────────────────────────────────────────────────────
 
 export function chat(
   message: string,
@@ -203,22 +256,26 @@ export function getAiHistory(sessionId: string) {
   return request<unknown[]>(`/ai/history/${sessionId}`);
 }
 
-// ─── Vault ────────────────────────────────────────────────────────────────────
+// ── Vault ─────────────────────────────────────────────────────────────────────────────
 
 export function triggerVaultSync() {
   return request<unknown>('/vault/sync', { method: 'POST' });
 }
 
-// ─── Default export (legacy compat) ───────────────────────────────────────────
+// ── Default export (legacy compat) ───────────────────────────────────────────────
 
 const api = {
   // notes
   listNotes, getNote, createNote, updateNote, deleteNote,
-  listTags, listFolders, listTemplates,
+  listTags, listFolders, listTemplates, getDailyNote,
+  ingestFile, ingestUrl,
+  // ai (on api object for legacy callers)
+  summarizeNote, critiqueNote, suggestLinks,
   // search
   search, semanticSearch, hybridSearch, getSimilarNotes,
   // graph
   getGraph, getFullGraph, getLightRagGraph, getGraphEntities, getGraphNode,
+  getNeighborhood, getGraphStats, getClusters,
   // lightrag
   ingestNote, getLightRagNode, streamQuery,
   // ai
@@ -226,7 +283,7 @@ const api = {
   // vault
   triggerVaultSync,
   // util
-  setActiveVaultPath,
+  setActiveVaultPath, post,
 };
 
 export default api;
