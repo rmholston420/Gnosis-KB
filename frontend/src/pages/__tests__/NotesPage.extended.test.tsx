@@ -7,6 +7,7 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const mockListNotes   = vi.fn();
 const mockCreateNote  = vi.fn();
@@ -54,11 +55,19 @@ const NOTES = [
   },
 ];
 
+function makeQueryClient() {
+  return new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+}
+
 function wrap() {
   return render(
-    <MemoryRouter>
-      <NotesPage />
-    </MemoryRouter>
+    <QueryClientProvider client={makeQueryClient()}>
+      <MemoryRouter>
+        <NotesPage />
+      </MemoryRouter>
+    </QueryClientProvider>
   );
 }
 
