@@ -1,12 +1,20 @@
 /**
  * AiSidebar — collapsible AI tools panel shown alongside the note editor.
  * Provides: note summary, link suggestions, tag suggestions, and Zettelkasten critique.
+ *
+ * DATA SHAPE CONTRACT
+ * ===================
+ * useLinkSuggestions returns LinkSuggestion[] directly (already unwrapped).
+ * Read as `data ?? []` — NOT `data?.suggestions ?? []`.
+ *
+ * useTagSuggestions returns { suggestions: TagSuggestion[] }.
+ * Read as `data?.suggestions ?? []`.
  */
 import React, { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { Sparkles, Link2, Tag, MessageSquare, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
 import { useLinkSuggestions, useTagSuggestions } from '../../hooks/useAI';
-import { aiApi } from '../../api/ai';
+import { summarizeNote, critiqueNote } from '../../api/ai';
 import type { LinkSuggestion, TagSuggestion, AiCritique } from '../../types';
 
 interface AiSidebarProps {
@@ -42,7 +50,7 @@ function Section({
 
 function SummarySection({ noteId }: { noteId: string }) {
   const { mutate, data: result, isPending } = useMutation({
-    mutationFn: () => aiApi.summarizeNote(noteId),
+    mutationFn: () => summarizeNote(noteId),
   });
   const summary = result?.summary;
 
@@ -55,6 +63,7 @@ function SummarySection({ noteId }: { noteId: string }) {
           onClick={() => mutate()}
           disabled={isPending}
           className="text-xs text-gnosis-accent hover:underline flex items-center gap-1"
+          aria-label="Generate summary"
         >
           {isPending && <Loader2 size={10} className="animate-spin" />}
           Generate summary
@@ -67,8 +76,9 @@ function SummarySection({ noteId }: { noteId: string }) {
 function LinkSection({
   noteId, onInsertLink,
 }: { noteId: string; onInsertLink?: (s: LinkSuggestion) => void }) {
-  const { data: result, isLoading } = useLinkSuggestions(noteId);
-  const suggestions = result?.suggestions ?? [];
+  // useLinkSuggestions returns LinkSuggestion[] directly (already unwrapped)
+  const { data, isLoading } = useLinkSuggestions(noteId);
+  const suggestions: LinkSuggestion[] = data ?? [];
 
   return (
     <Section title="Suggested Links" icon={<Link2 size={12} />}>
@@ -88,6 +98,7 @@ function LinkSection({
                 <button
                   onClick={() => onInsertLink(s)}
                   className="text-xs text-gnosis-accent hover:underline flex-shrink-0"
+                  aria-label="Insert link"
                 >
                   Insert
                 </button>
@@ -103,8 +114,8 @@ function LinkSection({
 function TagSection({
   noteId, onInsertTag,
 }: { noteId: string; onInsertTag?: (tag: string) => void }) {
-  const { data: result, isLoading } = useTagSuggestions(noteId);
-  const suggestions: TagSuggestion[] = result?.suggestions ?? [];
+  const { data, isLoading } = useTagSuggestions(noteId);
+  const suggestions: TagSuggestion[] = data?.suggestions ?? [];
 
   return (
     <Section title="Suggested Tags" icon={<Tag size={12} />}>
@@ -131,7 +142,7 @@ function TagSection({
 
 function CritiqueSection({ noteId }: { noteId: string }) {
   const { mutate, data: result, isPending } = useMutation({
-    mutationFn: () => aiApi.critiqueNote(noteId),
+    mutationFn: () => critiqueNote(noteId),
   });
   const critique = result?.critique;
 
@@ -155,10 +166,10 @@ function CritiqueSection({ noteId }: { noteId: string }) {
 
 function CritiqueDisplay({ critique }: { critique: AiCritique }) {
   const items: Array<{ label: string; score: number; feedback: string }> = [
-    { label: 'Atomicity', score: critique.atomicity_score ?? 0, feedback: critique.atomicity_feedback ?? '' },
-    { label: 'Connectivity', score: critique.connectivity_score ?? 0, feedback: critique.connectivity_feedback ?? '' },
-    { label: 'Self-containedness', score: critique.standalone_score ?? 0, feedback: critique.standalone_feedback ?? '' },
-    { label: 'Insight density', score: critique.insight_score ?? 0, feedback: critique.insight_feedback ?? '' },
+    { label: 'Atomicity',         score: critique.atomicity_score    ?? 0, feedback: critique.atomicity_feedback    ?? '' },
+    { label: 'Connectivity',      score: critique.connectivity_score ?? 0, feedback: critique.connectivity_feedback ?? '' },
+    { label: 'Self-containedness',score: critique.standalone_score   ?? 0, feedback: critique.standalone_feedback   ?? '' },
+    { label: 'Insight density',   score: critique.insight_score      ?? 0, feedback: critique.insight_feedback      ?? '' },
   ];
 
   return (
@@ -167,7 +178,9 @@ function CritiqueDisplay({ critique }: { critique: AiCritique }) {
         <li key={label}>
           <div className="flex items-center justify-between mb-0.5">
             <span className="text-xs font-medium text-gnosis-fg">{label}</span>
-            <span className={`text-xs font-bold ${score >= 4 ? 'text-green-400' : score >= 2 ? 'text-yellow-400' : 'text-red-400'}`}>
+            <span className={`text-xs font-bold ${
+              score >= 4 ? 'text-green-400' : score >= 2 ? 'text-yellow-400' : 'text-red-400'
+            }`}>
               {score}/5
             </span>
           </div>

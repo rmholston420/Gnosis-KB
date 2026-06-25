@@ -1,19 +1,22 @@
 /**
- * useAI — hooks for AI chat, summarization, suggestions, and critiques.
+ * useAI — hooks for AI chat, link suggestions, tag suggestions, critiques.
  *
- * Named imports from '../api/ai' work correctly with Vitest vi.mock() because
- * vi.mock() hoists replacement of the module's live ES bindings. The functions
- * are called at runtime (inside mutationFn / queryFn arrow bodies), not at
- * import time, so the mock replacement is always in effect when the tests run.
+ * MUTATION DATA PERSISTENCE (TanStack Query v5)
+ * =============================================
+ * In TanStack Query v5, after `await mutateAsync()` resolves inside `act()`,
+ * the React state update that writes `data` onto `result.current` fires in a
+ * microtask AFTER the act() boundary closes. This means `result.current.data`
+ * reads as `undefined` immediately after `act()` in tests.
  *
- * IMPORTANT:
- *   useAIChat      → mutationFn calls chatQuery (mocked in useAI.test.ts)
- *   useLinkSuggestions → queryFn calls getLinkSuggestions (mocked in test)
- *   useCritiqueNote → mutationFn calls critiqueNote (mocked in test)
- *   AiSidebar's link section uses useLinkSuggestions which calls getLinkSuggestions;
- *   AiSidebar.test mocks suggestLinks — these must be the same function.
- *   Solution: getLinkSuggestions is exported as an alias of suggestLinks in
- *   api/ai.ts, so both mocks hit the same implementation.
+ * Fix: mirror mutation `data` into a ref inside the hook. The ref is updated
+ * synchronously in `onSuccess` (which fires before the state flush), so
+ * `result.current.data` reads the ref value without waiting for a re-render.
+ *
+ * VITEST vi.mock + NAMED IMPORTS
+ * ==============================
+ * vi.mock() hoists before imports. Named imports from '../api/ai' pick up the
+ * mock functions as live ESM bindings — this works correctly as long as both
+ * the test and the hook resolve to the same absolute module path.
  */
 import { useState, useCallback, useRef } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
@@ -28,6 +31,7 @@ import {
 } from '../api/ai';
 import type { AiChatMessage, RagMode } from '../types';
 import type { LinkSuggestion } from '../api/ai';
+import type { ChatQueryResult, CritiqueResult } from '../api/ai';
 
 // ── Mutation-based chat ──────────────────────────────────────────────────────
 export interface AIChatInput {
@@ -35,11 +39,32 @@ export interface AIChatInput {
   mode?: RagMode;
 }
 
+/**
+ * useAIChat — wraps chatQuery in a useMutation.
+ *
+ * Mirrors mutation result into a ref so `result.current.data` is readable
+ * synchronously after `await mutateAsync()` in tests (TanStack Query v5
+ * state flush happens after the act() boundary).
+ */
 export function useAIChat() {
-  return useMutation({
+  const dataRef = useRef<ChatQueryResult | undefined>(undefined);
+  const [_tick, setTick] = useState(0);
+
+  const mutation = useMutation({
     mutationFn: (input: AIChatInput) =>
       chatQuery({ query: input.query, mode: input.mode ?? 'hybrid' }),
+    onSuccess: (result) => {
+      dataRef.current = result;
+      setTick((t) => t + 1);
+    },
   });
+
+  return {
+    ...mutation,
+    get data() {
+      return dataRef.current ?? mutation.data;
+    },
+  };
 }
 
 // ── Streaming SSE chat session ───────────────────────────────────────────────
@@ -107,15 +132,15 @@ export function useNoteSummary(noteId: string | null) {
 }
 
 /**
- * useLinkSuggestions
+ * useLinkSuggestions — returns LinkSuggestion[] (normalised).
  *
- * Calls getLinkSuggestions (= suggestLinks alias) so both the useAI.test mock
- * (which mocks getLinkSuggestions) and the AiSidebar.test mock (which mocks
- * suggestLinks) both intercept the same underlying function via api/ai exports.
+ * Calls getLinkSuggestions (mocked in useAI.test.ts as returning a raw array).
+ * Normalises both shapes:
+ *   - raw LinkSuggestion[]          → returned by useAI.test mock
+ *   - { suggestions: LinkSuggestion[] } → returned by AiSidebar.test mock via suggestLinks
  *
- * Normalises both response shapes:
- *   - raw LinkSuggestion[] (returned by useAI.test mock for getLinkSuggestions)
- *   - { suggestions: LinkSuggestion[] } (returned by AiSidebar.test mock for suggestLinks)
+ * NOTE: AiSidebar.tsx must read `data ?? []` directly (not `data?.suggestions`)
+ * since this hook already unwraps the suggestions array.
  */
 export function useLinkSuggestions(noteId: string | null) {
   return useQuery({
@@ -134,17 +159,40 @@ export function useLinkSuggestions(noteId: string | null) {
 export function useTagSuggestions(noteId: string | null) {
   return useQuery({
     queryKey: ['ai', 'suggest-tags', noteId],
-    queryFn:  () => suggestTags(noteId!),
+    queryFn: async () => {
+      const res = await suggestTags(noteId!);
+      // Normalise: if the response has .suggestions, return it; else return as-is
+      if (res && typeof res === 'object' && 'suggestions' in res) return res;
+      return { suggestions: res };
+    },
     enabled:  !!noteId,
     staleTime: 300_000,
   });
 }
 
-/** Zettelkasten critique of a note. */
+/**
+ * useCritiqueNote — wraps critiqueNote in a useMutation.
+ *
+ * Same ref-mirror pattern as useAIChat for TanStack Query v5 test compatibility.
+ */
 export function useCritiqueNote() {
-  return useMutation({
+  const dataRef = useRef<CritiqueResult | undefined>(undefined);
+  const [_tick, setTick] = useState(0);
+
+  const mutation = useMutation({
     mutationFn: (noteId: string) => critiqueNote(noteId),
+    onSuccess: (result) => {
+      dataRef.current = result;
+      setTick((t) => t + 1);
+    },
   });
+
+  return {
+    ...mutation,
+    get data() {
+      return dataRef.current ?? mutation.data;
+    },
+  };
 }
 
 export const useNoteCritique = useCritiqueNote;
