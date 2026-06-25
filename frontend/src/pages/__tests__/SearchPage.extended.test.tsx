@@ -60,7 +60,7 @@ function submitSearch(value: string) {
   fireEvent.submit(input.closest('form')!);
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach((): void => { vi.restoreAllMocks(); });
 
 describe('SearchPage — blank query early return', () => {
   it('calls the search hook with empty string on mount', () => {

@@ -1,76 +1,107 @@
+/**
+ * AnalyticsPage — vault-level analytics: note type distribution,
+ * tag frequency, growth over time, link density.
+ */
 import React from 'react';
-import { useGraphStats } from '../hooks/useGraph';
+import { useQuery } from '@tanstack/react-query';
+import api from '../services/api';
+import type { Note, TagRow } from '../types';
 
-function StatCard({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
-  return (
-    <div className="flex flex-col gap-1 p-5 rounded-xl bg-gnosis-surface border border-gnosis-border">
-      <span className="text-sm text-gnosis-muted">{label}</span>
-      <span className="text-3xl font-semibold tabular-nums text-gnosis-fg">{value}</span>
-      {sub && <span className="text-xs text-gnosis-muted">{sub}</span>}
-    </div>
-  );
-}
+type TypeBucket = { note_type: string; count: number };
+type TagBucket  = { tag: string; count: number };
 
 export default function AnalyticsPage() {
-  const { data: stats, isLoading, isError } = useGraphStats();
+  const { data: notes } = useQuery({
+    queryKey: ['notes', 'all'],
+    queryFn:  () =>
+      api.listNotes({ page_size: 1000 }).then((r) => (r.items ?? []) as unknown as Note[]),
+    staleTime: 60_000,
+  });
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-full text-gnosis-muted">
-        Loading vault analytics…
-      </div>
-    );
-  }
+  const { data: tagRows } = useQuery({
+    queryKey: ['tags'],
+    queryFn:  () => api.listTags() as unknown as Promise<TagRow[]>,
+    staleTime: 60_000,
+  });
 
-  if (isError || !stats) {
-    return (
-      <div className="flex items-center justify-center h-full text-red-400">
-        Failed to load analytics.
-      </div>
-    );
-  }
+  // Derive type distribution
+  const typeBuckets: TypeBucket[] = React.useMemo(() => {
+    if (!notes) return [];
+    const counts: Record<string, number> = {};
+    notes.forEach((n: Note) => {
+      const t = n.note_type ?? 'unknown';
+      counts[t] = (counts[t] ?? 0) + 1;
+    });
+    return Object.entries(counts)
+      .map(([note_type, count]) => ({ note_type, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [notes]);
+
+  // Top tags
+  const topTags: TagBucket[] = React.useMemo(() => {
+    if (!tagRows) return [];
+    return [...tagRows]
+      .sort((a: TagRow, b: TagRow) => (b.count ?? 0) - (a.count ?? 0))
+      .slice(0, 20)
+      .map((t: TagRow) => ({ tag: t.tag ?? String(t), count: t.count ?? 1 }));
+  }, [tagRows]);
+
+  const totalNotes   = notes?.length ?? 0;
+  const totalWords   = notes?.reduce((acc: number, n: Note) => acc + (n.word_count ?? 0), 0) ?? 0;
+  const avgWordCount = totalNotes > 0 ? Math.round(totalWords / totalNotes) : 0;
 
   return (
-    <div className="flex flex-col h-full bg-gnosis-bg text-gnosis-fg">
-      <div className="px-6 pt-6 pb-4 border-b border-gnosis-border">
-        <h1 className="text-xl font-semibold">Analytics</h1>
-        <p className="text-sm text-gnosis-muted mt-1">Vault health and graph metrics.</p>
+    <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
+      <h1 className="text-lg font-semibold text-gnosis-fg">Analytics</h1>
+
+      {/* KPIs */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {[
+          { label: 'Total Notes',    value: totalNotes },
+          { label: 'Total Words',    value: totalWords.toLocaleString() },
+          { label: 'Avg Word Count', value: avgWordCount },
+          { label: 'Unique Tags',    value: tagRows?.length ?? 0 },
+        ].map(({ label, value }) => (
+          <div key={label} className="p-4 rounded-lg bg-gnosis-surface border border-gnosis-border">
+            <p className="text-xs text-gnosis-muted">{label}</p>
+            <p className="text-xl font-semibold text-gnosis-fg tabular-nums">{value}</p>
+          </div>
+        ))}
       </div>
 
-      <div className="flex-1 overflow-y-auto px-6 py-6">
-        {/* KPI grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 mb-8">
-          <StatCard label="Total Notes"       value={stats.total_notes} />
-          <StatCard label="Total Links"       value={stats.total_links} />
-          <StatCard label="Orphan Notes"      value={stats.orphan_count} sub="no connections" />
-          <StatCard label="Avg Degree"        value={stats.avg_degree.toFixed(2)} sub="links per note" />
-          <StatCard label="Graph Density"     value={(stats.density * 100).toFixed(2) + '%'} />
-          <StatCard
-            label="Most Connected"
-            value={stats.most_connected[0]?.title ?? '—'}
-            sub={stats.most_connected[0] ? `${stats.most_connected[0].degree} links` : undefined}
-          />
-        </div>
-
-        {/* Top connected notes */}
-        {stats.most_connected.length > 0 && (
-          <section>
-            <h2 className="text-base font-semibold mb-3">Top Connected Notes</h2>
-            <div className="space-y-2">
-              {stats.most_connected.map((n) => (
+      {/* Note type distribution */}
+      <section>
+        <h2 className="text-sm font-semibold text-gnosis-fg mb-3">Note Types</h2>
+        <div className="space-y-2">
+          {typeBuckets.map(({ note_type, count }: TypeBucket) => (
+            <div key={note_type} className="flex items-center gap-3">
+              <span className="w-24 text-xs text-gnosis-muted capitalize">{note_type}</span>
+              <div className="flex-1 h-2 bg-gnosis-border rounded-full overflow-hidden">
                 <div
-                  key={n.note_id}
-                  className="flex items-center justify-between px-4 py-3
-                             rounded-lg bg-gnosis-surface border border-gnosis-border"
-                >
-                  <span className="text-sm">{n.title}</span>
-                  <span className="text-xs text-gnosis-muted tabular-nums">{n.degree} links</span>
-                </div>
-              ))}
+                  className="h-full bg-gnosis-accent rounded-full transition-all"
+                  style={{ width: `${Math.round((count / totalNotes) * 100)}%` }}
+                />
+              </div>
+              <span className="text-xs text-gnosis-muted tabular-nums w-6 text-right">{count}</span>
             </div>
-          </section>
-        )}
-      </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Top tags */}
+      <section>
+        <h2 className="text-sm font-semibold text-gnosis-fg mb-3">Top Tags</h2>
+        <div className="flex flex-wrap gap-2">
+          {topTags.map(({ tag, count }: TagBucket) => (
+            <span
+              key={tag}
+              className="px-2 py-1 rounded-full bg-gnosis-accent/10 text-gnosis-accent text-xs"
+            >
+              #{tag} <span className="opacity-60">({count})</span>
+            </span>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }

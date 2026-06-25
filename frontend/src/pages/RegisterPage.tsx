@@ -7,7 +7,8 @@
  */
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import api from '../services/api';
+
+const BASE = (import.meta as any).env?.VITE_API_BASE_URL ?? '/api';
 
 export default function RegisterPage() {
   const navigate = useNavigate();
@@ -28,17 +29,20 @@ export default function RegisterPage() {
 
     setLoading(true);
     try {
-      const res = await api.post<{ access_token: string }>('/auth/register', {
-        email,
-        password,
+      const res = await fetch(`${BASE}/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
       });
-      localStorage.setItem('gnosis_token', res.data.access_token);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { detail?: string };
+        throw new Error(body.detail ?? 'Registration failed. Please try again.');
+      }
+      const data = await res.json() as { access_token: string };
+      localStorage.setItem('gnosis_token', data.access_token);
       navigate('/', { replace: true });
     } catch (err: unknown) {
-      const msg =
-        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
-        'Registration failed. Please try again.';
-      setError(msg);
+      setError(err instanceof Error ? err.message : 'Registration failed. Please try again.');
     } finally {
       setLoading(false);
     }
