@@ -1,12 +1,5 @@
 /**
  * WikilinkAutocomplete — floating autocomplete popup for [[wikilink]] syntax.
- *
- * Also exports useWikilinkDetector — a hook that monitors a textarea ref
- * for [[ patterns and returns the current query string + an insertWikilink helper.
- *
- * anchorRect is optional — when omitted the popup falls back to a fixed
- * position near the top-left of the viewport so callers that do not track
- * cursor position (e.g. NoteEditorPage simple mode) still work.
  */
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import type { Dispatch, SetStateAction, RefObject } from 'react';
@@ -15,24 +8,20 @@ import api from '../../services/api';
 import type { Note } from '../../types';
 
 export interface WikilinkAutocompleteProps {
-  query:       string;
-  /** Optional — when provided the popup anchors below the cursor rect. */
+  query: string;
   anchorRect?: DOMRect | null;
-  onSelect:    (title: string) => void;
-  onClose:     () => void;
+  onSelect: (title: string) => void;
+  onClose: () => void;
 }
 
-export function WikilinkAutocomplete({
-  query, anchorRect, onSelect, onClose,
-}: WikilinkAutocompleteProps) {
+export function WikilinkAutocomplete({ query, anchorRect, onSelect, onClose }: WikilinkAutocompleteProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   const { data: results } = useQuery({
     queryKey: ['wikilink-autocomplete', query],
-    queryFn:  () =>
-      api.listNotes({ q: query, limit: 8 })
-        .then((res) => (res.items ?? []) as unknown as Note[]),
-    enabled:  query.trim().length > 0,
+    queryFn: () =>
+      api.listNotes({ q: query, limit: 8 }).then((res) => (res.items ?? []) as unknown as Note[]),
+    enabled: query.trim().length > 0,
     staleTime: 10_000,
   });
 
@@ -54,13 +43,13 @@ export function WikilinkAutocomplete({
     return () => document.removeEventListener('mousedown', handleClick);
   }, [onClose]);
 
-  if (!results || results.length === 0) return null;
+  if (!anchorRect || !results || results.length === 0) return null;
 
   const style: React.CSSProperties = {
     position: 'fixed',
-    top:      anchorRect ? anchorRect.bottom + 4 : 96,
-    left:     anchorRect ? anchorRect.left      : 96,
-    zIndex:   9999,
+    top: anchorRect.bottom + 4,
+    left: anchorRect.left,
+    zIndex: 9999,
   };
 
   return (
@@ -77,9 +66,7 @@ export function WikilinkAutocomplete({
           className="w-full text-left px-3 py-2 text-xs text-gnosis-fg hover:bg-gnosis-border transition-colors"
         >
           <span className="font-medium">{note.title}</span>
-          {note.folder && (
-            <span className="ml-2 text-gnosis-muted">{note.folder}</span>
-          )}
+          {note.folder && <span className="ml-2 text-gnosis-muted">{note.folder}</span>}
         </button>
       ))}
     </div>
@@ -88,12 +75,9 @@ export function WikilinkAutocomplete({
 
 export default WikilinkAutocomplete;
 
-// ── useWikilinkDetector ───────────────────────────────────────────────────────
-
 export interface WikilinkDetectorResult {
-  wikilinkQuery:  string;
-  /** Always null in the current implementation — reserved for cursor-tracking. */
-  anchorRect:     DOMRect | null;
+  wikilinkQuery: string | null;
+  anchorRect: DOMRect | null;
   insertWikilink: (title: string) => void;
 }
 
@@ -102,7 +86,7 @@ export function useWikilinkDetector(
   value: string,
   setValue: Dispatch<SetStateAction<string>>,
 ): WikilinkDetectorResult {
-  const [wikilinkQuery, setWikilinkQuery] = useState('');
+  const [wikilinkQuery, setWikilinkQuery] = useState<string | null>(null);
 
   useEffect(() => {
     const el = ref.current;
@@ -113,24 +97,24 @@ export function useWikilinkDetector(
       const pos = textarea.selectionStart ?? value.length;
       const before = value.slice(0, pos);
       const match = before.match(/\[\[([^\]]*)$/);
-      setWikilinkQuery(match ? match[1] : '');
+      setWikilinkQuery(match ? match[1] : null);
     }
 
     el.addEventListener('input', handleInput as EventListener);
-    el.addEventListener('keyup',  handleInput as EventListener);
+    el.addEventListener('keyup', handleInput as EventListener);
     return () => {
       el.removeEventListener('input', handleInput as EventListener);
-      el.removeEventListener('keyup',  handleInput as EventListener);
+      el.removeEventListener('keyup', handleInput as EventListener);
     };
   }, [ref, value]);
 
   const insertWikilink = useCallback((title: string) => {
     setValue((prev) => {
       const match = prev.match(/([\s\S]*)\[\[([^\]]*)$/);
-      if (!match) return prev + `[[${title}]]`;
-      return match[1] + `[[${title}]]`;
+      if (!match) return `${prev}[[${title}]]`;
+      return `${match[1]}[[${title}]]`;
     });
-    setWikilinkQuery('');
+    setWikilinkQuery(null);
   }, [setValue]);
 
   return { wikilinkQuery, anchorRect: null, insertWikilink };

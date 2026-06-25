@@ -2,10 +2,9 @@
  * NoteCard — compact note list item / search result card.
  */
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import type { Note } from '../types';
 import { relativeTime } from '../lib/dateUtils';
-import { TagBadge } from './shared/TagBadge';
 
 const NOTE_TYPE_COLORS: Record<string, string> = {
   permanent:  'bg-blue-500/15 text-blue-700 dark:text-blue-300',
@@ -20,31 +19,41 @@ const NOTE_TYPE_COLORS: Record<string, string> = {
 };
 
 interface Props {
-  note:      Note;
-  compact?:  boolean;
-  onClick?:  (note: Note) => void;
+  note: Note;
+  compact?: boolean;
+  onClick?: (note: Note) => void;
   selected?: boolean;
+  active?: boolean;
 }
 
-export function NoteCard({ note, compact = false, onClick, selected = false }: Props) {
-  const typeClass =
-    NOTE_TYPE_COLORS[note.note_type ?? 'default'] ?? NOTE_TYPE_COLORS['default'];
+export function NoteCard({ note, compact = false, onClick, selected = false, active = false }: Props) {
+  const navigate = useNavigate();
+  const typeClass = NOTE_TYPE_COLORS[note.note_type ?? 'default'] ?? NOTE_TYPE_COLORS.default;
+  const isActive = active || selected;
+  const tagText = note.tags?.slice(0, 2).map((t) => `#${t}`).join(' ') ?? '';
+  const noteId = note.note_id ?? (note as Note & { id?: string }).id;
 
-  const inner = (
+  const handleOpen = () => {
+    if (onClick) {
+      onClick(note);
+      return;
+    }
+    if (noteId) navigate(`/notes/${noteId}`);
+  };
+
+  return (
     <div
       className={[
         'rounded-lg border transition-colors cursor-pointer',
-        'bg-gnosis-surface border-gnosis-border',
-        'hover:bg-gnosis-hover',
-        selected ? 'ring-2 ring-gnosis-accent' : '',
+        'bg-gnosis-surface hover:bg-gnosis-hover',
+        isActive ? 'border-accent-blue' : 'border-border-subtle',
         compact ? 'p-3' : 'p-4',
       ].join(' ')}
-      onClick={() => onClick?.(note)}
+      onClick={handleOpen}
       role="button"
       tabIndex={0}
-      onKeyDown={(e) => e.key === 'Enter' && onClick?.(note)}
+      onKeyDown={(e) => e.key === 'Enter' && handleOpen()}
     >
-      {/* Header row */}
       <div className="flex items-start justify-between gap-2 mb-1">
         <h3 className={['font-medium text-gnosis-fg line-clamp-1', compact ? 'text-sm' : 'text-base'].join(' ')}>
           {note.title}
@@ -56,18 +65,19 @@ export function NoteCard({ note, compact = false, onClick, selected = false }: P
         )}
       </div>
 
-      {/* Body excerpt */}
       {!compact && note.body && (
         <p className="text-sm text-gnosis-muted line-clamp-2 mb-2">
           {note.body.replace(/^---[\s\S]*?---\n?/, '').trim().slice(0, 200)}
         </p>
       )}
 
-      {/* Tags + timestamp */}
       <div className="flex items-center gap-2 flex-wrap mt-1">
-        {note.tags?.slice(0, 3).map((t) => (
-          <TagBadge key={t} tag={t} />
-        ))}
+        {typeof note.word_count === 'number' && (
+          <span className="text-xs text-gnosis-muted shrink-0">{note.word_count}w</span>
+        )}
+        {tagText && (
+          <span className="text-xs text-gnosis-muted">{tagText}</span>
+        )}
         {note.updated_at && (
           <span className="ml-auto text-xs text-gnosis-muted shrink-0">
             {relativeTime(note.updated_at)}
@@ -76,12 +86,6 @@ export function NoteCard({ note, compact = false, onClick, selected = false }: P
       </div>
     </div>
   );
-
-  // Wrap in a Link when no onClick is provided
-  if (!onClick) {
-    return <Link to={`/notes/${note.note_id}`}>{inner}</Link>;
-  }
-  return inner;
 }
 
 export default NoteCard;

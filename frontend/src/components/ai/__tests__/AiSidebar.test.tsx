@@ -1,12 +1,5 @@
 /**
  * AiSidebar.test.tsx
- *
- * The AiSidebar uses collapsible <Section> panels, not a tab-bar.
- * Each section header button has aria-expanded.  The LinkSection uses
- * useLinkSuggestions which imports `suggestLinks` directly from api/ai —
- * not via the aiApi namespace object — so we mock the whole module.
- *
- * onInsertLink receives the full LinkSuggestion object.
  */
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
@@ -22,30 +15,25 @@ const linkFixture: LinkSuggestResult = {
   ],
 };
 
-// Mock the entire api/ai module so both the bare function imports used by
-// hooks/useAI AND the aiApi namespace object are intercepted.
-const mockSuggestLinks    = vi.fn();
-const mockSuggestTags     = vi.fn();
-const mockSummarizeNote   = vi.fn();
-const mockCritiqueNote    = vi.fn();
-const mockOrphanAudit     = vi.fn();
-const mockStreamingChatUrl = vi.fn(() => '');
+const mockSuggestLinks = vi.fn();
+const mockSuggestTags = vi.fn();
+const mockSummarizeNote = vi.fn();
+const mockCritiqueNote = vi.fn();
+const mockOrphanAudit = vi.fn();
 
 vi.mock('../../../api/ai', () => ({
-  suggestLinks:      (...a: unknown[]) => mockSuggestLinks(...a),
-  suggestTags:       (...a: unknown[]) => mockSuggestTags(...a),
-  summarizeNote:     (...a: unknown[]) => mockSummarizeNote(...a),
-  critiqueNote:      (...a: unknown[]) => mockCritiqueNote(...a),
-  orphanAudit:       (...a: unknown[]) => mockOrphanAudit(...a),
-  // Use mockStreamingChatUrl directly — avoids TS2556 spread-on-unknown[] error
-  streamingChatUrl:  mockStreamingChatUrl,
-  chat:              vi.fn(),
-  // aiApi namespace used by AiSidebar's SummarySection / CritiqueSection
+  suggestLinks: (...a: unknown[]) => mockSuggestLinks(...a),
+  suggestTags: (...a: unknown[]) => mockSuggestTags(...a),
+  summarizeNote: (...a: unknown[]) => mockSummarizeNote(...a),
+  critiqueNote: (...a: unknown[]) => mockCritiqueNote(...a),
+  orphanAudit: (...a: unknown[]) => mockOrphanAudit(...a),
+  streamingChatUrl: vi.fn(() => ''),
+  chat: vi.fn(),
   aiApi: {
-    suggestLinks:  (...a: unknown[]) => mockSuggestLinks(...a),
-    suggestTags:   (...a: unknown[]) => mockSuggestTags(...a),
+    suggestLinks: (...a: unknown[]) => mockSuggestLinks(...a),
+    suggestTags: (...a: unknown[]) => mockSuggestTags(...a),
     summarizeNote: (...a: unknown[]) => mockSummarizeNote(...a),
-    critiqueNote:  (...a: unknown[]) => mockCritiqueNote(...a),
+    critiqueNote: (...a: unknown[]) => mockCritiqueNote(...a),
   },
 }));
 
@@ -64,7 +52,6 @@ describe('AiSidebar', () => {
     mockSuggestTags.mockReset();
     mockSummarizeNote.mockReset();
     mockCritiqueNote.mockReset();
-    // Default: return empty suggestions so idle state renders cleanly
     mockSuggestLinks.mockResolvedValue({ suggestions: [] });
     mockSuggestTags.mockResolvedValue({ suggestions: [] });
   });
@@ -73,7 +60,7 @@ describe('AiSidebar', () => {
     render(
       <Wrapper>
         <AiSidebar noteId={null} onInsertLink={() => {}} onInsertTag={() => {}} />
-      </Wrapper>
+      </Wrapper>,
     );
     expect(screen.getByText(/open a note/i)).toBeInTheDocument();
   });
@@ -82,7 +69,7 @@ describe('AiSidebar', () => {
     render(
       <Wrapper>
         <AiSidebar noteId="note-456" onInsertLink={() => {}} onInsertTag={() => {}} />
-      </Wrapper>
+      </Wrapper>,
     );
     expect(screen.getByText(/AI Summary/i)).toBeInTheDocument();
     expect(screen.getByText(/Suggested Links/i)).toBeInTheDocument();
@@ -96,11 +83,9 @@ describe('AiSidebar', () => {
     render(
       <Wrapper>
         <AiSidebar noteId="note-456" onInsertLink={onInsertLink} onInsertTag={() => {}} />
-      </Wrapper>
+      </Wrapper>,
     );
-    // Open the Suggested Links section
     fireEvent.click(screen.getByText(/Suggested Links/i));
-    // Wait for the suggestion to appear after the query resolves
     await waitFor(() => screen.getByText('Emptiness'));
     fireEvent.click(screen.getByRole('button', { name: /insert/i }));
     expect(onInsertLink).toHaveBeenCalledWith(linkFixture.suggestions[0]);
@@ -112,9 +97,8 @@ describe('AiSidebar', () => {
     render(
       <Wrapper>
         <AiSidebar noteId="note-456" onInsertLink={() => {}} onInsertTag={() => {}} />
-      </Wrapper>
+      </Wrapper>,
     );
-    // Expand the AI Summary section (closed by default)
     fireEvent.click(screen.getByText(/AI Summary/i));
     const generateBtn = screen.getByRole('button', { name: /generate summary/i });
     fireEvent.click(generateBtn);

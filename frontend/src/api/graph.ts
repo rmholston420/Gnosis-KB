@@ -1,44 +1,29 @@
 /**
- * api/graph.ts — typed wrappers for the knowledge graph endpoints.
- *
- * Used by:
- *   GraphPage   (LightRAG tab entity list + health check)
- *   graphUtils  (type imports)
+ * api/graph.ts — typed wrappers and aliases for knowledge graph endpoints.
  */
+import api, {
+  getGraph as apiGetGraph,
+  getFullGraph as apiGetFullGraph,
+  getNeighborhood as apiGetNeighborhood,
+  getGraphStats as apiGetGraphStats,
+  getClusters as apiGetClusters,
+  getGraphNode as apiGetGraphNode,
+  getLightRagGraph as apiGetLightRagGraph,
+  getGraphEntities as apiGetGraphEntities,
+} from '../services/api';
 
 export interface GraphEntitySummary {
-  id:          string;
-  label:       string;
-  type?:       string;
+  id: string;
+  label: string;
+  type?: string;
   description?: string;
 }
 
-export interface LightRagGraphHealth {
-  node_count:     number;
-  edge_count:     number;
-  is_empty:       boolean;
-  last_updated?:  string;
-}
-
-const BASE = '/api/v1';
-
-/** Fetch the full wikilink graph (nodes + edges). */
-export async function fetchGraph(): Promise<{ nodes: unknown[]; edges: unknown[] }> {
-  const res = await fetch(`${BASE}/graph/full`);
-  if (!res.ok) throw new Error(`Graph fetch failed: ${res.status}`);
-  return res.json() as Promise<{ nodes: unknown[]; edges: unknown[] }>;
-}
-
-/** Fetch LightRAG entity summaries for the entity-filter panel. */
-export async function getGraphEntities(): Promise<{ entities: GraphEntitySummary[] }> {
-  const res = await fetch(`${BASE}/graph/entities`);
-  if (!res.ok) throw new Error(`Entities fetch failed: ${res.status}`);
-  return res.json() as Promise<{ entities: GraphEntitySummary[] }>;
-}
-
-/** Fetch LightRAG knowledge-graph health / stats. */
-export async function getLightRagGraph(): Promise<LightRagGraphHealth> {
-  const res = await fetch(`${BASE}/graph/lightrag`);
-  if (!res.ok) throw new Error(`LightRAG graph fetch failed: ${res.status}`);
-  return res.json() as Promise<LightRagGraphHealth>;
-}
+export const fetchGraph = (...args: Parameters<typeof apiGetGraph>) => (api.fetchGraph ?? apiGetGraph)(...args);
+export const getFullGraph = (...args: Parameters<typeof apiGetFullGraph>) => (api.getFullGraph ?? apiGetFullGraph)(...args);
+export const getNeighborhood = (...args: Parameters<typeof apiGetNeighborhood>) => (api.getNeighborhood ?? apiGetNeighborhood)(...args);
+export const getGraphStats = (...args: Parameters<typeof apiGetGraphStats>) => (api.getGraphStats ?? apiGetGraphStats)(...args);
+export const getClusters = (...args: Parameters<typeof apiGetClusters>) => (api.getClusters ?? apiGetClusters)(...args);
+export const getGraphNode = (...args: Parameters<typeof apiGetGraphNode>) => (api.getGraphNode ?? apiGetGraphNode)(...args);
+export const getLightRagGraph = (...args: Parameters<typeof apiGetLightRagGraph>) => (api.getLightRagGraph ?? apiGetLightRagGraph)(...args);
+export const getGraphEntities = (...args: Parameters<typeof apiGetGraphEntities>) => (api.getGraphEntities ?? apiGetGraphEntities)(...args);

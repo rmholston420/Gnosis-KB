@@ -1,37 +1,29 @@
 /**
  * useOfflineSync — queues note mutations while offline and replays them
  * when connectivity is restored.
- *
- * Exported surface (matches test expectations):
- *   isOnline      boolean
- *   isSyncing     boolean
- *   syncError     string | null
- *   queueLength   number          (raw queue size)
- *   queuedCount   number          (alias — test compat)
- *   enqueue       (type, payload, noteId?) => void
- *   queueCreate   (payload) => void
- *   queueUpdate   (noteId, payload) => void   — merges same noteId
- *   triggerSync   () => Promise<void>
  */
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { createNote, updateNote } from '../services/api';
+import api, { createNote, updateNote } from '../services/api';
 
 export type OperationType = 'create' | 'update';
 
 export interface QueueItem {
-  id:        string;
-  type:      OperationType;
-  noteId?:   string;
-  payload:   Record<string, unknown>;
+  id: string;
+  type: OperationType;
+  noteId?: string;
+  payload: Record<string, unknown>;
   timestamp: number;
 }
 
 type ToastFn = (message: string, level: 'info' | 'success' | 'warning' | 'error') => void;
 
+const apiCreateNote = api.createNote ?? createNote;
+const apiUpdateNote = api.updateNote ?? updateNote;
+
 export function useOfflineSync(onToast?: ToastFn) {
-  const [isOnline,    setIsOnline]    = useState(navigator.onLine);
-  const [syncError,   setSyncError]   = useState<string | null>(null);
-  const [isSyncing,   setIsSyncing]   = useState(false);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [queueLength, setQueueLength] = useState(0);
   const queueRef = useRef<QueueItem[]>([]);
 
@@ -40,35 +32,25 @@ export function useOfflineSync(onToast?: ToastFn) {
     setQueueLength(q.length);
   }
 
-  useEffect(() => {
-    const up   = () => setIsOnline(true);
-    const down = () => setIsOnline(false);
-    window.addEventListener('online',  up);
-    window.addEventListener('offline', down);
-    return () => {
-      window.removeEventListener('online',  up);
-      window.removeEventListener('offline', down);
-    };
-  }, []);
-
   const drain = useCallback(async () => {
     if (queueRef.current.length === 0) return;
     setIsSyncing(true);
     setSyncError(null);
-    onToast?.(`Syncing ${queueRef.current.length} operation(s)\u2026`, 'info');
+    onToast?.(`Syncing ${queueRef.current.length} operation(s)…`, 'info');
 
     const remaining: QueueItem[] = [];
     for (const item of queueRef.current) {
       try {
         if (item.type === 'create') {
-          await createNote(item.payload);
+          await apiCreateNote(item.payload);
         } else if (item.type === 'update' && item.noteId) {
-          await updateNote(item.noteId, item.payload);
+          await apiUpdateNote(item.noteId, item.payload);
         }
       } catch {
         remaining.push(item);
       }
     }
+
     setQueue(remaining);
     setIsSyncing(false);
 
@@ -81,15 +63,24 @@ export function useOfflineSync(onToast?: ToastFn) {
     }
   }, [onToast]);
 
-  // Auto-drain when coming back online
+  useEffect(() => {
+    const up = () => setIsOnline(true);
+    const down = () => setIsOnline(false);
+    window.addEventListener('online', up);
+    window.addEventListener('offline', down);
+    return () => {
+      window.removeEventListener('online', up);
+      window.removeEventListener('offline', down);
+    };
+  }, []);
+
   useEffect(() => {
     if (isOnline) void drain();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOnline]);
+  }, [isOnline, drain]);
 
   function enqueue(type: OperationType, payload: Record<string, unknown>, noteId?: string) {
     const item: QueueItem = {
-      id:        crypto.randomUUID(),
+      id: crypto.randomUUID(),
       type,
       noteId,
       payload,
@@ -103,15 +94,11 @@ export function useOfflineSync(onToast?: ToastFn) {
   }
 
   function queueUpdate(noteId: string, payload: Record<string, unknown>) {
-    const existing = queueRef.current.find(
-      (i) => i.type === 'update' && i.noteId === noteId,
-    );
+    const existing = queueRef.current.find((i) => i.type === 'update' && i.noteId === noteId);
     if (existing) {
       setQueue(
         queueRef.current.map((i) =>
-          i === existing
-            ? { ...i, payload: { ...i.payload, ...payload }, timestamp: Date.now() }
-            : i,
+          i === existing ? { ...i, payload: { ...i.payload, ...payload }, timestamp: Date.now() } : i,
         ),
       );
     } else {
