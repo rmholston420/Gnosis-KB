@@ -1,29 +1,33 @@
+/**
+ * NoteEditorPage.test.tsx
+ * =======================
+ * NoteEditorPage imports getNote / createNote / updateNote / listNotes
+ * directly from '../../api/notes' (named imports for spy compatibility).
+ * Mocking '../../hooks/useNotes' has no effect — we must mock the api layer.
+ */
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { createElement } from 'react';
 import { makeNote } from '../../test/factories';
 
-// Mock the entire hooks/useNotes module.
-vi.mock('../../hooks/useNotes', () => ({
-  useNote:       vi.fn(() => ({ data: makeNote({ title: 'Editor Test Note' }), isLoading: false })),
-  useUpdateNote: vi.fn(() => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false })),
-  useNotes:      vi.fn(() => ({ data: [], isLoading: false })),
-  useNotesList:  vi.fn(() => ({ data: [], isLoading: false })),
-  useCreateNote: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
-  useDeleteNote: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
-  useBacklinks:  vi.fn(() => ({ data: { backlinks: [] }, isLoading: false })),
-  useDailyNote:  vi.fn(() => ({ data: undefined, isLoading: false })),
+const STUB = makeNote({ title: 'Editor Test Note' });
+
+// Mock the API layer that NoteEditorPage actually calls
+vi.mock('../../api/notes', () => ({
+  getNote:    vi.fn().mockResolvedValue(STUB),
+  updateNote: vi.fn().mockResolvedValue(STUB),
+  createNote: vi.fn().mockResolvedValue(STUB),
+  listNotes:  vi.fn().mockResolvedValue({ items: [STUB] }),
 }));
 
 // Mock heavy sub-components
 vi.mock('../../components/notes/NoteTemplateGallery', () => ({
-  NoteTemplateGallery: ({ onClose }: { onClose: () => void }) => (
+  NoteTemplateGallery: ({ onClose }: { onClose: () => void }) =>
     createElement('div', { 'data-testid': 'template-gallery' },
       createElement('button', { onClick: onClose }, 'Close')
-    )
-  ),
+    ),
 }));
 
 vi.mock('../../components/ai/AiSidebar', () => ({
@@ -61,7 +65,9 @@ vi.mock('../../components/NoteEditor', () => ({
 import NoteEditorPage from '../NoteEditorPage';
 
 function wrap(noteId = 'note-001') {
-  const qc = new QueryClient();
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
   return render(
     createElement(
       QueryClientProvider, { client: qc },
@@ -76,17 +82,18 @@ function wrap(noteId = 'note-001') {
 }
 
 describe('NoteEditorPage', () => {
-  // FrontmatterPanel is mocked as an empty div — the title input lives
-  // inside it and is therefore not in the DOM. Assert the editor itself
-  // is present instead.
-  it('renders the note editor area', () => {
+  it('renders the note editor area', async () => {
     wrap();
-    expect(screen.getByTestId('note-editor')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId('note-editor')).toBeInTheDocument()
+    );
   });
 
-  it('shows Edit and Preview toggle buttons', () => {
+  it('shows Edit and Preview toggle buttons', async () => {
     wrap();
-    expect(screen.getByRole('button', { name: /edit/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /preview/i })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /edit/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /preview/i })).toBeInTheDocument();
+    });
   });
 });

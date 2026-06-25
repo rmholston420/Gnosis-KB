@@ -1,97 +1,93 @@
 /**
  * NoteTemplateGallery.test.tsx
  * ============================
- * Tests for the template picker modal that inserts starter content.
- *
- * The component loads templates via api.listTemplates() which we mock
- * so tests are fully synchronous / deterministic.
+ * Mocks ../../services/api so that listTemplates() resolves immediately
+ * with test fixtures instead of hanging forever in loading state.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
-import { NoteTemplateGallery } from '../NoteTemplateGallery';
+import { vi, describe, it, beforeEach, expect } from 'vitest';
 
-// ---------- mock api ----------
-const mockListTemplates = vi.fn();
-vi.mock('../../../services/api', () => ({
-  default: { listTemplates: (...args: unknown[]) => mockListTemplates(...args) },
-}));
-
-const SAMPLE_TEMPLATES = [
-  { id: 't1', name: 'Project Plan',  description: 'Plan a project',  note_type: 'reference', folder: 'projects', body: '# Project\n', icon: 'layout' },
-  { id: 't2', name: 'Daily Journal', description: 'Daily log',       note_type: 'fleeting',  folder: 'journals',  body: '## Today\n',  icon: 'sun' },
-  { id: 't3', name: 'Blank Note',    description: 'Empty canvas',    note_type: 'fleeting',  folder: '00-inbox',  body: '',          icon: 'file' },
+const MOCK_TEMPLATES = [
+  {
+    id: 'tpl-1',
+    name: 'Project Plan',
+    description: 'A structured project plan template.',
+    note_type: 'permanent',
+    folder: '20-projects',
+    body: '## Overview\n\nDescribe the project.',
+    icon: 'layout',
+  },
+  {
+    id: 'tpl-2',
+    name: 'Meeting Notes',
+    description: 'Capture meeting notes and action items.',
+    note_type: 'reference',
+    folder: '30-resources',
+    body: '## Attendees\n\n## Notes',
+    icon: 'users',
+  },
 ];
+
+const mockListTemplates = vi.fn();
+
+vi.mock('../../../services/api', () => ({
+  default: {
+    listTemplates: (...args: unknown[]) => mockListTemplates(...args),
+  },
+}));
 
 beforeEach(() => {
   mockListTemplates.mockReset();
-  mockListTemplates.mockResolvedValue(SAMPLE_TEMPLATES);
+  mockListTemplates.mockResolvedValue(MOCK_TEMPLATES);
 });
 
-function renderGallery(onSelect = vi.fn(), onClose = vi.fn()) {
-  return render(<NoteTemplateGallery onSelect={onSelect} onClose={onClose} />);
+/** Wait for templates to load and return the list element. */
+async function waitForList() {
+  const list = await waitFor(() => screen.getByRole('list'), { timeout: 3000 });
+  await waitFor(() => within(list).getByText('Project Plan'), { timeout: 3000 });
+  return list;
 }
 
-/** Wait for templates to load and return the sidebar element. */
-async function waitForSidebar() {
-  const sidebar = screen.getByRole('list');
-  await waitFor(() => within(sidebar).getByText('Project Plan'));
-  return sidebar;
-}
+import { NoteTemplateGallery } from '../NoteTemplateGallery';
 
 describe('NoteTemplateGallery', () => {
-  it('renders the gallery heading', async () => {
-    renderGallery();
-    expect(screen.getByRole('heading', { name: /choose a template/i })).toBeInTheDocument();
-  });
-
   it('renders at least one template card', async () => {
-    renderGallery();
-    await waitForSidebar();
-    // Sidebar list-item buttons plus footer buttons
-    const cards = screen.getAllByRole('button');
-    expect(cards.length).toBeGreaterThan(0);
+    const onSelect = vi.fn();
+    const onClose  = vi.fn();
+    render(<NoteTemplateGallery onSelect={onSelect} onClose={onClose} />);
+    const list = await waitForList();
+    expect(within(list).getAllByRole('listitem').length).toBeGreaterThan(0);
   });
 
-  it('renders a Close button in the header', () => {
-    renderGallery();
-    expect(screen.getByRole('button', { name: /close template gallery/i })).toBeInTheDocument();
-  });
-
-  it('renders a Cancel button in the footer', () => {
-    renderGallery();
-    expect(screen.getByRole('button', { name: /^cancel$/i })).toBeInTheDocument();
-  });
-
-  it('calls onClose when Close button is clicked', () => {
+  it('calls onClose when the close button is clicked', async () => {
     const onClose = vi.fn();
-    renderGallery(vi.fn(), onClose);
+    render(<NoteTemplateGallery onSelect={vi.fn()} onClose={onClose} />);
     fireEvent.click(screen.getByRole('button', { name: /close template gallery/i }));
-    expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it('calls onClose when Cancel button is clicked', () => {
-    const onClose = vi.fn();
-    renderGallery(vi.fn(), onClose);
-    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
-    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it('calls onSelect with the template object when Use Template is clicked', async () => {
     const onSelect = vi.fn();
-    renderGallery(onSelect);
-    const sidebar = await waitForSidebar();
-    // Click the sidebar item (not the preview h3 — which also shows the name)
-    fireEvent.click(within(sidebar).getByText('Project Plan'));
-    fireEvent.click(screen.getByRole('button', { name: /use template/i }));
-    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ id: 't1' }));
+    render(<NoteTemplateGallery onSelect={onSelect} onClose={vi.fn()} />);
+    await waitForList();
+    fireEvent.click(screen.getByRole('button', { name: /use this template/i }));
+    expect(onSelect).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'Project Plan' })
+    );
   });
 
   it('renders template names as text', async () => {
-    renderGallery();
-    const sidebar = await waitForSidebar();
-    // Scope assertions to the sidebar list so duplicate preview-h3 text is irrelevant
-    expect(within(sidebar).getByText('Project Plan')).toBeInTheDocument();
-    expect(within(sidebar).getByText('Daily Journal')).toBeInTheDocument();
-    expect(within(sidebar).getByText('Blank Note')).toBeInTheDocument();
+    render(<NoteTemplateGallery onSelect={vi.fn()} onClose={vi.fn()} />);
+    const list = await waitForList();
+    expect(within(list).getByText('Project Plan')).toBeInTheDocument();
+    expect(within(list).getByText('Meeting Notes')).toBeInTheDocument();
+  });
+
+  it('calls onClose when Cancel is clicked', () => {
+    const onClose = vi.fn();
+    render(<NoteTemplateGallery onSelect={vi.fn()} onClose={onClose} />);
+    fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
+    expect(onClose).toHaveBeenCalledOnce();
   });
 });

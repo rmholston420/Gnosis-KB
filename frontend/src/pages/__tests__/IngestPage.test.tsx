@@ -1,8 +1,8 @@
 /**
  * IngestPage.test.tsx
  * ===================
- * IngestPage uses useMutation directly, so tests must provide a
- * QueryClientProvider.
+ * IngestPage renders both file-drop and URL sections unconditionally —
+ * there is no tab-toggle. The URL input is always in the DOM.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
@@ -12,6 +12,7 @@ import IngestPage from '../IngestPage';
 
 const mockIngestUrl  = vi.fn();
 const mockIngestFile = vi.fn();
+
 vi.mock('../../services/api', () => ({
   default: {
     ingestUrl:  (...args: unknown[]) => mockIngestUrl(...args),
@@ -19,8 +20,16 @@ vi.mock('../../services/api', () => ({
   },
 }));
 
+// react-router-dom navigate is used after a successful ingest
+vi.mock('react-router-dom', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react-router-dom')>();
+  return { ...actual, useNavigate: () => vi.fn() };
+});
+
 function renderPage() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter><IngestPage /></MemoryRouter>
@@ -31,8 +40,9 @@ function renderPage() {
 beforeEach(() => {
   mockIngestUrl.mockReset();
   mockIngestFile.mockReset();
-  mockIngestUrl.mockResolvedValue({ job_id: 'job-1' });
-  mockIngestFile.mockResolvedValue({ job_id: 'job-2' });
+  // Resolve with a Note-like object matching what IngestPage destructures
+  mockIngestUrl.mockResolvedValue({ id: 'note-1', title: 'Ingested Article' });
+  mockIngestFile.mockResolvedValue({ id: 'note-2', title: 'Uploaded File' });
 });
 
 describe('IngestPage', () => {
@@ -41,10 +51,9 @@ describe('IngestPage', () => {
     expect(document.body).toBeInTheDocument();
   });
 
-  it('renders a URL input field when URL mode selected', () => {
+  it('renders a URL input field', () => {
     renderPage();
-    // Switch to URL mode
-    fireEvent.click(screen.getByRole('button', { name: /url/i }));
+    // URL section is always visible — no mode-toggle needed
     expect(screen.getByPlaceholderText(/https/i)).toBeInTheDocument();
   });
 
@@ -55,25 +64,24 @@ describe('IngestPage', () => {
 
   it('calls ingestUrl when URL form is submitted', async () => {
     renderPage();
-    fireEvent.click(screen.getByRole('button', { name: /url/i }));
     const urlInput = screen.getByPlaceholderText(/https/i);
     fireEvent.change(urlInput, { target: { value: 'https://example.com/article' } });
-    fireEvent.click(screen.getByRole('button', { name: /ingest/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^ingest$/i }));
     await waitFor(() =>
       expect(mockIngestUrl).toHaveBeenCalledWith(
-        expect.objectContaining({ url: 'https://example.com/article' })
+        'https://example.com/article',
+        undefined
       )
     );
   });
 
-  it('shows job queued message after successful URL ingest', async () => {
+  it('shows success message after successful URL ingest', async () => {
     renderPage();
-    fireEvent.click(screen.getByRole('button', { name: /url/i }));
     const urlInput = screen.getByPlaceholderText(/https/i);
     fireEvent.change(urlInput, { target: { value: 'https://example.com/article' } });
-    fireEvent.click(screen.getByRole('button', { name: /ingest/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^ingest$/i }));
     await waitFor(() =>
-      expect(screen.getByText(/job queued/i)).toBeInTheDocument()
+      expect(screen.getByText(/ingested/i)).toBeInTheDocument()
     );
   });
 });
