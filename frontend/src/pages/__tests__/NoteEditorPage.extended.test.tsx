@@ -34,21 +34,9 @@ vi.mock('../../components/NoteEditor', () => ({
   ),
 }));
 
-vi.mock('../../components/editor/WikilinkAutocomplete', () => ({
-  default: ({ onSelect, onClose }: { query: string; onSelect: (t: string) => void; onClose: () => void }) => (
-    <div data-testid="wikilink-popup">
-      <button data-testid="wikilink-select" onClick={() => onSelect('My Linked Note')}>select</button>
-      <button data-testid="wikilink-close"  onClick={() => onClose()}>close</button>
-    </div>
-  ),
-  useWikilinkDetector: () => ({
-    wikilinkQuery:  null as string | null,
-    insertWikilink: vi.fn(),
-  }),
-}));
-
-// Expose wikilinkQuery as a module-level variable so individual tests can
-// override it before rendering.
+// Single declaration of WikilinkAutocomplete mock.
+// wikilinkQueryValue and mockInsertWikilink are module-level variables
+// updated per-test in beforeEach so individual tests can control state.
 let wikilinkQueryValue: string | null = null;
 let mockInsertWikilink = vi.fn();
 

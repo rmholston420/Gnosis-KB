@@ -1,6 +1,9 @@
 /**
  * SearchPage.extended.test.tsx
  * Extended coverage: blank query, error state, empty results, result count.
+ *
+ * SearchPage calls useSearch (a composite hook) — not useHybridSearch directly.
+ * Tests spy on useSearch and fire a form submit to trigger the results branch.
  */
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
@@ -21,15 +24,23 @@ function Wrapper() {
   );
 }
 
+type UseSearchReturn = ReturnType<typeof searchHooks.useSearch>;
+
 const idle = {
   data: undefined, isLoading: false, isError: false,
-  error: null, status: 'success', fetchStatus: 'idle',
-} as unknown as ReturnType<typeof searchHooks.useHybridSearch>;
+  error: null,
+} as unknown as UseSearchReturn;
 
 const errorReturn = {
   data: undefined, isLoading: false, isError: true,
-  error: new Error('Network error'), status: 'error', fetchStatus: 'idle',
-} as unknown as ReturnType<typeof searchHooks.useHybridSearch>;
+  error: new Error('Network error'),
+} as unknown as UseSearchReturn;
+
+const emptyReturn = {
+  data: { items: [], total: 0 },
+  isLoading: false, isError: false,
+  error: null,
+} as unknown as UseSearchReturn;
 
 const resultReturn = {
   data: {
@@ -40,61 +51,48 @@ const resultReturn = {
     total: 2,
   },
   isLoading: false, isError: false,
-  error: null, status: 'success', fetchStatus: 'idle',
-} as unknown as ReturnType<typeof searchHooks.useHybridSearch>;
+  error: null,
+} as unknown as UseSearchReturn;
 
-const semanticStubs = () => {
-  vi.spyOn(searchHooks, 'useSemanticSearch').mockReturnValue(idle);
-  vi.spyOn(searchHooks, 'useSimilarNotes').mockReturnValue(
-    { data: [], isLoading: false, isError: false } as unknown as ReturnType<typeof searchHooks.useSimilarNotes>
-  );
-};
+function submitSearch(value: string) {
+  const input = screen.getByRole('searchbox');
+  fireEvent.change(input, { target: { value } });
+  fireEvent.submit(input.closest('form')!);
+}
 
 afterEach(() => vi.restoreAllMocks());
 
 describe('SearchPage — blank query early return', () => {
   it('calls the search hook with empty string on mount', () => {
-    const spy = vi.spyOn(searchHooks, 'useHybridSearch').mockReturnValue(idle);
-    vi.spyOn(searchHooks, 'useKeywordSearch').mockReturnValue(idle);
-    semanticStubs();
+    const spy = vi.spyOn(searchHooks, 'useSearch').mockReturnValue(idle);
     render(<Wrapper />);
-    expect(spy).toHaveBeenCalledWith('');
+    expect(spy).toHaveBeenCalledWith('', 'hybrid');
   });
 });
 
 describe('SearchPage — error state', () => {
   it('shows error message when hook reports isError', () => {
-    vi.spyOn(searchHooks, 'useHybridSearch').mockReturnValue(errorReturn);
-    vi.spyOn(searchHooks, 'useKeywordSearch').mockReturnValue(idle);
-    semanticStubs();
+    vi.spyOn(searchHooks, 'useSearch').mockReturnValue(errorReturn);
     render(<Wrapper />);
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'EEG' } });
+    submitSearch('EEG');
     expect(screen.getByText(/search failed/i)).toBeInTheDocument();
   });
 });
 
 describe('SearchPage — no results empty state', () => {
   it('shows "No results" when hook returns empty items array', () => {
-    vi.spyOn(searchHooks, 'useHybridSearch').mockReturnValue({
-      data: { items: [], total: 0 },
-      isLoading: false, isError: false,
-      error: null, status: 'success', fetchStatus: 'idle',
-    } as unknown as ReturnType<typeof searchHooks.useHybridSearch>);
-    vi.spyOn(searchHooks, 'useKeywordSearch').mockReturnValue(idle);
-    semanticStubs();
+    vi.spyOn(searchHooks, 'useSearch').mockReturnValue(emptyReturn);
     render(<Wrapper />);
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'xyz' } });
+    submitSearch('xyz');
     expect(screen.getByText(/no results/i)).toBeInTheDocument();
   });
 });
 
 describe('SearchPage — results', () => {
   it('shows result titles and count badge when hook returns items', () => {
-    vi.spyOn(searchHooks, 'useHybridSearch').mockReturnValue(resultReturn);
-    vi.spyOn(searchHooks, 'useKeywordSearch').mockReturnValue(idle);
-    semanticStubs();
+    vi.spyOn(searchHooks, 'useSearch').mockReturnValue(resultReturn);
     render(<Wrapper />);
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'EEG' } });
+    submitSearch('EEG');
     expect(screen.getByRole('heading', { name: /EEG Alpha Waves/i })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /Theta Rhythm/i })).toBeInTheDocument();
     expect(screen.getByText(/2 results/i)).toBeInTheDocument();

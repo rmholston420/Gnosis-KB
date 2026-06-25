@@ -2,8 +2,9 @@
  * AiSidebar.test.tsx
  *
  * The AiSidebar uses collapsible <Section> panels, not a tab-bar.
- * Each section header button has aria-expanded.  Spying on the api module
- * functions requires the query/mutation hooks to call the real api exports.
+ * Each section header button has aria-expanded.  The LinkSection uses
+ * useLinkSuggestions which imports `suggestLinks` directly from api/ai —
+ * not via the aiApi namespace object — so we mock the whole module.
  *
  * onInsertLink receives the full LinkSuggestion object.
  */
@@ -12,7 +13,6 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
-import * as aiApi from '../../../api/ai';
 import { AiSidebar } from '../AiSidebar';
 import type { LinkSuggestResult, SummarizeResult } from '../../../api/ai';
 
@@ -21,6 +21,32 @@ const linkFixture: LinkSuggestResult = {
     { target_note_id: 'n1', target_title: 'Emptiness', score: 0.95, reason: 'Related concept' },
   ],
 };
+
+// Mock the entire api/ai module so both the bare function imports used by
+// hooks/useAI AND the aiApi namespace object are intercepted.
+const mockSuggestLinks   = vi.fn();
+const mockSuggestTags    = vi.fn();
+const mockSummarizeNote  = vi.fn();
+const mockCritiqueNote   = vi.fn();
+const mockOrphanAudit    = vi.fn();
+const mockStreamingChatUrl = vi.fn(() => '');
+
+vi.mock('../../../api/ai', () => ({
+  suggestLinks:      (...a: unknown[]) => mockSuggestLinks(...a),
+  suggestTags:       (...a: unknown[]) => mockSuggestTags(...a),
+  summarizeNote:     (...a: unknown[]) => mockSummarizeNote(...a),
+  critiqueNote:      (...a: unknown[]) => mockCritiqueNote(...a),
+  orphanAudit:       (...a: unknown[]) => mockOrphanAudit(...a),
+  streamingChatUrl:  (...a: unknown[]) => mockStreamingChatUrl(...a),
+  chat:              vi.fn(),
+  // aiApi namespace used by AiSidebar's SummarySection / CritiqueSection
+  aiApi: {
+    suggestLinks:  (...a: unknown[]) => mockSuggestLinks(...a),
+    suggestTags:   (...a: unknown[]) => mockSuggestTags(...a),
+    summarizeNote: (...a: unknown[]) => mockSummarizeNote(...a),
+    critiqueNote:  (...a: unknown[]) => mockCritiqueNote(...a),
+  },
+}));
 
 function Wrapper({ children }: { children: React.ReactNode }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -32,7 +58,15 @@ function Wrapper({ children }: { children: React.ReactNode }) {
 }
 
 describe('AiSidebar', () => {
-  beforeEach(() => { vi.restoreAllMocks(); });
+  beforeEach(() => {
+    mockSuggestLinks.mockReset();
+    mockSuggestTags.mockReset();
+    mockSummarizeNote.mockReset();
+    mockCritiqueNote.mockReset();
+    // Default: return empty suggestions so idle state renders cleanly
+    mockSuggestLinks.mockResolvedValue({ suggestions: [] });
+    mockSuggestTags.mockResolvedValue({ suggestions: [] });
+  });
 
   it('renders the empty guard when noteId is null', () => {
     render(
@@ -56,7 +90,7 @@ describe('AiSidebar', () => {
   });
 
   it('accepts a link suggestion and calls onInsertLink', async () => {
-    vi.spyOn(aiApi.aiApi, 'suggestLinks').mockResolvedValue(linkFixture);
+    mockSuggestLinks.mockResolvedValue(linkFixture);
     const onInsertLink = vi.fn();
     render(
       <Wrapper>
@@ -73,7 +107,7 @@ describe('AiSidebar', () => {
 
   it('generate summary button fires summarize mutation', async () => {
     const mockResult: SummarizeResult = { summary: 'A summary.' };
-    const spy = vi.spyOn(aiApi.aiApi, 'summarizeNote').mockResolvedValue(mockResult);
+    mockSummarizeNote.mockResolvedValue(mockResult);
     render(
       <Wrapper>
         <AiSidebar noteId="note-456" onInsertLink={() => {}} onInsertTag={() => {}} />
@@ -83,7 +117,7 @@ describe('AiSidebar', () => {
     fireEvent.click(screen.getByText(/AI Summary/i));
     const generateBtn = screen.getByRole('button', { name: /generate summary/i });
     fireEvent.click(generateBtn);
-    await waitFor(() => expect(spy).toHaveBeenCalledWith('note-456'));
+    await waitFor(() => expect(mockSummarizeNote).toHaveBeenCalledWith('note-456'));
     await waitFor(() => screen.getByText('A summary.'));
   });
 });
