@@ -1,5 +1,5 @@
 import React, { Suspense, lazy } from 'react';
-import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation, Outlet } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster, toast } from 'react-hot-toast';
 import Sidebar from '@/components/Sidebar';
@@ -39,7 +39,16 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-// ── Inner shell (needs QueryClient context) ───────────────────────────────────
+// ── Auth layout — no sidebar, full-screen (used by /login and /register) ──────
+function AuthLayout() {
+  return (
+    <Suspense fallback={null}>
+      <Outlet />
+    </Suspense>
+  );
+}
+
+// ── App shell — sidebar + main content (used by all protected routes) ─────────
 function AppShell() {
   useVaultWebSocket();
   return (
@@ -47,7 +56,7 @@ function AppShell() {
       <Sidebar />
       <main className="flex-1 overflow-y-auto">
         <Suspense fallback={<div className="p-8 text-gnosis-muted">Loading…</div>}>
-          <AppRoutes />
+          <Outlet />
         </Suspense>
       </main>
       {/* CommandPalette lives outside Suspense — no flash when ⌘K is pressed */}
@@ -61,35 +70,38 @@ function AppShell() {
 export function AppRoutes() {
   return (
     <Routes>
-      {/* Public */}
-      <Route path="/login"    element={<LoginPage />} />
-      <Route path="/register" element={<RegisterPage />} />
+      {/* ── Public routes — no sidebar ── */}
+      <Route element={<AuthLayout />}>
+        <Route path="/login"    element={<LoginPage />} />
+        <Route path="/register" element={<RegisterPage />} />
+      </Route>
 
-      {/* Protected — core */}
-      <Route path="/" element={<PrivateRoute><NotesPage /></PrivateRoute>} />
-      <Route path="/notes/new" element={<PrivateRoute><NoteEditorPage /></PrivateRoute>} />
-      <Route path="/notes/:id" element={<PrivateRoute><NoteEditorPage /></PrivateRoute>} />
-      <Route path="/editor/:id" element={<PrivateRoute><NoteEditorPage /></PrivateRoute>} />
-      <Route path="/search"   element={<PrivateRoute><SearchPage /></PrivateRoute>} />
-      <Route path="/graph"    element={<PrivateRoute><GraphPage /></PrivateRoute>} />
-      <Route path="/ai"       element={<PrivateRoute><AiPage /></PrivateRoute>} />
-      <Route path="/daily"    element={<PrivateRoute><DailyNotePage /></PrivateRoute>} />
-      <Route path="/tags"     element={<PrivateRoute><TagsPage /></PrivateRoute>} />
-      <Route path="/backlinks" element={<PrivateRoute><BacklinksPage /></PrivateRoute>} />
-      <Route path="/vault-sync" element={<PrivateRoute><VaultSyncPage /></PrivateRoute>} />
-      <Route path="/settings" element={<PrivateRoute><SettingsPage /></PrivateRoute>} />
+      {/* ── Protected routes — with sidebar ── */}
+      <Route element={<PrivateRoute><AppShell /></PrivateRoute>}>
+        <Route path="/"           element={<NotesPage />} />
+        <Route path="/notes/new"  element={<NoteEditorPage />} />
+        <Route path="/notes/:id"  element={<NoteEditorPage />} />
+        <Route path="/editor/:id" element={<NoteEditorPage />} />
+        <Route path="/search"     element={<SearchPage />} />
+        <Route path="/graph"      element={<GraphPage />} />
+        <Route path="/ai"         element={<AiPage />} />
+        <Route path="/daily"      element={<DailyNotePage />} />
+        <Route path="/tags"       element={<TagsPage />} />
+        <Route path="/backlinks"  element={<BacklinksPage />} />
+        <Route path="/vault-sync" element={<VaultSyncPage />} />
+        <Route path="/settings"   element={<SettingsPage />} />
+        {/* Previously orphaned pages */}
+        <Route path="/analytics"  element={<AnalyticsPage />} />
+        <Route path="/moc"        element={<MocPage />} />
+        <Route path="/query"      element={<QueryPage />} />
+        <Route path="/review"     element={<ReviewPage />} />
+        <Route path="/ingest"     element={<IngestPage />} />
+        <Route path="/plugins"    element={<PluginsPage />} />
+        <Route path="/templates"  element={<TemplatesPage />} />
+        <Route path="/sync"       element={<SyncPage />} />
+      </Route>
 
-      {/* Protected — previously orphaned pages */}
-      <Route path="/analytics"  element={<PrivateRoute><AnalyticsPage /></PrivateRoute>} />
-      <Route path="/moc"        element={<PrivateRoute><MocPage /></PrivateRoute>} />
-      <Route path="/query"      element={<PrivateRoute><QueryPage /></PrivateRoute>} />
-      <Route path="/review"     element={<PrivateRoute><ReviewPage /></PrivateRoute>} />
-      <Route path="/ingest"     element={<PrivateRoute><IngestPage /></PrivateRoute>} />
-      <Route path="/plugins"    element={<PrivateRoute><PluginsPage /></PrivateRoute>} />
-      <Route path="/templates"  element={<PrivateRoute><TemplatesPage /></PrivateRoute>} />
-      <Route path="/sync"       element={<PrivateRoute><SyncPage /></PrivateRoute>} />
-
-      {/* Catch-all */}
+      {/* ── Catch-all ── */}
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );
@@ -112,7 +124,7 @@ registerSW({
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AppShell />
+      <AppRoutes />
     </QueryClientProvider>
   );
 }
