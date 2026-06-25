@@ -5,6 +5,7 @@ import React, { useState, useCallback, FormEvent } from 'react';
 import { useSearch } from '../hooks/useSearch';
 import type { SearchMode } from '../hooks/useSearch';
 import { SemanticSearch } from '../components/search/SemanticSearch';
+import { SearchResults } from '../components/search/SearchResults';
 
 const MODES: { label: string; value: SearchMode }[] = [
   { label: 'Hybrid', value: 'hybrid' },
@@ -43,7 +44,7 @@ export default function SearchPage() {
               type="search"
               value={inputValue}
               onChange={handleInput}
-              placeholder="Search your vault…"
+              placeholder="Search your vault\u2026"
               className="w-full rounded-lg bg-gnosis-surface border border-gnosis-border px-4 py-2 text-sm
                          focus:outline-none focus:border-gnosis-accent placeholder:text-gnosis-muted"
               autoFocus
@@ -76,39 +77,18 @@ export default function SearchPage() {
           <SemanticSearch />
         ) : (
           <>
-            {isLoading && <p className="text-sm text-gnosis-muted animate-pulse">Searching…</p>}
+            {isLoading && <p className="text-sm text-gnosis-muted animate-pulse">Searching\u2026</p>}
             {isError && <p className="text-sm text-red-500">Search failed.</p>}
-            {!isLoading && !isError && items.length > 0 && (
-              <>
-                <p className="text-xs text-gnosis-muted mb-3">{total} results</p>
-                <ul className="space-y-3">
-                  {items.map((r) => (
-                    <li
-                      key={r.note_id}
-                      className="rounded-lg border border-gnosis-border bg-gnosis-surface p-4 hover:border-gnosis-accent transition-colors cursor-pointer"
-                    >
-                      <h2 className="text-sm font-medium text-gnosis-fg">{r.title}</h2>
-                      {(r.excerpt ?? r.snippet) && (
-                        <p className="mt-1 text-xs text-gnosis-muted line-clamp-2">
-                          {r.excerpt ?? r.snippet}
-                        </p>
-                      )}
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {r.tags?.map((t) => (
-                          <span key={t} className="rounded-full bg-gnosis-accent/10 px-2 py-0.5 text-xs text-gnosis-accent">
-                            #{t}
-                          </span>
-                        ))}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-            {!isLoading && !isError && items.length === 0 && submittedQuery.trim().length > 0 && (
-              <p className="text-sm text-gnosis-muted">
-                No results for “{submittedQuery}”.
-              </p>
+            {submittedQuery.trim().length > 0 ? (
+              <SearchResults
+                query={submittedQuery}
+                items={items}
+                total={total}
+                isLoading={isLoading}
+                isError={isError}
+              />
+            ) : (
+              !isLoading && !isError && items.length === 0 && null
             )}
           </>
         )}
