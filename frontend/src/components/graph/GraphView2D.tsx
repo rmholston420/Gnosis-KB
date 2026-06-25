@@ -40,18 +40,21 @@ interface GraphView2DProps {
 /** Map cluster index to a color string. */
 function clusterColor(idx?: number): string {
   const palette = Object.values(NODE_COLORS);
-  return palette[(idx ?? 0) % palette.length];
+  return palette[(idx ?? 0) % palette.length] as string;
 }
 
 /**
  * GraphView2D renders the knowledge graph.
  * Node color encodes note type; node size encodes incoming link count.
  */
-export const GraphView2D = React.forwardRef<ForceGraphMethods, GraphView2DProps>(
+export const GraphView2D = React.forwardRef<
+  ForceGraphMethods | undefined,
+  GraphView2DProps
+>(
   ({ nodes, links, highlightIds, clusterMode, showLabels = true, onNodeClick, onNodeHover, width, height }, ref) => {
 
-    const internalRef = useRef<ForceGraphMethods>(null);
-    const resolvedRef = (ref ?? internalRef) as React.RefObject<ForceGraphMethods>;
+    const internalRef = useRef<ForceGraphMethods | undefined>(undefined);
+    const resolvedRef = (ref ?? internalRef) as React.MutableRefObject<ForceGraphMethods | undefined>;
 
     const getNodeColor = useCallback((node: NodeObject) => {
       const n = node as ForceNode;

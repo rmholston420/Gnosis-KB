@@ -1,10 +1,11 @@
 /**
  * WikilinkAutocomplete — floating autocomplete popup for [[wikilink]] syntax.
  *
- * Appears when the editor detects an open [[ sequence. Queries the notes
- * list using `q` (not `search`) to match the listNotes API param shape.
+ * Also exports useWikilinkDetector — a hook that monitors a textarea ref
+ * for [[ patterns and returns the current query string + an insertWikilink helper.
  */
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import type { Dispatch, SetStateAction, RefObject } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import api from '../../services/api';
 import type { Note } from '../../types';
@@ -30,7 +31,6 @@ export function WikilinkAutocomplete({
     staleTime: 10_000,
   });
 
-  // Close on Escape
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
@@ -39,7 +39,6 @@ export function WikilinkAutocomplete({
     return () => document.removeEventListener('keydown', handleKey);
   }, [onClose]);
 
-  // Close on outside click
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
@@ -80,4 +79,52 @@ export function WikilinkAutocomplete({
       ))}
     </div>
   );
+}
+
+export default WikilinkAutocomplete;
+
+// ── useWikilinkDetector ───────────────────────────────────────────────────────
+
+export interface WikilinkDetectorResult {
+  wikilinkQuery:  string;
+  insertWikilink: (title: string) => void;
+}
+
+export function useWikilinkDetector(
+  ref: RefObject<HTMLTextAreaElement | HTMLDivElement | null>,
+  value: string,
+  setValue: Dispatch<SetStateAction<string>>,
+): WikilinkDetectorResult {
+  const [wikilinkQuery, setWikilinkQuery] = useState('');
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    function handleInput() {
+      const textarea = el as HTMLTextAreaElement;
+      const pos = textarea.selectionStart ?? value.length;
+      const before = value.slice(0, pos);
+      const match = before.match(/\[\[([^\]]*)$/);
+      setWikilinkQuery(match ? match[1] : '');
+    }
+
+    el.addEventListener('input', handleInput as EventListener);
+    el.addEventListener('keyup',  handleInput as EventListener);
+    return () => {
+      el.removeEventListener('input', handleInput as EventListener);
+      el.removeEventListener('keyup',  handleInput as EventListener);
+    };
+  }, [ref, value]);
+
+  const insertWikilink = useCallback((title: string) => {
+    setValue((prev) => {
+      const match = prev.match(/([\s\S]*)\[\[([^\]]*)$/);
+      if (!match) return prev + `[[${title}]]`;
+      return match[1] + `[[${title}]]`;
+    });
+    setWikilinkQuery('');
+  }, [setValue]);
+
+  return { wikilinkQuery, insertWikilink };
 }

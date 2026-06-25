@@ -19,7 +19,11 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api
 type RagSource = 'lightrag' | 'vector' | 'hybrid' | 'naive';
 type ChatMode  = 'hybrid' | 'lightrag' | 'vector' | 'naive';
 
-interface MetaPayload { rag_source: RagSource; mode: ChatMode; }
+/** Extend Record<string,unknown> so AIChatMessage.meta is satisfied. */
+interface MetaPayload extends Record<string, unknown> {
+  rag_source: RagSource;
+  mode:       ChatMode;
+}
 
 const SOURCE_BADGE: Record<RagSource, { label: string; className: string }> = {
   lightrag: { label: 'LightRAG', className: 'bg-purple-500/20 text-purple-300 border-purple-500/30' },
@@ -49,7 +53,6 @@ export default function AIChat() {
     setInput('');
     setLoading(true);
 
-    // Append a placeholder assistant message we'll stream into
     const assistantIdx = messages.length + 1;
     setMessages((prev) => [...prev, { role: 'assistant', content: '' }]);
 
@@ -80,7 +83,6 @@ export default function AIChat() {
 
         buf += decoder.decode(value, { stream: true });
 
-        // SSE lines end with \n\n
         const parts = buf.split('\n\n');
         buf = parts.pop() ?? '';
 
@@ -179,9 +181,9 @@ export default function AIChat() {
               >
                 {msg.content || (
                   <span className="inline-flex gap-1">
-                    <span className="animate-bounce" style={{ animationDelay: '0ms'   }}>·</span>
-                    <span className="animate-bounce" style={{ animationDelay: '150ms' }}>·</span>
-                    <span className="animate-bounce" style={{ animationDelay: '300ms' }}>·</span>
+                    <span className="animate-bounce" style={{ animationDelay: '0ms'   }}>\xb7</span>
+                    <span className="animate-bounce" style={{ animationDelay: '150ms' }}>\xb7</span>
+                    <span className="animate-bounce" style={{ animationDelay: '300ms' }}>\xb7</span>
                   </span>
                 )}
               </div>
@@ -216,7 +218,7 @@ export default function AIChat() {
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); }
             }}
-            placeholder="Ask your knowledge base…"
+            placeholder="Ask your knowledge base\u2026"
             rows={1}
             className="flex-1 resize-none rounded-lg bg-bg-secondary px-3 py-2 text-sm focus:outline-none border border-border-default min-h-[36px] max-h-[120px]"
             style={{ height: 'auto' }}
@@ -231,7 +233,7 @@ export default function AIChat() {
         </div>
         <div className="mt-1.5 flex items-center gap-1 text-xs text-text-faint">
           <Zap size={10} />
-          <span>Powered by LightRAG · <BookOpen size={10} className="inline" /> references your vault</span>
+          <span>Powered by LightRAG \xb7 <BookOpen size={10} className="inline" /> references your vault</span>
         </div>
       </div>
     </div>

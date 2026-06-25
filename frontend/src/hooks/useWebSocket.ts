@@ -23,11 +23,13 @@ const WS_BASE = (() => {
  * TanStack Query caches when vault events arrive.
  *
  * @param onEvent — optional callback for each raw event
+ * @returns { lastMessage } — last raw VaultEvent received, or undefined
  */
-export function useVaultWebSocket(onEvent?: (evt: VaultEvent) => void) {
-  const qc     = useQueryClient();
-  const wsRef  = useRef<WebSocket | null>(null);
-  const cbRef  = useRef(onEvent);
+export function useVaultWebSocket(onEvent?: (evt: VaultEvent) => void): { lastMessage: VaultEvent | undefined } {
+  const qc           = useQueryClient();
+  const wsRef        = useRef<WebSocket | null>(null);
+  const cbRef        = useRef(onEvent);
+  const lastMsgRef   = useRef<VaultEvent | undefined>(undefined);
   cbRef.current = onEvent;
 
   const connect = useCallback(() => {
@@ -40,6 +42,7 @@ export function useVaultWebSocket(onEvent?: (evt: VaultEvent) => void) {
       let evt: VaultEvent | null = null;
       try { evt = JSON.parse(ev.data) as VaultEvent; } catch { return; }
 
+      lastMsgRef.current = evt;
       cbRef.current?.(evt);
 
       switch (evt.type) {
@@ -68,4 +71,6 @@ export function useVaultWebSocket(onEvent?: (evt: VaultEvent) => void) {
     connect();
     return () => { wsRef.current?.close(); };
   }, [connect]);
+
+  return { lastMessage: lastMsgRef.current };
 }

@@ -29,6 +29,9 @@ export function useGraph() {
   });
 }
 
+/** Alias — tests import useGraphData */
+export const useGraphData = useGraph;
+
 export function useFullGraph() {
   return useQuery({
     queryKey: ['graph', 'full'],

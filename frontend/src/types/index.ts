@@ -44,6 +44,7 @@ export interface Note {
   word_count?:    number;
   is_deleted?:    boolean;
   vector_indexed?: boolean;
+  graph_indexed?:  boolean;
   frontmatter?:   Record<string, unknown>;
   backlinks?:     Backlink[];
   incoming_links?: LinkRef[];
@@ -92,7 +93,7 @@ export interface NoteListResponse {
   per_page?: number;
 }
 
-export interface NoteCreate {
+export interface NoteCreate extends Record<string, unknown> {
   title:       string;
   body:        string;
   note_type?:  NoteType;
@@ -200,6 +201,7 @@ export interface GraphData {
 
 export interface GraphEntitySummary {
   entity_id:   string;
+  id?:         string;   // alias — some consumers use .id
   label:       string;
   description: string;
   source_ids:  string[];
@@ -209,6 +211,8 @@ export interface GraphEntitySummary {
 export interface GraphStats {
   total_nodes:     number;
   total_edges:     number;
+  total_notes?:    number;   // alias used by some tests
+  orphan_count?:   number;   // alias for isolated_count
   avg_degree:      number;
   most_connected:  Array<{ note_id: string; title: string; degree: number }>;
   isolated_count:  number;

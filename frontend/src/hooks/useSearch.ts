@@ -1,14 +1,16 @@
 /**
  * useSearch — TanStack Query hook for full-text / semantic / hybrid search.
  *
- * Re-exports SearchMode from types so pages can import it from one place.
+ * Imports from api/search. Re-exports SearchMode so pages can import
+ * it from this module instead of reaching into api/search directly.
  */
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import type { SearchParams, SearchMode } from '../api/search';
-import { searchNotes } from '../api/search';
+import type { SearchMode } from '../api/search';
+import { search as searchNotes, findSimilar } from '../api/search';
+import type { SearchParams } from '../api/search';
 
-// Re-export SearchMode so SearchPage.tsx can import it from this module
+// Re-export SearchMode so SearchPage.tsx, useAI.ts, etc. can import from here
 export type { SearchMode };
 
 export function useSearch(query: string, mode: SearchMode = 'hybrid') {
@@ -25,7 +27,7 @@ export function useSearch(query: string, mode: SearchMode = 'hybrid') {
 }
 
 export function useKeywordSearch(query: string) {
-  return useSearch(query, 'keyword');
+  return useSearch(query, 'fulltext');
 }
 
 export function useSemanticSearch(query: string) {
@@ -34,4 +36,14 @@ export function useSemanticSearch(query: string) {
 
 export function useHybridSearch(query: string) {
   return useSearch(query, 'hybrid');
+}
+
+/** Find notes semantically similar to a given note ID. */
+export function useSimilarNotes(noteId: string | null | undefined, limit = 5) {
+  return useQuery({
+    queryKey: ['search', 'similar', noteId, limit],
+    queryFn:  () => findSimilar(noteId!, limit),
+    enabled:  !!noteId,
+    staleTime: 60_000,
+  });
 }

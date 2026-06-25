@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useVaultWebSocket } from '../hooks/useWebSocket';
 import { useMutation } from '@tanstack/react-query';
 import { triggerVaultSync } from '../services/api';
@@ -8,14 +8,12 @@ type EventType = 'note_created' | 'note_updated' | 'note_deleted' | 'sync_comple
 
 interface SyncEvent {
   timestamp: string;
-  message: string;
-  type: EventType;
+  message:   string;
+  type:      EventType;
 }
 
 /**
  * SyncPage — manual vault sync trigger + live WebSocket event feed.
- * Connects to the vault watcher WebSocket and streams a real-time log,
- * while also exposing the store-driven progress indicator.
  */
 export default function SyncPage() {
   const [events, setEvents] = useState<SyncEvent[]>([]);
@@ -27,16 +25,17 @@ export default function SyncPage() {
     mutationFn: triggerVaultSync,
   });
 
-  // Consume vault WebSocket messages
+  // useVaultWebSocket now returns { lastMessage }
   const { lastMessage } = useVaultWebSocket();
-  React.useEffect(() => {
+
+  useEffect(() => {
     if (!lastMessage) return;
     const evt = lastMessage as { type: EventType; title?: string; note_id?: string; synced?: number };
     const msg =
       evt.type === 'note_created'  ? `Created: ${evt.title ?? ''}` :
       evt.type === 'note_updated'  ? `Updated note ${evt.note_id ?? ''}` :
       evt.type === 'note_deleted'  ? `Deleted note ${evt.note_id ?? ''}` :
-      evt.type === 'sync_complete' ? `Sync complete — ${evt.synced ?? 0} note(s) synced` :
+      evt.type === 'sync_complete' ? `Sync complete \u2014 ${evt.synced ?? 0} note(s) synced` :
       `Event: ${evt.type}`;
 
     setEvents((prev) => [
@@ -57,7 +56,6 @@ export default function SyncPage() {
             </p>
           </div>
 
-          {/* Status + sync button */}
           <div className="flex items-center gap-3">
             <span
               className={[
@@ -76,12 +74,11 @@ export default function SyncPage() {
               className="px-4 py-2 rounded bg-gnosis-accent text-white text-sm font-medium
                          hover:opacity-90 disabled:opacity-50 transition-opacity"
             >
-              {syncMutation.isPending ? 'Starting…' : 'Sync Now'}
+              {syncMutation.isPending ? 'Starting\u2026' : 'Sync Now'}
             </button>
           </div>
         </div>
 
-        {/* Progress bar */}
         {syncStatus === 'syncing' && typeof syncProgress === 'number' && (
           <div className="mt-3 h-1 bg-gnosis-border rounded-full overflow-hidden">
             <div
@@ -101,7 +98,7 @@ export default function SyncPage() {
       {/* Live event feed */}
       <div className="flex-1 overflow-y-auto px-6 py-4 font-mono text-xs space-y-1">
         {events.length === 0 ? (
-          <p className="text-gnosis-muted">Waiting for vault events…</p>
+          <p className="text-gnosis-muted">Waiting for vault events\u2026</p>
         ) : (
           events.map((e, i) => (
             <div key={i} className="flex gap-3">

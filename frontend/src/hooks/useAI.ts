@@ -22,7 +22,7 @@ import {
   orphanAudit,
   streamingChatUrl,
 } from '../api/ai';
-import type { AIChatMessage, SearchMode } from '../types';
+import type { AIChatMessage } from '../types';
 import type { LinkSuggestion } from '../api/ai';
 import type { ChatQueryResult, CritiqueResult } from '../api/ai';
 
@@ -170,6 +170,3 @@ export function useOrphanAudit() {
     staleTime: 600_000,
   });
 }
-
-// Unused import kept to avoid downstream breakage
-void (SearchMode as unknown);

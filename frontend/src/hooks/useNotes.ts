@@ -10,9 +10,22 @@ import type { Note, NoteCreate, NoteUpdate, NoteListResponse } from '../types';
 // Allow NoteCreate/NoteUpdate to satisfy Record<string,unknown> at the call site
 type AnyRecord = Record<string, unknown>;
 
+/** Stable query key base used by useWebSocket for cache invalidation. */
+export const NOTES_KEY = 'notes';
+
 export function useNotes(params: Parameters<typeof listNotes>[0] = {}) {
   return useQuery({
-    queryKey: ['notes', params],
+    queryKey: [NOTES_KEY, params],
+    queryFn:  () =>
+      listNotes(params).then((res) => (res.items ?? []) as unknown as Note[]),
+    staleTime: 30_000,
+  });
+}
+
+/** Alias — tests import useNotesList (with capital L) */
+export function useNotesList(params: Parameters<typeof listNotes>[0] = {}) {
+  return useQuery({
+    queryKey: [NOTES_KEY, 'list', params],
     queryFn:  () =>
       listNotes(params).then((res) => (res.items ?? []) as unknown as Note[]),
     staleTime: 30_000,
@@ -21,7 +34,7 @@ export function useNotes(params: Parameters<typeof listNotes>[0] = {}) {
 
 export function useNoteList(params: Parameters<typeof listNotes>[0] = {}) {
   return useQuery({
-    queryKey: ['notes', 'list', params],
+    queryKey: [NOTES_KEY, 'list', params],
     queryFn:  () =>
       listNotes(params) as unknown as Promise<NoteListResponse>,
     staleTime: 30_000,
@@ -30,7 +43,7 @@ export function useNoteList(params: Parameters<typeof listNotes>[0] = {}) {
 
 export function useNote(id: string | null) {
   return useQuery({
-    queryKey: ['notes', id],
+    queryKey: [NOTES_KEY, id],
     queryFn:  () => getNote(id!) as unknown as Promise<Note>,
     enabled:  !!id,
     staleTime: 30_000,
@@ -42,21 +55,29 @@ export function useCreateNote() {
   return useMutation({
     mutationFn: (data: NoteCreate) =>
       createNote(data as unknown as AnyRecord) as Promise<Note>,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['notes'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [NOTES_KEY] }),
   });
 }
 
-export function useUpdateNote() {
+/**
+ * useUpdateNote — accepts either:
+ *   mutateAsync({ id, ...fields })           — destructure style
+ *   mutateAsync({ id, payload: {...} })      — explicit payload style (test compat)
+ *
+ * Also accepts an optional noteId argument for legacy compat (ignored at runtime).
+ */
+export function useUpdateNote(_noteId?: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...payload }: NoteUpdate & { id: string }) => {
-      if (payload && Object.keys(payload).length > 0) {
-        return updateNote(id, payload as unknown as AnyRecord) as Promise<Note>;
-      }
+    mutationFn: (vars: (NoteUpdate & { id: string }) | { id: string; payload: NoteUpdate }) => {
+      const { id } = vars;
+      const payload = 'payload' in vars
+        ? vars.payload
+        : (({ id: _id, ...rest }: NoteUpdate & { id: string }) => rest)(vars as NoteUpdate & { id: string });
       return updateNote(id, payload as unknown as AnyRecord) as Promise<Note>;
     },
     onSuccess: (_data, vars) =>
-      qc.invalidateQueries({ queryKey: ['notes', vars.id] }),
+      qc.invalidateQueries({ queryKey: [NOTES_KEY, vars.id] }),
   });
 }
 
@@ -66,7 +87,7 @@ export function useSaveNote() {
     mutationFn: ({ noteId, payload }: { noteId: string; payload: NoteUpdate }) =>
       updateNote(noteId, payload as unknown as AnyRecord) as Promise<Note>,
     onSuccess: (_data, vars) =>
-      qc.invalidateQueries({ queryKey: ['notes', vars.noteId] }),
+      qc.invalidateQueries({ queryKey: [NOTES_KEY, vars.noteId] }),
   });
 }
 
@@ -74,14 +95,16 @@ export function useDeleteNote() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => deleteNote(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['notes'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [NOTES_KEY] }),
   });
 }
 
-export function useDailyNote(dateStr: string) {
+/** dateStr is optional — defaults to today when omitted. */
+export function useDailyNote(dateStr?: string) {
+  const d = dateStr ?? new Date().toISOString().slice(0, 10);
   return useQuery({
-    queryKey: ['notes', 'daily', dateStr],
-    queryFn:  () => getDailyNote(dateStr) as unknown as Promise<Note>,
+    queryKey: [NOTES_KEY, 'daily', d],
+    queryFn:  () => getDailyNote(d) as unknown as Promise<Note>,
     staleTime: 60_000,
   });
 }

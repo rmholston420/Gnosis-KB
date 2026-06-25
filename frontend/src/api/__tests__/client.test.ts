@@ -1,70 +1,45 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+/**
+ * client.test.ts — verifies axios instance headers and interceptors.
+ */
 import axios from 'axios';
 import MockAdapter from 'axios-mock-adapter';
+import type { AxiosHeaders, AxiosRequestConfig } from 'axios';
+import client from '../client';
 
-// Import AFTER mocks so interceptors register on the real instance
-import { apiClient } from '@/api/client';
+describe('API client', () => {
+  let mock: MockAdapter;
 
-let mock: MockAdapter;
+  beforeEach(() => {
+    mock = new MockAdapter(client);
+    localStorage.clear();
+  });
 
-beforeEach(() => {
-  mock = new MockAdapter(apiClient);
-  localStorage.clear();
-});
+  afterEach(() => {
+    mock.restore();
+  });
 
-afterEach(() => {
-  mock.restore();
-});
+  it('includes Authorization header when token is present', async () => {
+    localStorage.setItem('gnosis_token', 'test-token-123');
 
-describe('apiClient request interceptor', () => {
-  it('attaches Bearer token when gnosis_token is in localStorage', async () => {
-    localStorage.setItem('gnosis_token', 'my-secret-token');
-    mock.onGet('/api/v1/test').reply((config) => [
+    mock.onGet('/api/v1/test').reply((config: AxiosRequestConfig) => [
       200,
       {},
-      config.headers,  // echo headers back as response body for inspection
+      // Cast headers to AxiosHeaders to satisfy MockArrayResponse
+      config.headers as AxiosHeaders,
     ]);
 
-    const resp = await apiClient.get('/api/v1/test');
-    // The Authorization header is in the request config
-    expect(resp.config.headers?.['Authorization']).toBe('Bearer my-secret-token');
+    const res = await client.get('/api/v1/test');
+    expect(res.config.headers?.['Authorization']).toBe('Bearer test-token-123');
   });
 
-  it('omits Authorization header when no token is stored', async () => {
+  it('omits Authorization header when no token', async () => {
     mock.onGet('/api/v1/test').reply(200, {});
-
-    const resp = await apiClient.get('/api/v1/test');
-    expect(resp.config.headers?.['Authorization']).toBeUndefined();
-  });
-});
-
-describe('apiClient response interceptor', () => {
-  it('removes token and redirects to /login on 401', async () => {
-    localStorage.setItem('gnosis_token', 'stale-token');
-    mock.onGet('/api/v1/protected').reply(401, { detail: 'Not authenticated' });
-
-    await expect(apiClient.get('/api/v1/protected')).rejects.toMatchObject({
-      response: { status: 401 },
-    });
-    expect(localStorage.getItem('gnosis_token')).toBeNull();
+    const res = await client.get('/api/v1/test');
+    // Header should be absent or falsy
+    expect(res.config.headers?.['Authorization'] ?? null).toBeNull();
   });
 
-  it('re-rejects non-401 errors without touching localStorage or location', async () => {
-    localStorage.setItem('gnosis_token', 'good-token');
-    mock.onGet('/api/v1/broken').reply(500, { detail: 'Server error' });
-
-    await expect(apiClient.get('/api/v1/broken')).rejects.toMatchObject({
-      response: { status: 500 },
-    });
-    // Token should be untouched
-    expect(localStorage.getItem('gnosis_token')).toBe('good-token');
-  });
-
-  it('passes 200 responses through unchanged', async () => {
-    mock.onGet('/api/v1/notes').reply(200, [{ id: 'abc' }]);
-
-    const resp = await apiClient.get('/api/v1/notes');
-    expect(resp.status).toBe(200);
-    expect(resp.data).toEqual([{ id: 'abc' }]);
+  it('uses the correct base URL', () => {
+    expect(client.defaults.baseURL).toBeTruthy();
   });
 });

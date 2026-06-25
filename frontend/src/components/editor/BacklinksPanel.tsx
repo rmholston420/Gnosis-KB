@@ -1,66 +1,61 @@
 /**
- * BacklinksPanel — sidebar panel listing notes that link to the current note.
+ * BacklinksPanel — shows incoming backlinks for the active note.
+ * noteId is optional (string | null | undefined) — renders empty state
+ * when no note is selected.
  */
 import React from 'react';
-import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import api from '../../services/api';
-import type { Note, LinkRef } from '../../types';
+import type { Backlink } from '../../types';
 
 interface BacklinksPanelProps {
-  noteId: string;
-}
-
-interface BacklinkEntry {
-  note_id: string;
-  title:   string;
-  excerpt?: string;
+  noteId: string | null | undefined;
 }
 
 export function BacklinksPanel({ noteId }: BacklinksPanelProps) {
-  const { data: note, isLoading } = useQuery({
-    queryKey: ['note', noteId],
-    queryFn:  () => api.getNote(noteId) as unknown as Promise<Note>,
+  const { data: backlinks, isLoading } = useQuery({
+    queryKey: ['backlinks', noteId],
+    queryFn:  () => api.getBacklinks(noteId!) as unknown as Promise<Backlink[]>,
+    enabled:  !!noteId,
     staleTime: 30_000,
   });
 
-  const backlinks: LinkRef[] = (note as Note | undefined)?.incoming_links ?? [];
-
-  if (isLoading) {
+  if (!noteId) {
     return (
-      <div className="p-4 text-xs text-gnosis-muted animate-pulse">
-        Loading backlinks…
+      <div className="p-4 text-xs text-gnosis-muted">
+        No note selected.
       </div>
     );
   }
 
-  if (backlinks.length === 0) {
+  if (isLoading) {
+    return (
+      <div className="p-4 text-xs text-gnosis-muted animate-pulse">
+        Loading backlinks\u2026
+      </div>
+    );
+  }
+
+  if (!backlinks || backlinks.length === 0) {
     return (
       <div className="p-4 text-xs text-gnosis-muted">
-        No backlinks found.
+        No backlinks yet.
       </div>
     );
   }
 
   return (
-    <div className="p-2 space-y-1">
-      <p className="text-xs font-semibold text-gnosis-muted uppercase tracking-wide px-1 mb-2">
-        Backlinks ({backlinks.length})
-      </p>
-      {backlinks.map((bl: LinkRef) => (
-        <Link
-          key={bl.note_id}
-          to={`/notes/${bl.note_id}`}
-          className="block px-2 py-1.5 rounded hover:bg-gnosis-border text-xs text-gnosis-fg transition-colors"
-        >
-          <span className="font-medium">{bl.title}</span>
-          {bl.excerpt && (
-            <span className="block text-gnosis-muted mt-0.5 line-clamp-1">{bl.excerpt}</span>
+    <ul className="divide-y divide-gnosis-border">
+      {backlinks.map((bl) => (
+        <li key={bl.note_id} className="px-4 py-2">
+          <p className="text-sm font-medium text-gnosis-fg truncate">{bl.title}</p>
+          {bl.context && (
+            <p className="text-xs text-gnosis-muted mt-0.5 line-clamp-2">{bl.context}</p>
           )}
-        </Link>
+        </li>
       ))}
-    </div>
+    </ul>
   );
 }
 
-export type { BacklinkEntry };
+export default BacklinksPanel;

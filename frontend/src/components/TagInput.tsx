@@ -13,7 +13,7 @@ interface TagInputProps {
   disabled?:    boolean;
 }
 
-export function TagInput({ value, onChange, placeholder = 'Add tag…', disabled }: TagInputProps) {
+export function TagInput({ value, onChange, placeholder = 'Add tag\u2026', disabled }: TagInputProps) {
   const [input, setInput]       = useState('');
   const [open,  setOpen]        = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -24,7 +24,6 @@ export function TagInput({ value, onChange, placeholder = 'Add tag…', disabled
     staleTime: 60_000,
   });
 
-  // listTags returns string[] — map to TagRow-like objects or keep as strings
   const rawTags = tagData ?? [];
   const allTagNames: string[] = Array.isArray(rawTags)
     ? rawTags.map((t: string | TagRow) => (typeof t === 'string' ? t : t.tag))
@@ -54,7 +53,6 @@ export function TagInput({ value, onChange, placeholder = 'Add tag…', disabled
     }
   }
 
-  // Close dropdown on outside click
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (inputRef.current && !inputRef.current.closest('[data-tag-input]')?.contains(e.target as Node)) {
@@ -80,7 +78,7 @@ export function TagInput({ value, onChange, placeholder = 'Add tag…', disabled
               className="hover:text-red-400 transition-colors"
               aria-label={`Remove tag ${tag}`}
             >
-              ×
+              \xd7
             </button>
           )}
         </span>
@@ -114,3 +112,5 @@ export function TagInput({ value, onChange, placeholder = 'Add tag…', disabled
     </div>
   );
 }
+
+export default TagInput;
