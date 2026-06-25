@@ -19,7 +19,9 @@ export interface GraphEntitySummary {
   description?: string;
 }
 
-export const fetchGraph = (...args: Parameters<typeof apiGetGraph>) => (api.fetchGraph ?? apiGetGraph)(...args);
+// Use api.getGraph (the correct property name on the default export) with
+// the named-export as a fallback so both runtime and test paths work.
+export const fetchGraph = (...args: Parameters<typeof apiGetGraph>) => (api.getGraph ?? apiGetGraph)(...args);
 export const getFullGraph = (...args: Parameters<typeof apiGetFullGraph>) => (api.getFullGraph ?? apiGetFullGraph)(...args);
 export const getNeighborhood = (...args: Parameters<typeof apiGetNeighborhood>) => (api.getNeighborhood ?? apiGetNeighborhood)(...args);
 export const getGraphStats = (...args: Parameters<typeof apiGetGraphStats>) => (api.getGraphStats ?? apiGetGraphStats)(...args);

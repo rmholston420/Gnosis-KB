@@ -4,7 +4,6 @@
 import React, { useState, useCallback, FormEvent } from 'react';
 import { useSearch } from '../hooks/useSearch';
 import type { SearchMode } from '../hooks/useSearch';
-import { SearchResults } from '../components/search/SearchResults';
 import { SemanticSearch } from '../components/search/SemanticSearch';
 
 const MODES: { label: string; value: SearchMode }[] = [
@@ -107,7 +106,9 @@ export default function SearchPage() {
               </>
             )}
             {!isLoading && !isError && items.length === 0 && submittedQuery.trim().length > 0 && (
-              <SearchResults query={submittedQuery} />
+              <p className="text-sm text-gnosis-muted">
+                No results for “{submittedQuery}”.
+              </p>
             )}
           </>
         )}
