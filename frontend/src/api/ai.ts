@@ -3,6 +3,15 @@
  *
  * All result types re-exported so both hooks/useAI.ts and components
  * can import them from a single canonical location.
+ *
+ * Export strategy for testability:
+ *   - suggestLinks and getLinkSuggestions MUST be separate named function
+ *     declarations (not `const alias = fn`). Vitest vi.mock() replaces named
+ *     export bindings on the module namespace. When getLinkSuggestions is
+ *     declared as `export const getLinkSuggestions = aiApi.suggestLinks`, the
+ *     binding is frozen at module evaluation time and the mock cannot replace it.
+ *     Both must be declared as independent exported functions so each gets its
+ *     own live binding that vi.mock() can intercept.
  */
 import type { LinkSuggestion, TagSuggestion, AiCritique } from '../types';
 
@@ -24,7 +33,6 @@ export interface TagSuggestResult  { suggestions: TagSuggestion[] }
 export interface ChatQueryResult   { answer: string; sources?: string[]; mode?: string }
 export interface OrphanAuditResult { orphans: string[] }
 
-// Re-export entity types so components don't need a separate import
 export type { LinkSuggestion, TagSuggestion, AiCritique };
 
 export const aiApi = {
@@ -65,9 +73,10 @@ export const aiApi = {
 
 export default aiApi;
 
-// ── Standalone named exports used by hooks/useAI.ts ─────────────────────────
+// ── Standalone named exports (each is an independent live binding) ───────────
+// IMPORTANT: do NOT use `export const x = aiApi.x` — those are frozen aliases
+// that vi.mock() cannot intercept. Declare each as a standalone function.
 
-/** Non-streaming chat query — returns { answer, sources, mode }. */
 export function chatQuery(
   params: { query: string; mode?: string },
 ): Promise<ChatQueryResult> {
@@ -77,24 +86,38 @@ export function chatQuery(
   });
 }
 
-/** Link suggestions (named export alias of aiApi.suggestLinks). */
-export const suggestLinks       = aiApi.suggestLinks;
-export const getLinkSuggestions = aiApi.suggestLinks;
-
-/** Tag suggestions (named export alias of aiApi.suggestTags). */
-export const suggestTags = aiApi.suggestTags;
-
-/** Zettelkasten critique (named export alias of aiApi.critiqueNote). */
-export function critiqueNote(noteId: string): Promise<CritiqueResult> {
-  return aiApi.critiqueNote(noteId);
+/**
+ * suggestLinks — used by AiSidebar.test (mocked as `suggestLinks`).
+ * Must be a standalone function declaration for vi.mock to intercept.
+ */
+export function suggestLinks(id: string): Promise<LinkSuggestResult> {
+  return req<LinkSuggestResult>(`/api/ai/suggest-links/${id}`, { method: 'POST' });
 }
 
-/** Orphan audit — returns notes with no incoming or outgoing links. */
+/**
+ * getLinkSuggestions — used by useAI.test (mocked as `getLinkSuggestions`).
+ * Separate live binding from suggestLinks so each test can mock independently.
+ */
+export function getLinkSuggestions(id: string): Promise<LinkSuggestion[]> {
+  return req<LinkSuggestion[]>(`/api/ai/suggest-links/${id}`, { method: 'POST' });
+}
+
+export function summarizeNote(id: string): Promise<SummarizeResult> {
+  return req<SummarizeResult>(`/api/ai/summarize/${id}`, { method: 'POST' });
+}
+
+export function suggestTags(id: string): Promise<TagSuggestResult> {
+  return req<TagSuggestResult>(`/api/ai/suggest-tags/${id}`, { method: 'POST' });
+}
+
+export function critiqueNote(noteId: string): Promise<CritiqueResult> {
+  return req<CritiqueResult>(`/api/ai/critique/${noteId}`, { method: 'POST' });
+}
+
 export function orphanAudit(): Promise<OrphanAuditResult> {
   return req<OrphanAuditResult>('/api/ai/orphan-audit', { method: 'POST' });
 }
 
-/** Build the SSE URL for streaming chat. */
 export function streamingChatUrl(
   params: { message: string; mode?: string; session_id?: string },
 ): string {

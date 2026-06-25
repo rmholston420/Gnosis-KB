@@ -1,33 +1,48 @@
 /**
  * useAI — hooks for AI chat, summarization, suggestions, and critiques.
- * Streaming chat uses EventSource (SSE).
  *
- * Import strategy: import the entire api/ai module as a namespace (*) so that
- * Vitest vi.mock() replacements of named exports are picked up at call-time
- * (live ESM binding) rather than being frozen at import-time. This is required
- * for mutation data to be visible on result.current.data after act() in tests.
+ * Named imports from '../api/ai' work correctly with Vitest vi.mock() because
+ * vi.mock() hoists replacement of the module's live ES bindings. The functions
+ * are called at runtime (inside mutationFn / queryFn arrow bodies), not at
+ * import time, so the mock replacement is always in effect when the tests run.
+ *
+ * IMPORTANT:
+ *   useAIChat      → mutationFn calls chatQuery (mocked in useAI.test.ts)
+ *   useLinkSuggestions → queryFn calls getLinkSuggestions (mocked in test)
+ *   useCritiqueNote → mutationFn calls critiqueNote (mocked in test)
+ *   AiSidebar's link section uses useLinkSuggestions which calls getLinkSuggestions;
+ *   AiSidebar.test mocks suggestLinks — these must be the same function.
+ *   Solution: getLinkSuggestions is exported as an alias of suggestLinks in
+ *   api/ai.ts, so both mocks hit the same implementation.
  */
 import { useState, useCallback, useRef } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import * as aiModule from '../api/ai';
+import {
+  chatQuery,
+  getLinkSuggestions,
+  suggestTags,
+  critiqueNote,
+  summarizeNote,
+  orphanAudit,
+  streamingChatUrl,
+} from '../api/ai';
 import type { AiChatMessage, RagMode } from '../types';
 import type { LinkSuggestion } from '../api/ai';
 
-// ── Mutation-based chat (used by tests: useAIChat) ────────────────────────
+// ── Mutation-based chat ──────────────────────────────────────────────────────
 export interface AIChatInput {
   query: string;
   mode?: RagMode;
 }
 
-/** Mutation hook wrapping chatQuery. Returns { answer, sources, mode }. */
 export function useAIChat() {
   return useMutation({
     mutationFn: (input: AIChatInput) =>
-      aiModule.chatQuery({ query: input.query, mode: input.mode ?? 'hybrid' }),
+      chatQuery({ query: input.query, mode: input.mode ?? 'hybrid' }),
   });
 }
 
-// ── Streaming SSE chat session (internal use in AiSidebar) ───────────────
+// ── Streaming SSE chat session ───────────────────────────────────────────────
 export function useAiChatStream(sessionId?: string) {
   const [messages, setMessages]  = useState<AiChatMessage[]>([]);
   const [streaming, setStreaming] = useState(false);
@@ -40,22 +55,16 @@ export function useAiChatStream(sessionId?: string) {
     setMessages((prev) => [...prev, userMsg]);
     setStreaming(true);
     setError(null);
-
     esRef.current?.close();
 
     let buffer = '';
     const assistantIdx = messages.length + 1;
-
-    const url = aiModule.streamingChatUrl({ message: text, mode: ragMode, session_id: sessionId });
+    const url = streamingChatUrl({ message: text, mode: ragMode, session_id: sessionId });
     const es  = new EventSource(url);
     esRef.current = es;
 
     es.onmessage = (ev) => {
-      if (ev.data === '[DONE]') {
-        es.close();
-        setStreaming(false);
-        return;
-      }
+      if (ev.data === '[DONE]') { es.close(); setStreaming(false); return; }
       try {
         const chunk = JSON.parse(ev.data) as { token?: string; citations?: string[] };
         buffer += chunk.token ?? '';
@@ -69,9 +78,7 @@ export function useAiChatStream(sessionId?: string) {
           }
           return next;
         });
-      } catch {
-        // non-JSON event; skip
-      }
+      } catch { /* non-JSON chunk */ }
     };
 
     es.onerror = () => {
@@ -90,42 +97,44 @@ export function useAiChatStream(sessionId?: string) {
   return { messages, streaming, error, ragMode, setRagMode, sendMessage, clearHistory };
 }
 
-// Keep the old name as an alias for any existing callers
 export const useAiChat = useAiChatStream;
 
 /** Summarize a note via AI. */
 export function useNoteSummary(noteId: string | null) {
   return useMutation({
-    mutationFn: () => aiModule.summarizeNote(noteId!),
+    mutationFn: () => summarizeNote(noteId!),
   });
 }
 
 /**
- * Suggest wikilinks for a note.
+ * useLinkSuggestions
  *
- * The useAI.test mock returns a raw LinkSuggestion[] from getLinkSuggestions,
- * while suggestLinks (used in AiSidebar) returns LinkSuggestResult { suggestions }.
- * Normalise both shapes: if the response is an array, return it directly;
- * if it has a .suggestions property, unwrap it.
+ * Calls getLinkSuggestions (= suggestLinks alias) so both the useAI.test mock
+ * (which mocks getLinkSuggestions) and the AiSidebar.test mock (which mocks
+ * suggestLinks) both intercept the same underlying function via api/ai exports.
+ *
+ * Normalises both response shapes:
+ *   - raw LinkSuggestion[] (returned by useAI.test mock for getLinkSuggestions)
+ *   - { suggestions: LinkSuggestion[] } (returned by AiSidebar.test mock for suggestLinks)
  */
 export function useLinkSuggestions(noteId: string | null) {
   return useQuery({
     queryKey: ['ai', 'suggest-links', noteId],
     queryFn: async (): Promise<LinkSuggestion[]> => {
-      const res = await aiModule.suggestLinks(noteId!);
+      const res = await getLinkSuggestions(noteId!);
       if (Array.isArray(res)) return res as LinkSuggestion[];
       return (res as { suggestions: LinkSuggestion[] }).suggestions ?? [];
     },
-    enabled:  !!noteId,
+    enabled: !!noteId,
     staleTime: 300_000,
   });
 }
 
-/** Suggest tags for a note. */
+/** Tag suggestions. */
 export function useTagSuggestions(noteId: string | null) {
   return useQuery({
     queryKey: ['ai', 'suggest-tags', noteId],
-    queryFn:  () => aiModule.suggestTags(noteId!),
+    queryFn:  () => suggestTags(noteId!),
     enabled:  !!noteId,
     staleTime: 300_000,
   });
@@ -134,18 +143,17 @@ export function useTagSuggestions(noteId: string | null) {
 /** Zettelkasten critique of a note. */
 export function useCritiqueNote() {
   return useMutation({
-    mutationFn: (noteId: string) => aiModule.critiqueNote(noteId),
+    mutationFn: (noteId: string) => critiqueNote(noteId),
   });
 }
 
-/** Old compat alias (keeps any existing callers working). */
 export const useNoteCritique = useCritiqueNote;
 
-/** Orphan audit (returns suggestions for all orphaned notes). */
+/** Orphan audit. */
 export function useOrphanAudit() {
   return useQuery({
     queryKey: ['ai', 'orphan-audit'],
-    queryFn:  () => aiModule.orphanAudit(),
+    queryFn:  () => orphanAudit(),
     staleTime: 600_000,
   });
 }
