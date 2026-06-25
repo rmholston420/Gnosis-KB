@@ -1,3 +1,4 @@
+// eslint-disable-next-line react-refresh/only-export-components
 import React from 'react';
 import { render, type RenderOptions } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -24,6 +25,7 @@ interface WrapperProps {
  * Wraps children in the providers every component needs:
  * QueryClientProvider + MemoryRouter
  */
+// eslint-disable-next-line react-refresh/only-export-components
 export function AllProviders({ children, initialEntries = ['/'] }: WrapperProps) {
   const qc = makeQueryClient();
   return (
@@ -37,6 +39,7 @@ export function AllProviders({ children, initialEntries = ['/'] }: WrapperProps)
  * Custom render that automatically wraps in AllProviders.
  * Accepts an optional `initialEntries` array to simulate routing.
  */
+// eslint-disable-next-line react-refresh/only-export-components
 export function renderWithProviders(
   ui: React.ReactElement,
   options?: RenderOptions & { initialEntries?: string[] },

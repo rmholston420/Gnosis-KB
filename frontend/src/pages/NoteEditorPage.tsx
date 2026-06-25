@@ -39,7 +39,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, PanelRight, PanelRightClose, Eye, Pencil } from 'lucide-react';
 import { Loader2 } from 'lucide-react';
 import { getNote, createNote, updateNote, listNotes } from '../api/notes';
-import api from '../services/api';
 import NoteEditor from '../components/NoteEditor';
 import { useAppStore } from '../store/useAppStore';
 import { SplitPane } from '../components/layout/SplitPane';

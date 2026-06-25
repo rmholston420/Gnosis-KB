@@ -16,7 +16,7 @@ import type { GraphEntitySummary } from '../types';
 // Re-export so pages can import from one place
 export type { GraphEntitySummary };
 
-const BASE = (import.meta as any).env?.VITE_API_BASE_URL ?? '/api';
+const BASE = (import.meta as { env?: { VITE_API_BASE_URL?: string } }).env?.VITE_API_BASE_URL ?? '/api';
 
 let _activeVaultPath: string | null = null;
 
@@ -33,7 +33,7 @@ function authHeaders(): Record<string, string> {
   const vaultState = typeof useVaultStore !== 'undefined'
     ? (useVaultStore.getState?.() ?? null)
     : null;
-  const ownerId = (vaultState as any)?.activeVaultOwnerId;
+  const ownerId = (vaultState as Record<string, unknown> | null)?.activeVaultOwnerId;
   if (ownerId != null) headers['X-Vault-Owner-Id'] = String(ownerId);
   if (_activeVaultPath) headers['X-Vault-Path'] = _activeVaultPath;
   return headers;

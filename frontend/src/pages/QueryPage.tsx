@@ -102,7 +102,8 @@ export default function QueryPage() {
         query: queryText,
       });
       setSavedQueries((prev) => [...prev, res.data]);
-    } catch {
+    } catch (_err: unknown) {
+      // non-fatal: save failure is silent
     }
     setShowSaveDialog(false);
     setSaveName('');
@@ -113,7 +114,8 @@ export default function QueryPage() {
       await axios.delete(`/api/query/saved/${id}`);
       setSavedQueries((prev) => prev.filter((q) => q.id !== id));
       if (expandedId === id) setExpandedId(null);
-    } catch {
+    } catch (_err: unknown) {
+      // non-fatal: delete failure is silent
     }
   }
 

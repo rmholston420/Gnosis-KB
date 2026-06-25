@@ -12,7 +12,7 @@
  * The LightRAG panel additionally shows its own entity-filter input.
  */
 
-import React, { useRef, useCallback, useState, lazy, Suspense } from 'react';
+import React, { useRef, useCallback, useState, Suspense, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ForceGraphMethods } from 'react-force-graph-2d';
 import type { GraphData, GraphNode } from '../types';
@@ -22,7 +22,7 @@ import { GraphView2D, type ForceNode } from '../components/graph/GraphView2D';
 import { GraphControls } from '../components/graph/GraphControls';
 import { NodeDetailOverlay } from '../components/graph/NodeDetailOverlay';
 import { useGraphStore } from '../store/graphStore';
-import { toForceGraphData, nodeColor, nodeVal, clusterColor } from '../lib/graphUtils';
+import { toForceGraphData } from '../lib/graphUtils';
 import './GraphPage.css';
 
 type Tab = 'wikilinks' | 'lightrag';
@@ -44,7 +44,7 @@ export default function GraphPage() {
   // Graph view state from Zustand store
   const {
     selectedNodeId, selectNode,
-    clusterMode, neighborhoodMode,
+    clusterMode,
     highlightQuery, setHighlightQuery,
     showLabels,
   } = useGraphStore();
@@ -84,11 +84,15 @@ export default function GraphPage() {
   const lrError   = lrGraphError   ?? lrEntitiesError;
 
   // ── Derived graph data ────────────────────────────────────────────────────
-  const allNodes  = graphData?.nodes ?? [];
+  const allNodes = useMemo(() => graphData?.nodes ?? [], [graphData]);
   const edgeCount = graphData?.edges?.length ?? 0;
 
-  // Build force-graph data from the new graphUtils helper
-  const forceData = graphData ? toForceGraphData(graphData) : { nodes: [], links: [] };
+  // Build force-graph data from the new graphUtils helper — memoised to
+  // prevent downstream useMemo hooks seeing a new reference every render.
+  const forceData = useMemo(
+    () => graphData ? toForceGraphData(graphData) : { nodes: [], links: [] },
+    [graphData],
+  );
 
   // Apply node filter (from the toolbar input) and store highlight query
   const filterQuery = nodeFilter.trim().toLowerCase();

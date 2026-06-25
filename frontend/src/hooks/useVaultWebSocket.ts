@@ -27,7 +27,7 @@ export function useVaultWebSocket(): UseVaultWebSocketReturn {
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    const BASE_WS = (import.meta as any).env?.VITE_WS_URL
+    const BASE_WS = (import.meta as { env?: { VITE_WS_URL?: string } }).env?.VITE_WS_URL
       ?? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`;
     const url = `${BASE_WS}/ws/vault-sync`;
 

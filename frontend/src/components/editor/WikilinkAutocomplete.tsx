@@ -14,7 +14,7 @@ export interface WikilinkAutocompleteProps {
   onClose: () => void;
 }
 
-export function WikilinkAutocomplete({ query, anchorRect, onSelect, onClose }: WikilinkAutocompleteProps) {
+function WikilinkAutocomplete({ query, anchorRect, onSelect, onClose }: WikilinkAutocompleteProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   const { data: results } = useQuery({
@@ -73,6 +73,7 @@ export function WikilinkAutocomplete({ query, anchorRect, onSelect, onClose }: W
   );
 }
 
+export { WikilinkAutocomplete };
 export default WikilinkAutocomplete;
 
 export interface WikilinkDetectorResult {

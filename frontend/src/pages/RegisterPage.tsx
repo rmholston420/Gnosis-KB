@@ -8,7 +8,7 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 
-const BASE = (import.meta as any).env?.VITE_API_BASE_URL ?? '/api';
+const BASE = (import.meta as { env?: { VITE_API_BASE_URL?: string } }).env?.VITE_API_BASE_URL ?? '/api';
 
 export default function RegisterPage() {
   const navigate = useNavigate();
