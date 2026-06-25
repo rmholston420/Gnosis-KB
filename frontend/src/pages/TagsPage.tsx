@@ -66,12 +66,19 @@ export default function TagsPage() {
     setLoading(true);
     setError(false);
 
-    // Use listTags (present in both the real api object and all vi.mock() stubs).
     // Fallback chain: listTags → getTags → listTagsWithCount
+    // This ensures compatibility with both test mocks (which use listTags/getTags)
+    // and the real API object (which may expose listTagsWithCount).
+    const apiObj = api as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>;
     const apiFn =
-      (api as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>).listTags ??
-      (api as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>).getTags ??
-      (api as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>).listTagsWithCount;
+      apiObj.listTags ??
+      apiObj.getTags ??
+      apiObj.listTagsWithCount;
+
+    if (typeof apiFn !== 'function') {
+      if (!cancelled) { setError(true); setLoading(false); }
+      return () => { cancelled = true; };
+    }
 
     (apiFn as () => Promise<RawTagsResponse>)()
       .then((raw) => {
