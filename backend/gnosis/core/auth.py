@@ -29,6 +29,21 @@ router body.  The dependency:
    that specific owner ID, then returns ``{target_id}`` so the query is
    scoped exclusively to the requested vault.
 5. Invalid header value → HTTP 400.  No grant → HTTP 403.
+
+Synthetic guest user
+--------------------
+When ``AUTH_REQUIRED=false`` (default for local single-user installs) and
+the database contains no users yet (fresh install before the first
+``/auth/register`` call), ``get_current_user`` returns a *synthetic* in-memory
+``User`` with ``id=0`` rather than ``None``.  This prevents the graph, notes,
+and all other authenticated endpoints from responding with
+``401 Login required`` on a brand-new install where the user hasn't seeded
+the DB yet.
+
+The synthetic user is **never persisted** and is only used to satisfy the
+FastAPI dependency graph.  ``get_vault_owner_ids`` maps ``id=0`` to an empty
+owner-id set, which causes all queries to return the complete unscoped note
+collection (safe for single-user local mode).
 """
 
 from __future__ import annotations
@@ -80,19 +95,42 @@ def create_access_token(data: TokenData, expires_delta: timedelta | None = None)
     return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
 
 
+def _synthetic_guest() -> User:
+    """Return a transient User(id=0) for auth-disabled single-user mode.
+
+    This user is never persisted.  It exists only to satisfy the FastAPI
+    dependency chain when AUTH_REQUIRED=false and the DB has no real users.
+    Using id=0 means ``get_vault_owner_ids`` returns an empty set, causing
+    ``scoped_note_stmt`` to run without any owner filter — safe for local
+    single-user installs.
+    """
+    guest = User.__new__(User)
+    # Set the minimum attributes required by auth + namespace code.
+    object.__setattr__(guest, "id", 0)
+    object.__setattr__(guest, "email", "guest@localhost")
+    object.__setattr__(guest, "is_active", True)
+    object.__setattr__(guest, "is_admin", True)
+    object.__setattr__(guest, "hashed_password", "")
+    return guest
+
+
 async def get_current_user(
     token: str | None = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> User | None:
     """Decode JWT and return the corresponding User row, or None if unauthenticated.
 
-    When AUTH_REQUIRED=false (default) this returns a synthetic admin user so
-    the app works without a login screen for single-user local use.
+    When AUTH_REQUIRED=false (default) this returns the first active user in
+    the DB so the app works without a login screen for single-user local use.
+    If the DB has no users yet (fresh install), a synthetic guest user with
+    id=0 is returned so all endpoints remain accessible without a 401.
     """
     if not settings.auth_required:
         result = await db.execute(select(User).where(User.is_active == True).limit(1))  # noqa: E712
         user = result.scalar_one_or_none()
-        return user
+        # Fresh install: no users seeded yet — return synthetic guest rather
+        # than None, which would cause require_user to raise 401.
+        return user if user is not None else _synthetic_guest()
 
     if token is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
@@ -139,6 +177,11 @@ async def get_vault_owner_ids(
 
     * **Header present but not a valid int** — raises HTTP 400 Bad Request.
 
+    The synthetic guest user (id=0) is treated as having no owner-id filter:
+    ``get_accessible_owner_ids`` returns ``set()`` for id=0, which causes
+    ``scoped_note_stmt`` to skip the owner filter entirely — correct for
+    single-user local mode.
+
     Usage in a router::
 
         @router.get("/notes/")
@@ -156,7 +199,9 @@ async def get_vault_owner_ids(
     raw_header = request.headers.get(_VAULT_HEADER)
 
     if raw_header is None:
-        # No targeting header — return all accessible vaults
+        # No targeting header — return all accessible vaults.
+        # For the synthetic guest (id=0), this returns set() which means
+        # scoped_note_stmt runs without any owner filter (all notes visible).
         return await get_accessible_owner_ids(current_user, db)
 
     # Parse the header value
@@ -180,7 +225,7 @@ async def get_vault_owner_ids(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
                 f"You do not have an active grant to access the vault owned by user {target_id}. "
-                "Ask the vault owner to invite you via Settings → Vault Sharing."
+                "Ask the vault owner to invite you via Settings \u2192 Vault Sharing."
             ),
         )
 
