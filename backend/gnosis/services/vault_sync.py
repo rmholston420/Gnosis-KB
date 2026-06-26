@@ -74,6 +74,7 @@ async def _sync_file(path: Path, owner_id: int, db_session: object) -> str:
     Returns a one-line log string describing the outcome.
     """
     import frontmatter  # python-frontmatter
+    import mistune
     from slugify import slugify as _slugify  # python-slugify
     from sqlalchemy import delete, select
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -85,6 +86,11 @@ async def _sync_file(path: Path, owner_id: int, db_session: object) -> str:
     db: AsyncSession = db_session  # type: ignore[assignment]
     settings = get_settings()
     vault_root = Path(settings.vault_path).resolve()
+
+    # Shared markdown renderer — same plugins as the notes router uses.
+    renderer = mistune.create_markdown(
+        plugins=["strikethrough", "footnotes", "table", "task_lists"]
+    )
 
     try:
         rel_path = str(path.relative_to(vault_root))
@@ -110,6 +116,9 @@ async def _sync_file(path: Path, owner_id: int, db_session: object) -> str:
 
     slug_val = _slugify(title)[:490] if title else note_id
 
+    # Render HTML from markdown body
+    body_html = str(renderer(body))
+
     # Upsert note row
     result = await db.execute(select(Note).where(Note.id == note_id))
     note = result.scalar_one_or_none()
@@ -122,6 +131,7 @@ async def _sync_file(path: Path, owner_id: int, db_session: object) -> str:
             title=title,
             slug=slug_val,
             body=body,
+            body_html=body_html,
             note_type=note_type,
             status=status,
             vault_path=rel_path,
@@ -135,6 +145,7 @@ async def _sync_file(path: Path, owner_id: int, db_session: object) -> str:
     else:
         note.title = title
         note.body = body
+        note.body_html = body_html  # Bug 3 fix: keep HTML in sync with markdown body
         note.note_type = note_type
         note.status = status
         note.vault_path = rel_path
@@ -146,7 +157,7 @@ async def _sync_file(path: Path, owner_id: int, db_session: object) -> str:
 
     await db.flush()
 
-    # Sync tags
+    # Sync tags — Bug 1 fix: use tag.id (integer FK) not tag_name (string)
     await db.execute(delete(NoteTag).where(NoteTag.c.note_id == note_id))
     for tag_name in tags_raw:
         tag_result = await db.execute(select(Tag).where(Tag.name == tag_name))
@@ -155,7 +166,8 @@ async def _sync_file(path: Path, owner_id: int, db_session: object) -> str:
             tag = Tag(name=tag_name)
             db.add(tag)
             await db.flush()
-        await db.execute(NoteTag.insert().values(note_id=note_id, tag_id=tag_name))
+        # FIX Bug 1: was tag_id=tag_name (wrong type); must be the integer Tag.id
+        await db.execute(NoteTag.insert().values(note_id=note_id, tag_id=tag.id))
 
     # Sync wikilinks
     wikilinks = WIKILINK_RE.findall(body)
