@@ -97,6 +97,7 @@ def create_app() -> FastAPI:
         tags,
         users,
         vault,
+        ws,
     )
 
     _api_v1 = "/api/v1"
@@ -115,6 +116,9 @@ def create_app() -> FastAPI:
     application.include_router(admin.router, prefix=_api_v1)
     application.include_router(users.router, prefix=_api_v1)
     application.include_router(neurolink.router, prefix=_api_v1)
+    # WebSocket router — must be last so the WS upgrade doesn't interfere
+    # with HTTP middleware ordering.
+    application.include_router(ws.router, prefix=_api_v1)
 
     @application.exception_handler(Exception)
     async def _global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
