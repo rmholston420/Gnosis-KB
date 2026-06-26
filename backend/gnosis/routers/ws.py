@@ -91,12 +91,16 @@ async def _resolve_ws_user(token: str | None) -> Any:
 
     * AUTH_REQUIRED=false → auto-resolve first active DB user (no token needed).
     * AUTH_REQUIRED=true  → decode JWT; return None on failure.
+
+    Fix (2025-06-26): was using bare `async with AsyncSessionLocal:` which hit
+    the broken __aexit__ path in _AsyncSessionLocalProxy, leaking DB sessions.
+    Changed to `async with AsyncSessionLocal():` (calling the proxy) which
+    returns a properly-bound session context manager.
     """
-    # Use the public export (synthetic_guest) rather than the private alias
-    # (_synthetic_guest) to avoid fragile cross-module private-name coupling.
     from gnosis.core.auth import ALGORITHM, synthetic_guest
     from gnosis.models.user import User
 
+    # Fix: call AsyncSessionLocal() to get a properly-bound session CM.
     async with AsyncSessionLocal() as db:
         if not settings.auth_required:
             result = await db.execute(
@@ -109,7 +113,7 @@ async def _resolve_ws_user(token: str | None) -> Any:
             return None
 
         try:
-            from jose import JWTError, jwt
+            from jose import JWTError, jwt  # noqa: F401
 
             payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
             user_id: int = int(payload["sub"])

@@ -16,6 +16,7 @@ import asyncio
 import logging
 import re
 from collections.abc import AsyncIterator
+from functools import partial
 from pathlib import Path
 
 from watchdog.events import FileSystemEventHandler
@@ -72,6 +73,12 @@ async def _sync_file(path: Path, owner_id: int, db_session: object) -> str:
     """Parse a single .md file and upsert into DB + vector store.
 
     Returns a one-line log string describing the outcome.
+
+    Fix (2025-06-26): upsert_note() calls the synchronous QdrantClient.upsert()
+    directly. Calling it from inside this async coroutine blocked the entire
+    event loop on every embedding + Qdrant write. The call is now dispatched
+    to the default ThreadPoolExecutor via run_in_executor so the event loop
+    remains free during I/O-bound Qdrant writes.
     """
     import frontmatter  # python-frontmatter
     import mistune
@@ -187,17 +194,23 @@ async def _sync_file(path: Path, owner_id: int, db_session: object) -> str:
 
     await db.commit()
 
-    # Vector upsert (non-fatal)
+    # Vector upsert — dispatched to ThreadPoolExecutor so the synchronous
+    # QdrantClient.upsert() call does not block the event loop.
     try:
-        upsert_note(
-            note_id,
-            title,
-            body,
-            folder,
-            note_type,
-            status,
-            tags_raw,
-            owner_id,
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None,
+            partial(
+                upsert_note,
+                note_id,
+                title,
+                body,
+                folder,
+                note_type,
+                status,
+                tags_raw,
+                owner_id,
+            ),
         )
     except Exception as vec_exc:  # noqa: BLE001
         logger.warning("Vector upsert skipped for %s: %s", note_id, vec_exc)
@@ -280,11 +293,6 @@ class VaultEventHandler(FileSystemEventHandler):
     def _dispatch_coroutine(self, coro: object) -> None:
         """Schedule a coroutine on the running event loop (thread-safe)."""
         try:
-            # Always try the *running* loop first; watchdog callbacks fire
-            # from a background thread so get_running_loop() will raise
-            # RuntimeError if uvicorn's loop is not accessible here — in
-            # that case fall back to run_coroutine_threadsafe on the cached
-            # loop obtained via _get_loop().
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:

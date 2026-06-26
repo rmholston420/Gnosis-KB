@@ -84,7 +84,14 @@ async def search(
             elapsed_ms=raw["elapsed_ms"],
         )
     except Exception as exc:
-        logger.warning("Qdrant search failed (%s); falling back to PostgreSQL FTS", exc)
+        # Fix (2025-06-26): was logged at WARNING, making Qdrant outages invisible
+        # in production log aggregators. Raised to ERROR. Response mode is now
+        # 'fulltext(degraded)' so API consumers can detect vector-search failures.
+        logger.error(
+            "Qdrant hybrid/semantic search failed for query=%r; falling back to PostgreSQL FTS: %s",
+            q,
+            exc,
+        )
         raw = await fulltext_search(
             db,
             q,
@@ -97,7 +104,7 @@ async def search(
         results = _map_results(raw["results"])
         return SearchResponse(
             query=q,
-            mode="fulltext",
+            mode="fulltext(degraded)",
             results=results,
             total=len(results),
             elapsed_ms=raw["elapsed_ms"],

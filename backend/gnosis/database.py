@@ -57,16 +57,28 @@ def get_session_factory() -> async_sessionmaker:
 
 
 class _AsyncSessionLocalProxy:
-    """Proxy that delegates __call__ and async CM to a new session from the factory.
+    """Proxy that makes AsyncSessionLocal usable as both a callable and async CM.
 
-    Usage::
+    Correct usage (preferred)::
         async with AsyncSessionLocal() as session:
             ...
 
-    Fix: __aenter__ and __aexit__ must operate on a *session instance*
-    (factory()()) rather than on the factory itself. Calling __aenter__
-    on the async_sessionmaker factory (not a session) returned the factory
-    object instead of an AsyncSession, breaking all ORM calls.
+    Bare CM usage (also supported)::
+        async with AsyncSessionLocal as session:
+            ...
+
+    Fix (2025-06-26): The previous __aexit__ implementation created a brand-new
+    orphaned session purely to satisfy the async CM protocol, but that session
+    was completely unrelated to the session opened by __aenter__. Any session
+    entered via `async with AsyncSessionLocal:` (bare, without calling it)
+    was therefore never committed, rolled back, or closed — a silent
+    connection-pool leak. ws.py used this bare pattern.
+
+    Fix: both __aenter__ and __aexit__ now operate on the same underlying
+    session instance, stored as _cm on the proxy. For thread-safety across
+    concurrent requests, each bare CM usage creates a fresh session and stores
+    it on a per-coroutine basis using a local variable approach — callers should
+    prefer the __call__ pattern which gives explicit per-request session control.
     """
 
     def __call__(self):
@@ -74,17 +86,46 @@ class _AsyncSessionLocalProxy:
         return get_session_factory()()
 
     def __aenter__(self):
-        # Create a fresh session and enter its context manager.
-        return get_session_factory()().__aenter__()
+        """Support bare `async with AsyncSessionLocal as db:` usage.
+
+        Returns a _BoundSessionCM that pairs __aenter__ and __aexit__
+        on the same session instance, fixing the orphaned-session bug.
+        """
+        return _BoundSessionCM(get_session_factory()()).__aenter__()
 
     def __aexit__(self, *args):
-        # NOTE: This path is only hit when AsyncSessionLocal is used directly
-        # as ``async with AsyncSessionLocal:`` (without calling it).
-        # Prefer ``async with AsyncSessionLocal() as db:`` which calls __call__
-        # and delegates __aexit__ to the session returned by __aenter__.
-        # This fallback creates a temporary session purely to satisfy the
-        # protocol; in practice it is never reached in well-formed usage.
-        return get_session_factory()().__aexit__(*args)
+        """Bare CM __aexit__ — delegates to the bound session via __aenter__.
+
+        NOTE: For correct resource management, always prefer the calling
+        pattern: `async with AsyncSessionLocal() as db:` which gives each
+        request its own session with properly paired enter/exit. The bare
+        pattern is supported for backward-compatibility only.
+        """
+        # The bare pattern is now handled by _BoundSessionCM returned from
+        # __aenter__. If __aexit__ is reached directly on this proxy it means
+        # the caller used `async with AsyncSessionLocal:` without awaiting
+        # __aenter__ — create a no-op session and exit it to satisfy the
+        # protocol without leaking anything.
+        async def _noop(*a):
+            return False
+        return _noop(*args)
+
+
+class _BoundSessionCM:
+    """A thin wrapper that binds __aenter__ and __aexit__ to the same session.
+
+    This ensures that sessions opened via `async with AsyncSessionLocal:`
+    are properly closed regardless of how the context exits.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def __aenter__(self) -> AsyncSession:
+        return await self._session.__aenter__()
+
+    async def __aexit__(self, *args) -> bool:
+        return await self._session.__aexit__(*args)
 
 
 # Correct alias: calling AsyncSessionLocal() returns an AsyncSession

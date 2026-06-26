@@ -33,9 +33,6 @@ async def on_startup() -> None:
         pass
 
     # Ensure DB tables exist (idempotent — safe to run on every startup).
-    # This guarantees a fresh Docker Compose deploy works without a manual
-    # `alembic upgrade head` step. When real migrations are in use, Alembic
-    # will skip tables that already exist.
     try:
         from gnosis.database import init_db
 
@@ -44,11 +41,19 @@ async def on_startup() -> None:
     except Exception as exc:  # noqa: BLE001
         logger.error("Database init failed — app may be non-functional: %s", exc)
 
+    # Ensure the Qdrant collection exists (idempotent — no-op if it already exists).
+    # Fix (2025-06-26): ensure_collection() was never called at startup, so on a
+    # fresh deploy with an empty Qdrant instance every upsert_note() call raised
+    # UnexpectedResponse (collection not found), silently dropping all vectors.
+    try:
+        from gnosis.services.vector_store import ensure_collection
+
+        ensure_collection()
+        logger.info("Qdrant collection ensured")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Qdrant collection init skipped (Qdrant may be unavailable): %s", exc)
+
     # Pre-warm the LightRAG graph store if available.
-    # Fix: the module exports a `graph_rag` singleton (GraphRAGService instance).
-    # The previous code looked for a nonexistent `init_lightrag` attribute on the
-    # module object — it was never found, so LightRAG was never pre-warmed at
-    # startup. The correct call is `graph_rag_service.initialize()`.
     try:
         from gnosis.services.graph_rag import graph_rag as graph_rag_service
 

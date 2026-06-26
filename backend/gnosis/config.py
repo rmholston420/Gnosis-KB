@@ -19,6 +19,7 @@ from pydantic import computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _DEFAULT_SECRET = "CHANGE_ME_IN_PRODUCTION_USE_OPENSSL_RAND_HEX_32"
+_DEFAULT_ADMIN_PASSWORD = "gnosis_admin"
 
 
 class Settings(BaseSettings):
@@ -81,7 +82,7 @@ class Settings(BaseSettings):
 
     # Bootstrap admin
     initial_admin_email: str = "admin@gnosis.local"
-    initial_admin_password: str = "gnosis_admin"
+    initial_admin_password: str = _DEFAULT_ADMIN_PASSWORD
 
     @model_validator(mode="after")
     def _check_secret_key_in_production(self) -> "Settings":
@@ -100,6 +101,23 @@ class Settings(BaseSettings):
             )
             raise ValueError(
                 "SECRET_KEY must be changed from the default before running with debug=False"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _warn_default_admin_password(self) -> "Settings":
+        """Warn loudly when the default admin password is unchanged in production.
+
+        Fix (2025-06-26): parallel to the secret_key guard. Unlike secret_key,
+        a weak admin password is non-fatal (the app can still start) but we
+        emit a prominent stderr warning so it is visible in Docker Compose logs
+        and CI output. Change INITIAL_ADMIN_PASSWORD before first deployment.
+        """
+        if not self.debug and self.initial_admin_password == _DEFAULT_ADMIN_PASSWORD:
+            print(  # noqa: T201
+                "\n[WARNING] initial_admin_password is still the default 'gnosis_admin'.\n"
+                "Set INITIAL_ADMIN_PASSWORD in your .env or environment before deploying.\n",
+                file=sys.stderr,
             )
         return self
 
