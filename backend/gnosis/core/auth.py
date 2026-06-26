@@ -34,21 +34,27 @@ Synthetic guest user
 --------------------
 When ``AUTH_REQUIRED=false`` (default for local single-user installs) and
 the database contains no users yet (fresh install before the first
-``/auth/register`` call), ``get_current_user`` returns a *synthetic* in-memory
-``User`` with ``id=0`` rather than ``None``.  This prevents the graph, notes,
-and all other authenticated endpoints from responding with
-``401 Login required`` on a brand-new install where the user hasn't seeded
-the DB yet.
+``/auth/register`` call), ``get_current_user`` returns a *synthetic*
+``SimpleNamespace`` duck-typed as a User with ``id=0`` rather than ``None``.
 
-The synthetic user is **never persisted** and is only used to satisfy the
-FastAPI dependency graph.  ``get_vault_owner_ids`` maps ``id=0`` to an empty
-owner-id set, which causes all queries to return the complete unscoped note
-collection (safe for single-user local mode).
+Important: we deliberately do NOT use ``User.__new__(User)`` because
+SQLAlchemy's mapper instrumentation expects ``__init__`` to be called and
+will crash with ``AttributeError: _sa_instance_state`` the moment any ORM
+code touches the object.  A plain ``SimpleNamespace`` with the right
+attributes satisfies every attribute access in auth.py and namespace.py
+without touching the ORM layer.
+
+The synthetic guest is **never persisted**.  ``get_vault_owner_ids`` maps
+``id=0`` to an empty owner-id set, which causes ``scoped_note_stmt`` to skip
+the owner filter entirely — all notes are visible.  Safe for single-user
+local mode before any accounts are created.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from typing import Any
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
@@ -67,6 +73,9 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token", auto_error=False)
 
 _VAULT_HEADER = "X-Vault-Owner-Id"
+
+#: Sentinel id used by the synthetic guest.  Must match _GUEST_ID in namespace.py.
+_GUEST_ID = 0
 
 
 class TokenData(BaseModel):
@@ -95,35 +104,42 @@ def create_access_token(data: TokenData, expires_delta: timedelta | None = None)
     return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
 
 
-def _synthetic_guest() -> User:
-    """Return a transient User(id=0) for auth-disabled single-user mode.
+def _synthetic_guest() -> Any:
+    """Return a SimpleNamespace duck-typed as a User for auth-disabled single-user mode.
 
-    This user is never persisted.  It exists only to satisfy the FastAPI
-    dependency chain when AUTH_REQUIRED=false and the DB has no real users.
-    Using id=0 means ``get_vault_owner_ids`` returns an empty set, causing
-    ``scoped_note_stmt`` to run without any owner filter — safe for local
-    single-user installs.
+    Using SimpleNamespace (not User.__new__) avoids the SQLAlchemy
+    instrumentation crash that occurs when an ORM-mapped object is created
+    without going through __init__ (missing _sa_instance_state attribute).
+
+    Attributes mirror the ones accessed by auth.py, namespace.py, and the
+    vault path helpers:
+      id, email, is_active, is_superuser, hashed_password,
+      vault_path, vault_slug, full_name, vault_display_name
     """
-    guest = User.__new__(User)
-    # Set the minimum attributes required by auth + namespace code.
-    object.__setattr__(guest, "id", 0)
-    object.__setattr__(guest, "email", "guest@localhost")
-    object.__setattr__(guest, "is_active", True)
-    object.__setattr__(guest, "is_admin", True)
-    object.__setattr__(guest, "hashed_password", "")
-    return guest
+    return SimpleNamespace(
+        id=_GUEST_ID,
+        email="guest@localhost",
+        is_active=True,
+        is_superuser=True,
+        hashed_password="",
+        full_name="Guest",
+        vault_path=None,
+        vault_slug=None,
+        vault_display_name=None,
+    )
 
 
 async def get_current_user(
     token: str | None = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),
-) -> User | None:
-    """Decode JWT and return the corresponding User row, or None if unauthenticated.
+) -> User | Any:
+    """Decode JWT and return the corresponding User row, or a synthetic guest.
 
     When AUTH_REQUIRED=false (default) this returns the first active user in
     the DB so the app works without a login screen for single-user local use.
-    If the DB has no users yet (fresh install), a synthetic guest user with
-    id=0 is returned so all endpoints remain accessible without a 401.
+    If the DB has no users yet (fresh install), a synthetic SimpleNamespace
+    guest with id=0 is returned so all endpoints remain accessible without
+    a 401 — no ORM state is involved.
     """
     if not settings.auth_required:
         result = await db.execute(select(User).where(User.is_active == True).limit(1))  # noqa: E712
@@ -149,7 +165,7 @@ async def get_current_user(
     return user
 
 
-async def require_user(current: User | None = Depends(get_current_user)) -> User:
+async def require_user(current: Any = Depends(get_current_user)) -> Any:
     """Dependency that raises 401 when no user is resolved."""
     if current is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Login required")
@@ -158,7 +174,7 @@ async def require_user(current: User | None = Depends(get_current_user)) -> User
 
 async def get_vault_owner_ids(
     request: Request,
-    current_user: User = Depends(require_user),
+    current_user: Any = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ) -> set[int]:
     """FastAPI dependency: resolve the set of owner IDs for this request.
@@ -192,8 +208,6 @@ async def get_vault_owner_ids(
             stmt = scoped_note_stmt(select(Note), owner_ids)
             ...
     """
-    # Local import to avoid circular dependency at module load time
-    # (namespace imports models; auth imports nothing from gnosis.routers)
     from gnosis.core.namespace import get_accessible_owner_ids
 
     raw_header = request.headers.get(_VAULT_HEADER)
@@ -204,7 +218,6 @@ async def get_vault_owner_ids(
         # scoped_note_stmt runs without any owner filter (all notes visible).
         return await get_accessible_owner_ids(current_user, db)
 
-    # Parse the header value
     try:
         target_id = int(raw_header)
     except ValueError:
@@ -213,11 +226,9 @@ async def get_vault_owner_ids(
             detail=f"Invalid {_VAULT_HEADER} header value: {raw_header!r}. Must be an integer user ID.",
         )
 
-    # If the caller is requesting their own vault explicitly, short-circuit
     if target_id == current_user.id:
         return {current_user.id}
 
-    # Verify the caller has an active grant for the requested vault
     try:
         await get_accessible_owner_ids(current_user, db, target_owner_id=target_id)
     except ValueError:
@@ -229,5 +240,4 @@ async def get_vault_owner_ids(
             ),
         )
 
-    # Scope exclusively to the requested vault
     return {target_id}
