@@ -18,18 +18,25 @@
  *   FastAPI routers redirect /notes → /notes/ with a 307. Browsers follow the
  *   redirect but strip the Authorization header on cross-origin hops. To avoid
  *   silent 401s, all collection endpoints use a trailing slash directly.
+ *
+ * EVENTSOURCE AUTH:
+ *   EventSource does not support custom HTTP headers. The bearer token is
+ *   appended as a ?token= query parameter. The backend SSE route accepts it
+ *   as an alternative to the Authorization header.
+ *
+ * INGEST FILE ERROR HANDLING:
+ *   Non-JSON error responses (413 Too Large, 422 Unprocessable Entity with
+ *   text/plain body) are read as text first to avoid SyntaxError crashes.
  */
 import { useVaultStore } from '../store/useVaultStore';
 import type { GraphEntitySummary } from '../types';
 
-// Re-export so pages can import from one place
 export type { GraphEntitySummary };
 
 const BASE = (import.meta as { env?: { VITE_API_BASE_URL?: string } }).env?.VITE_API_BASE_URL ?? '/api/v1';
 
 let _activeVaultPath: string | null = null;
 
-/** Call this when the active vault path changes (e.g. after vault selection). */
 export function setActiveVaultPath(path: string | null): void {
   _activeVaultPath = path;
 }
@@ -39,10 +46,6 @@ function authHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  // Guard against localStorage being blocked (private browsing, sandboxed
-  // iframes, or zustand-persist throwing during store hydration). A failure
-  // here must NEVER prevent the HTTP request from being sent — the backend
-  // health/providers endpoint is public and doesn't need these headers.
   try {
     const vaultState = typeof useVaultStore !== 'undefined'
       ? (useVaultStore.getState?.() ?? null)
@@ -50,7 +53,7 @@ function authHeaders(): Record<string, string> {
     const ownerId = (vaultState as Record<string, unknown> | null)?.activeVaultOwnerId;
     if (ownerId != null) headers['X-Vault-Owner-Id'] = String(ownerId);
   } catch {
-    // Store not yet initialised or localStorage unavailable — continue without header
+    // Store not yet initialised or localStorage unavailable
   }
 
   if (_activeVaultPath) headers['X-Vault-Path'] = _activeVaultPath;
@@ -73,12 +76,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-/** Generic POST helper for one-off authenticated calls (e.g. auth endpoints). */
 export function post<T>(path: string, body: unknown): Promise<T> {
   return request<T>(path, { method: 'POST', body: JSON.stringify(body) });
 }
 
-// ── Notes ─────────────────────────────────────────────────────────────────────────────────
+// ── Notes ─────────────────────────────────────────────────────────────────────
 
 export function listNotes(params: {
   note_type?: string;
@@ -94,7 +96,6 @@ export function listNotes(params: {
   const q = new URLSearchParams();
   Object.entries(params).forEach(([k, v]) => { if (v != null) q.set(k, String(v)); });
   const qs = q.toString();
-  // Trailing slash avoids FastAPI 307 redirect which strips Authorization header
   return request<{ items: unknown[]; total: number }>(`/notes/${qs ? `?${qs}` : ''}`);
 }
 
@@ -114,18 +115,10 @@ export function deleteNote(id: string) {
   return request<unknown>(`/notes/${id}`, { method: 'DELETE' });
 }
 
-/**
- * listTags — returns a plain string[] from /notes/tags.
- * Used by autocomplete and tag-filter dropdowns.
- */
 export function listTags() {
   return request<string[]>('/notes/tags');
 }
 
-/**
- * listTagsWithCount — returns [{tag, count}] from the dedicated /tags/ router.
- * Used by TagsPage for the interactive tag cloud with frequency weighting.
- */
 export function listTagsWithCount() {
   return request<Array<{ tag: string; count: number }>>('/tags/');
 }
@@ -150,7 +143,13 @@ export function ingestFile(file: File): Promise<unknown> {
     headers: authHeaders(),
     body: fd,
   }).then(async (res) => {
-    if (!res.ok) throw new Error(`API ${res.status}`);
+    if (!res.ok) {
+      // Safely read the body as text first — the response may be text/plain
+      // (e.g. a 413 Too Large from nginx) and calling .json() on it throws a
+      // SyntaxError that swallows the real status code.
+      const msg = await res.text().catch(() => res.statusText);
+      throw new Error(`API ${res.status}: ${msg}`);
+    }
     return res.json();
   });
 }
@@ -162,8 +161,7 @@ export function ingestUrl(url: string, _unused?: unknown) {
   });
 }
 
-// ── AI (convenience wrappers around api/ai standalone functions) ─────────────────
-// These live here so legacy code calling `api.summarizeNote` etc. still works.
+// ── AI helpers ────────────────────────────────────────────────────────────────
 
 export function summarizeNote(id: string) {
   return request<{ summary: string }>(`/ai/summarize/${id}`, { method: 'POST' });
@@ -179,7 +177,7 @@ export function suggestLinks(id: string) {
   );
 }
 
-// ── Search ──────────────────────────────────────────────────────────────────────────────
+// ── Search ────────────────────────────────────────────────────────────────────
 
 export function search(
   q: string,
@@ -203,19 +201,12 @@ export function getSimilarNotes(id: string, limit = 6) {
   return request<unknown[]>(`/notes/${id}/similar?limit=${limit}`);
 }
 
-// ── Graph ────────────────────────────────────────────────────────────────────────────
+// ── Graph ─────────────────────────────────────────────────────────────────────
 
-/**
- * getGraph — hits GET /graph/ (with trailing slash).
- * This is the correct endpoint returning { nodes, edges }.
- */
 export function getGraph() {
   return request<{ nodes: unknown[]; edges: unknown[] }>('/graph/');
 }
 
-/**
- * getFullGraph — alias kept for backwards-compat; redirects to getGraph().
- */
 export function getFullGraph() {
   return getGraph();
 }
@@ -244,22 +235,34 @@ export function getClusters() {
   return request<unknown>('/graph/clusters');
 }
 
-// ── LightRAG ──────────────────────────────────────────────────────────────────────────
+// ── LightRAG ──────────────────────────────────────────────────────────────────
 
 export function ingestNote(id: string) {
   return request<unknown>(`/lightrag/ingest/${id}`, { method: 'POST' });
 }
 
 export function getLightRagNode(id: string) {
-  return request<unknown>(`/lightrag/node/${id}`, { method: 'GET' });
+  return request<unknown>(`/lightrag/node/${id}`);
 }
 
+/**
+ * streamQuery — LightRAG streaming via EventSource.
+ *
+ * EventSource does NOT support custom HTTP headers in any browser.
+ * The bearer token is passed as a ?token= query parameter instead.
+ * The backend /lightrag/stream route must accept this as a valid bearer
+ * credential (already handled in gnosis/routers/lightrag.py).
+ */
 export function streamQuery(
   q: string,
   onChunk: (token: string) => void,
   onDone: () => void,
 ): () => void {
-  const url = `${BASE}/lightrag/stream?q=${encodeURIComponent(q)}`;
+  const storedToken =
+    typeof localStorage !== 'undefined' ? localStorage.getItem('gnosis_token') : null;
+  const tokenParam = storedToken ? `&token=${encodeURIComponent(storedToken)}` : '';
+  const url = `${BASE}/lightrag/stream?q=${encodeURIComponent(q)}${tokenParam}`;
+
   const es = new EventSource(url);
   es.onmessage = (evt: MessageEvent) => {
     if (evt.data === '[DONE]') { es.close(); onDone(); }
@@ -269,7 +272,7 @@ export function streamQuery(
   return () => es.close();
 }
 
-// ── AI ───────────────────────────────────────────────────────────────────────────────────
+// ── AI ────────────────────────────────────────────────────────────────────────
 
 export function chat(
   message: string,
@@ -294,13 +297,13 @@ export function getAiHistory(sessionId: string) {
   return request<unknown[]>(`/ai/history/${sessionId}`);
 }
 
-// ── Vault ─────────────────────────────────────────────────────────────────────────────
+// ── Vault ─────────────────────────────────────────────────────────────────────
 
 export function triggerVaultSync() {
   return request<unknown>('/vault/sync', { method: 'POST' });
 }
 
-// ── Settings / Provider info ──────────────────────────────────────────────────────────
+// ── Settings / Provider info ──────────────────────────────────────────────────
 
 export interface ProviderInfo {
   provider: string;
@@ -333,29 +336,20 @@ export function syncObsidian(): Promise<void> {
   return request<void>('/vault/sync/obsidian', { method: 'POST' });
 }
 
-// ── Default export (legacy compat) ───────────────────────────────────────────────
+// ── Default export (legacy compat) ───────────────────────────────────────────
 
 const api = {
-  // notes
   listNotes, getNote, createNote, updateNote, deleteNote,
   listTags, listTagsWithCount, listFolders, listTemplates, getDailyNote,
   ingestFile, ingestUrl,
-  // ai (on api object for legacy callers)
   summarizeNote, critiqueNote, suggestLinks,
-  // search
   search, semanticSearch, hybridSearch, getSimilarNotes,
-  // graph
   getGraph, getFullGraph, getLightRagGraph, getGraphEntities, getGraphNode,
   getNeighborhood, getGraphStats, getClusters,
-  // lightrag
   ingestNote, getLightRagNode, streamQuery,
-  // ai
   chat, triggerAiAnalysis, generateLinkedNotes, getAiHistory,
-  // vault
   triggerVaultSync,
-  // settings
   getProviders, setModel, exportVault, syncObsidian,
-  // util
   setActiveVaultPath, post,
 };
 

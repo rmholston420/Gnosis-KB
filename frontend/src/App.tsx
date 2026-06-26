@@ -21,7 +21,6 @@ const TagsPage          = lazy(() => import('@/pages/TagsPage'));
 const BacklinksPage     = lazy(() => import('@/pages/BacklinksPage'));
 const VaultSyncPage     = lazy(() => import('@/pages/VaultSyncPage'));
 const NotFoundPage      = lazy(() => import('@/pages/NotFoundPage'));
-// ── Previously orphaned pages — now wired in ──────────────────────────────────
 const AnalyticsPage     = lazy(() => import('@/pages/AnalyticsPage'));
 const MocPage           = lazy(() => import('@/pages/MocPage'));
 const QueryPage         = lazy(() => import('@/pages/QueryPage'));
@@ -30,22 +29,24 @@ const IngestPage        = lazy(() => import('@/pages/IngestPage'));
 const PluginsPage       = lazy(() => import('@/pages/PluginsPage'));
 const TemplatesPage     = lazy(() => import('@/pages/TemplatesPage'));
 const SyncPage          = lazy(() => import('@/pages/SyncPage'));
+// AIChatPage is a thin re-export of AiPage (see AIChatPage.tsx)
+const AIChatPage        = lazy(() => import('@/pages/AIChatPage'));
 
 // ── Auth-required probe ───────────────────────────────────────────────────────
-// We ask the backend once whether AUTH_REQUIRED is true.  The result is cached
-// in a module-level variable so every PrivateRoute instance shares it without
-// an extra network call.
+// Probe a PROTECTED endpoint. If it returns 401 without a token, auth is
+// required. If it returns 200, the backend is running with AUTH_REQUIRED=false.
 //
-// The probe hits GET /api/v1/health/ping — a guaranteed-public endpoint that
-// returns {"status":"ok"}.  If the request succeeds without a token we know
-// auth is not required and we skip the localStorage gate.
-//
-// Three states:
-//   null    = probe not yet complete (show nothing / spinner)
-//   true    = backend requires a real JWT token
-//   false   = backend is open (AUTH_REQUIRED=false)
+// We intentionally probe /api/v1/notes/ (a real protected route) rather than
+// /health/ping (a public endpoint that always returns 200, which caused the
+// probe to always report auth NOT required regardless of server config).
 let _authRequired: boolean | null = null;
 let _probePromise: Promise<boolean> | null = null;
+
+/** Exported for test isolation — resets cached probe state between test runs. */
+export function _resetAuthProbeForTests(): void {
+  _authRequired = null;
+  _probePromise = null;
+}
 
 function probeAuthRequired(): Promise<boolean> {
   if (_authRequired !== null) return Promise.resolve(_authRequired);
@@ -54,18 +55,16 @@ function probeAuthRequired(): Promise<boolean> {
   const BASE =
     (import.meta as { env?: { VITE_API_BASE_URL?: string } }).env?.VITE_API_BASE_URL ?? '/api/v1';
 
-  _probePromise = fetch(`${BASE}/health/ping`, { method: 'GET' })
+  // Probe the notes collection endpoint without a token.
+  // 401 → auth IS required; 200 → auth is NOT required.
+  // Any other outcome (network error, 5xx) → default safe: require auth.
+  _probePromise = fetch(`${BASE}/notes/`, { method: 'GET' })
     .then((res) => {
-      // If we get 200 without a token, auth is not required.
-      // If we get 401, auth IS required.
-      // Any other status (network error, 500): default to "auth required"
-      // so we don't accidentally expose the app.
       const required = res.status === 401;
       _authRequired = required;
       return required;
     })
     .catch(() => {
-      // Network error — default safe: require auth
       _authRequired = true;
       return true;
     });
@@ -85,25 +84,52 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
     probeAuthRequired().then(setAuthRequired);
   }, []);
 
-  // Still probing — render nothing to avoid a flash redirect to /login
   if (authRequired === null) {
     return <div className="flex h-screen items-center justify-center text-gnosis-muted">Loading…</div>;
   }
 
-  // Backend does NOT require auth — bypass the token check entirely.
-  // The backend will still enforce ownership scoping; the frontend just
-  // doesn't need a stored token to navigate.
   if (!authRequired) {
     return <>{children}</>;
   }
 
-  // Backend DOES require auth — enforce the token gate as before.
   const token = localStorage.getItem('gnosis_token');
   if (!token) return <Navigate to="/login" state={{ from: location }} replace />;
   return <>{children}</>;
 }
 
-// ── Auth layout — no sidebar, full-screen (used by /login and /register) ──────
+// ── Error boundary to prevent WS / lazy-load crashes from killing the shell ──
+type EBState = { hasError: boolean; message: string };
+class ShellErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  EBState
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, message: '' };
+  }
+  static getDerivedStateFromError(err: unknown): EBState {
+    return { hasError: true, message: String(err) };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex h-screen flex-col items-center justify-center gap-4 p-8 text-gnosis-muted">
+          <p className="text-gnosis-error font-semibold">Something went wrong.</p>
+          <p className="text-sm opacity-70">{this.state.message}</p>
+          <button
+            className="rounded px-4 py-2 bg-gnosis-accent text-white text-sm"
+            onClick={() => this.setState({ hasError: false, message: '' })}
+          >
+            Try again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// ── Auth layout — no sidebar, full-screen ─────────────────────────────────────
 function AuthLayout() {
   return (
     <Suspense fallback={null}>
@@ -112,7 +138,7 @@ function AuthLayout() {
   );
 }
 
-// ── App shell — sidebar + main content (used by all protected routes) ─────────
+// ── App shell — sidebar + main content ───────────────────────────────────────
 function AppShell() {
   useVaultWebSocket();
   return (
@@ -123,7 +149,6 @@ function AppShell() {
           <Outlet />
         </Suspense>
       </main>
-      {/* CommandPalette lives outside Suspense — no flash when ⌘K is pressed */}
       <CommandPalette />
       <Toaster position="bottom-right" />
     </div>
@@ -134,14 +159,14 @@ function AppShell() {
 export function AppRoutes() {
   return (
     <Routes>
-      {/* ── Public routes — no sidebar ── */}
+      {/* Public routes */}
       <Route element={<AuthLayout />}>
         <Route path="/login"    element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
       </Route>
 
-      {/* ── Protected routes — with sidebar ── */}
-      <Route element={<PrivateRoute><AppShell /></PrivateRoute>}>
+      {/* Protected routes */}
+      <Route element={<PrivateRoute><ShellErrorBoundary><AppShell /></ShellErrorBoundary></PrivateRoute>}>
         <Route path="/"           element={<NotesPage />} />
         <Route path="/notes/new"  element={<NoteEditorPage />} />
         <Route path="/notes/:id"  element={<NoteEditorPage />} />
@@ -149,12 +174,12 @@ export function AppRoutes() {
         <Route path="/search"     element={<SearchPage />} />
         <Route path="/graph"      element={<GraphPage />} />
         <Route path="/ai"         element={<AiPage />} />
+        <Route path="/ai/chat"    element={<AIChatPage />} />
         <Route path="/daily"      element={<DailyNotePage />} />
         <Route path="/tags"       element={<TagsPage />} />
         <Route path="/backlinks"  element={<BacklinksPage />} />
         <Route path="/vault-sync" element={<VaultSyncPage />} />
         <Route path="/settings"   element={<SettingsPage />} />
-        {/* Previously orphaned pages */}
         <Route path="/analytics"  element={<AnalyticsPage />} />
         <Route path="/moc"        element={<MocPage />} />
         <Route path="/query"      element={<QueryPage />} />
@@ -165,29 +190,41 @@ export function AppRoutes() {
         <Route path="/sync"       element={<SyncPage />} />
       </Route>
 
-      {/* ── Catch-all ── */}
+      {/* Catch-all */}
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );
 }
 
 // ── App root ──────────────────────────────────────────────────────────────────
-const queryClient = new QueryClient({
-  defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },
-});
-
-registerSW({
-  onNeedRefresh() {
-    toast('A new version is available. Refresh to update.');
-  },
-  onOfflineReady() {
-    toast.success('App is ready to work offline.');
-  },
-});
-
 export default function App() {
+  // QueryClient lives inside the component so HMR reloads get a fresh instance
+  // and tests that import App don't share stale query cache between runs.
+  const queryClientRef = useRef<QueryClient | null>(null);
+  if (!queryClientRef.current) {
+    queryClientRef.current = new QueryClient({
+      defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },
+    });
+  }
+
+  useEffect(() => {
+    // Guard: registerSW must run inside a lifecycle, not at module level.
+    // Calling it at module scope fires in jsdom during tests (no SW support)
+    // and emits uncaught promise rejections that fail the test suite.
+    if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+      registerSW({
+        onNeedRefresh() {
+          toast('A new version is available. Refresh to update.');
+        },
+        onOfflineReady() {
+          toast.success('App is ready to work offline.');
+        },
+      });
+    }
+  }, []);
+
   return (
-    <QueryClientProvider client={queryClient}>
+    <QueryClientProvider client={queryClientRef.current}>
       <AppRoutes />
     </QueryClientProvider>
   );

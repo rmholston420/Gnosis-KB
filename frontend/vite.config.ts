@@ -29,8 +29,6 @@ export default defineConfig({
   server: {
     port: 5273,
     proxy: {
-      // All API calls use /api/v1 prefix — proxy directly to the backend.
-      // Port 8010 is exposed via docker-proxy on the host.
       '/api/v1': {
         target: 'http://localhost:8010',
         changeOrigin: true,
@@ -41,7 +39,8 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: './src/test/setup.ts',
-    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    // Only match .test. files — .spec. pattern is unused and slows discovery
+    include: ['src/**/*.test.{ts,tsx}'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'lcov'],

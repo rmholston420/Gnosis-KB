@@ -50,6 +50,10 @@ dist/
 build/
 *.tsbuildinfo
 
+# Frontend build artifacts
+frontend/coverage/
+frontend/dev-dist/
+
 # Docker data volumes (local dev)
 pgdata/
 qdrant_storage/

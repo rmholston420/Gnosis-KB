@@ -1,31 +1,15 @@
 /**
- * store/vaultStore.ts — Zustand store for vault / sync state.
+ * store/vaultStore.ts — DEPRECATED.
+ *
+ * This file previously contained a duplicate Zustand store for vault/sync
+ * state. It has been superseded by useVaultStore.ts which handles both
+ * vault-owner context (shared vaults) and is the single authoritative vault
+ * store consumed by api.ts and all components.
+ *
+ * Re-exports from useVaultStore.ts for backwards compatibility so any
+ * accidental imports of this file continue to reference the correct store
+ * instead of creating a second, un-persisted instance.
+ *
+ * TODO: Remove all imports of this file and delete it in a future cleanup.
  */
-import { create } from 'zustand';
-
-export interface VaultState {
-  /** Absolute path to the active vault on disk. */
-  activeVaultPath: string | null;
-  isSyncing:       boolean;
-  lastSyncedAt:    string | null;
-  syncError:       string | null;
-
-  setActiveVaultPath: (path: string | null) => void;
-  setIsSyncing:       (v: boolean) => void;
-  setLastSyncedAt:    (ts: string | null) => void;
-  setSyncError:       (err: string | null) => void;
-}
-
-export const useVaultStore = create<VaultState>((set) => ({
-  activeVaultPath: null,
-  isSyncing:       false,
-  lastSyncedAt:    null,
-  syncError:       null,
-
-  setActiveVaultPath: (path) => set({ activeVaultPath: path }),
-  setIsSyncing:       (v)    => set({ isSyncing: v }),
-  setLastSyncedAt:    (ts)   => set({ lastSyncedAt: ts }),
-  setSyncError:       (err)  => set({ syncError: err }),
-}));
-
-export default useVaultStore;
+export { useVaultStore as default, useVaultStore } from './useVaultStore';

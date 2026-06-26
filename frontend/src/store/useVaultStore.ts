@@ -7,24 +7,48 @@
  * layer (see services/api.ts) so the backend returns notes scoped to that
  * owner.
  *
- * The store fires a CustomEvent 'gnosis:vault-changed' on window whenever
- * the active vault changes so data-fetching hooks can invalidate/refetch
- * without prop drilling.
+ * STORAGE SAFETY:
+ *   The persist middleware writes to localStorage. In sandboxed iframes,
+ *   private-browsing mode, or test environments (jsdom) localStorage may be
+ *   blocked. We wrap it in a safeStorage adapter that silently no-ops on any
+ *   storage error so the store still works — it just won't persist across
+ *   page loads in those contexts.
  */
 
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, type StateStorage } from 'zustand/middleware';
 import type { VaultGrant } from '../services/vaultApi';
 import { fetchMyVaultGrants, acceptVaultGrant } from '../services/vaultApi';
 
+/** localStorage wrapper that never throws. Falls back to in-memory no-op. */
+const safeStorage: StateStorage = {
+  getItem(key) {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  },
+  setItem(key, value) {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      // Sandboxed or private-browsing context — silently ignore
+    }
+  },
+  removeItem(key) {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // Silently ignore
+    }
+  },
+};
+
 interface VaultState {
-  /** User-id of the vault currently being browsed. null = own vault. */
   activeVaultOwnerId: number | null;
-  /** Display label for the active vault (shown in the context banner). */
   activeVaultLabel: string;
-  /** All grants fetched from the server (own vault always index 0). */
   grants: VaultGrant[];
-  /** Whether the grant list is being loaded. */
   loading: boolean;
 
   fetchGrants: () => Promise<void>;
@@ -46,8 +70,6 @@ export const useVaultStore = create<VaultState>()(
         try {
           const grants = await fetchMyVaultGrants();
           set({ grants, loading: false });
-          // If the currently active vault is no longer in the grant list
-          // (e.g. grant was revoked), fall back to own vault.
           const { activeVaultOwnerId, grants: updatedGrants } = get();
           if (
             activeVaultOwnerId !== null &&
@@ -82,13 +104,12 @@ export const useVaultStore = create<VaultState>()(
 
       acceptInvite: async (grantId) => {
         await acceptVaultGrant(grantId);
-        // Refresh the grant list so the accepted invite becomes active
         await get().fetchGrants();
       },
     }),
     {
       name: 'gnosis-vault-store',
-      // Only persist the active selection — grants are always re-fetched on load
+      storage: safeStorage,
       partialize: (s) => ({
         activeVaultOwnerId: s.activeVaultOwnerId,
         activeVaultLabel: s.activeVaultLabel,
