@@ -1,36 +1,20 @@
 /**
  * NoteTemplateGallery.test.tsx
  * ============================
- * Mocks ../../services/api so that listTemplates() resolves immediately
- * with test fixtures instead of hanging forever in loading state.
+ * NoteTemplateGallery was refactored to use BUILT_IN_TEMPLATES (client-side
+ * constant) instead of calling api.listTemplates().  The api mock is kept
+ * for safety but the tests now assert against titles that exist in
+ * BUILT_IN_TEMPLATES rather than mock API fixtures.
+ *
+ * BUILT_IN_TEMPLATES includes: Blank Note, Permanent Note, Literature Note,
+ * Fleeting Note, Map of Content, Daily Note, Meeting Note.
  */
 import React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { vi, describe, it, beforeEach, expect } from 'vitest';
 
-const MOCK_TEMPLATES = [
-  {
-    id: 'tpl-1',
-    name: 'Project Plan',
-    description: 'A structured project plan template.',
-    note_type: 'permanent',
-    folder: '20-projects',
-    body: '## Overview\n\nDescribe the project.',
-    icon: 'layout',
-  },
-  {
-    id: 'tpl-2',
-    name: 'Meeting Notes',
-    description: 'Capture meeting notes and action items.',
-    note_type: 'reference',
-    folder: '30-resources',
-    body: '## Attendees\n\n## Notes',
-    icon: 'users',
-  },
-];
-
+// Keep the mock in place in case a future code path re-introduces the API call.
 const mockListTemplates = vi.fn();
-
 vi.mock('../../../services/api', () => ({
   default: {
     listTemplates: (...args: unknown[]) => mockListTemplates(...args),
@@ -39,13 +23,14 @@ vi.mock('../../../services/api', () => ({
 
 beforeEach(() => {
   mockListTemplates.mockReset();
-  mockListTemplates.mockResolvedValue(MOCK_TEMPLATES);
+  mockListTemplates.mockResolvedValue([]);
 });
 
-/** Wait for templates to load and return the list element. */
+/** Wait for the template list to appear and contain a known built-in title. */
 async function waitForList() {
   const list = await waitFor(() => screen.getByRole('list'), { timeout: 3000 });
-  await waitFor(() => within(list).getByText('Project Plan'), { timeout: 3000 });
+  // "Permanent Note" is the second BUILT_IN_TEMPLATE and always present.
+  await waitFor(() => within(list).getByText('Permanent Note'), { timeout: 3000 });
   return list;
 }
 
@@ -71,17 +56,21 @@ describe('NoteTemplateGallery', () => {
     const onSelect = vi.fn();
     render(<NoteTemplateGallery onSelect={onSelect} onClose={vi.fn()} />);
     await waitForList();
+    // The first template (Blank Note) is selected by default;
+    // clicking "Use this template" should call onSelect with it.
     fireEvent.click(screen.getByRole('button', { name: /use this template/i }));
     expect(onSelect).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'Project Plan' })
+      expect.objectContaining({ name: 'Blank Note' })
     );
   });
 
   it('renders template names as text', async () => {
     render(<NoteTemplateGallery onSelect={vi.fn()} onClose={vi.fn()} />);
     const list = await waitForList();
-    expect(within(list).getByText('Project Plan')).toBeInTheDocument();
-    expect(within(list).getByText('Meeting Notes')).toBeInTheDocument();
+    // Assert a representative subset of BUILT_IN_TEMPLATES
+    expect(within(list).getByText('Blank Note')).toBeInTheDocument();
+    expect(within(list).getByText('Permanent Note')).toBeInTheDocument();
+    expect(within(list).getByText('Meeting Note')).toBeInTheDocument();
   });
 
   it('calls onClose when Cancel is clicked', () => {
