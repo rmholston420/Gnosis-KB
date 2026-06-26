@@ -1,24 +1,25 @@
-"""SQLAlchemy model registry.
+"""Gnosis ORM models package.
 
-Import all models here so Alembic's autogenerate can detect them.
+Import all model classes here so that SQLAlchemy's metadata is fully
+populated before ``Base.metadata.create_all()`` / Alembic ``env.py`` runs.
+
+Explicit ``__all__`` prevents accidental star-import exposure of internal
+helpers and makes the public surface of the models package unambiguous.
 """
 
-from gnosis.models.attachment import Attachment
+from gnosis.models.flashcard import Flashcard
 from gnosis.models.link import Link
 from gnosis.models.note import Note
-from gnosis.models.review import ReviewCard
-from gnosis.models.saved_query import SavedQuery
-from gnosis.models.shared_vault import SharedVault
-from gnosis.models.tag import Tag
+from gnosis.models.review_log import ReviewLog
+from gnosis.models.tag import NoteTag, Tag
 from gnosis.models.user import User
 
 __all__ = [
-    "Attachment",
+    "Flashcard",
     "Link",
     "Note",
-    "ReviewCard",
-    "SavedQuery",
-    "SharedVault",
+    "NoteTag",
+    "ReviewLog",
     "Tag",
     "User",
 ]

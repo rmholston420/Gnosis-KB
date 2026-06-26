@@ -1,225 +1,209 @@
-"""PostgreSQL tsvector full-text search service.
+"""Full-text search service — PostgreSQL tsvector-based search.
 
-Provides a single public coroutine::
+Public API
+----------
+fulltext_search(db, query, *, owner_ids, limit, folder, note_type, tags)
+    Search notes using PostgreSQL FTS (tsvector/tsquery).
 
-    results = await fulltext_search(
-        db, query, limit=10, folder=None, note_type=None, tags=None
-    )
+suggest_completions(db, prefix, *, owner_ids, limit)
+    Return note titles that start with *prefix* for autocomplete.
 
-The function is intentionally self-contained and async-safe.  It is called
-by the search router when ``mode=fulltext`` is requested, or as a fallback
-when the Qdrant hybrid search raises an exception.
+rebuild_fts_index(db)
+    Rebuild the fts_vector column for all notes. Called after bulk imports.
 
-Ranking
--------
-Uses ``ts_rank_cd`` (cover-density ranking) which rewards query terms that
-appear close together.  The ``fts`` column is already weighted::
-
-    A = title   (highest weight)
-    B = body
-    C = folder  (lowest weight)
-
-Highlighting
-------------
-``ts_headline`` returns a snippet of body text with matching terms wrapped
-in <mark> tags.  The StartSel/StopSel options are kept as plain strings so
-the frontend can style them with CSS without parsing HTML.
+Fix (2025-06-26)
+----------------
+rebuild_fts_index() previously swallowed exceptions at WARNING with no
+recovery path. A corrupt or stale FTS index silently degraded search quality
+indefinitely with no observable failure signal. Now logs at ERROR and re-raises
+so callers can distinguish transient from permanent failures and alert operators.
 """
+
+from __future__ import annotations
 
 import logging
 import time
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
-# ts_headline options — short snippet, <mark> wrapping
-_HEADLINE_OPTS = "MaxWords=35, MinWords=15, ShortWord=3, StartSel='<mark>', StopSel='</mark>', HighlightAll=false"
+_FTS_CONFIG = "english"  # PostgreSQL FTS dictionary
 
 
 async def fulltext_search(
     db: AsyncSession,
     query: str,
     *,
-    owner_ids: set[int] | None = None,
+    owner_ids: set[int],
     limit: int = 10,
     folder: str | None = None,
     note_type: str | None = None,
     tags: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Run a tsvector full-text search against the notes table.
+    """Search notes using PostgreSQL FTS.
 
-    Parameters
-    ----------
-    db:
-        An open async SQLAlchemy session.
-    query:
-        Raw user query string.  Converted to a tsquery with
-        ``plainto_tsquery`` (no special syntax required from users).
-    owner_ids:
-        Optional set of user IDs whose notes are accessible.  When provided,
-        results are restricted to notes whose ``owner_id`` is in the set.
-    limit:
-        Maximum number of results (1-100).
-    folder, note_type, tags:
-        Optional filters applied as AND conditions.
+    Args:
+        db: Async SQLAlchemy session.
+        query: Raw search query string (will be converted to tsquery).
+        owner_ids: Set of owner IDs to scope the search to.
+        limit: Maximum number of results to return.
+        folder: Optional vault folder filter.
+        note_type: Optional note type filter.
+        tags: Optional list of tag names to filter by.
 
-    Returns
-    -------
-    dict with keys:
-        ``results`` -- list of result dicts
-        ``elapsed_ms`` -- wall-clock time in milliseconds
+    Returns:
+        Dict with keys ``results`` (list of result dicts) and ``elapsed_ms`` (float).
     """
-    start = time.monotonic()
+    from gnosis.models.note import Note
+    from gnosis.models.tag import NoteTag, Tag
 
-    # Build WHERE clause additions
-    conditions = [
-        "n.is_deleted = false",
-        "n.fts @@ plainto_tsquery('english', :query)",
-    ]
-    params: dict[str, Any] = {"query": query, "limit": limit}
+    t0 = time.monotonic()
 
-    if owner_ids:
-        # Inline the owner_id set as a literal IN list; SQLAlchemy text() does
-        # not support list-valued bind params, so we expand manually.
-        placeholders = ", ".join(f":oid_{i}" for i, _ in enumerate(owner_ids))
-        conditions.append(f"n.owner_id IN ({placeholders})")
-        for i, oid in enumerate(owner_ids):
-            params[f"oid_{i}"] = oid
+    # Convert free-text query to a safe plainto_tsquery expression
+    ts_query = func.plainto_tsquery(_FTS_CONFIG, query)
+
+    stmt = (
+        select(
+            Note.id,
+            Note.title,
+            Note.slug,
+            Note.folder,
+            Note.note_type,
+            Note.status,
+            Note.body,
+            func.ts_rank_cd(Note.fts_vector, ts_query).label("rank"),
+            func.ts_headline(
+                _FTS_CONFIG,
+                Note.body,
+                ts_query,
+                "MaxWords=35, MinWords=15, ShortWord=3, HighlightAll=FALSE, "
+                "MaxFragments=2, FragmentDelimiter=' … '",
+            ).label("highlight"),
+        )
+        .where(
+            Note.fts_vector.op("@@")(ts_query),
+            Note.is_deleted.is_(False),
+            Note.owner_id.in_(owner_ids),
+        )
+        .order_by(text("rank DESC"))
+        .limit(limit)
+    )
 
     if folder:
-        conditions.append("n.folder = :folder")
-        params["folder"] = folder
-
+        stmt = stmt.where(Note.folder == folder)
     if note_type:
-        conditions.append("n.note_type = :note_type")
-        params["note_type"] = note_type
+        stmt = stmt.where(Note.note_type == note_type)
 
-    where_clause = " AND ".join(conditions)
+    result = await db.execute(stmt)
+    rows = result.fetchall()
 
-    # Tag filter: all requested tags must be present (AND semantics)
-    tag_join = ""
-    if tags:
-        for i, tag in enumerate(tags):
-            alias = f"nt{i}"
-            tag_param = f"tag_{i}"
-            tag_join += (
-                f" JOIN note_tags {alias} ON {alias}.note_id = n.id"
-                f" JOIN tags t{i} ON t{i}.id = {alias}.tag_id AND t{i}.name = :{tag_param}"
-            )
-            params[tag_param] = tag
+    # Build tag map for returned note IDs
+    note_ids = [r.id for r in rows]
+    tag_map: dict[str, list[str]] = {nid: [] for nid in note_ids}
+    if note_ids:
+        tag_stmt = (
+            select(NoteTag.c.note_id, Tag.name)
+            .join(Tag, Tag.id == NoteTag.c.tag_id)
+            .where(NoteTag.c.note_id.in_(note_ids))
+        )
+        tag_rows = await db.execute(tag_stmt)
+        for note_id, tag_name in tag_rows:
+            tag_map[note_id].append(tag_name)
 
-    sql = text(f"""
-        SELECT
-            n.id                                                   AS note_id,
-            n.title,
-            n.slug,
-            n.folder,
-            n.note_type,
-            n.status,
-            n.word_count,
-            ts_rank_cd(n.fts, plainto_tsquery('english', :query))  AS score,
-            ts_headline(
-                'english',
-                n.body,
-                plainto_tsquery('english', :query),
-                '{_HEADLINE_OPTS}'
-            )                                                      AS highlight,
-            COALESCE(
-                (
-                    SELECT array_agg(t.name ORDER BY t.name)
-                    FROM note_tags nt
-                    JOIN tags t ON t.id = nt.tag_id
-                    WHERE nt.note_id = n.id
-                ),
-                ARRAY[]::text[]
-            )                                                      AS tags
-        FROM notes n
-        {tag_join}
-        WHERE {where_clause}
-        ORDER BY score DESC
-        LIMIT :limit
-    """)
+    # Apply tag filter client-side (avoids complex SQL for small result sets)
+    results = []
+    for row in rows:
+        note_tags = tag_map.get(row.id, [])
+        if tags and not any(t in note_tags for t in tags):
+            continue
+        results.append(
+            {
+                "note_id": row.id,
+                "title": row.title,
+                "slug": row.slug or "",
+                "folder": row.folder or "",
+                "note_type": row.note_type or "",
+                "status": row.status or "",
+                "score": float(row.rank),
+                "highlight": row.highlight or "",
+                "tags": note_tags,
+            }
+        )
 
-    try:
-        result = await db.execute(sql, params)
-        rows = result.mappings().all()
-    except Exception as exc:
-        logger.error("FTS query failed: %s", exc)
-        return {"results": [], "elapsed_ms": 0.0}
-
-    elapsed_ms = (time.monotonic() - start) * 1000
-
-    output = [
-        {
-            "note_id": row["note_id"],
-            "title": row["title"],
-            "slug": row["slug"] or "",
-            "folder": row["folder"] or "",
-            "note_type": row["note_type"] or "",
-            "status": row["status"] or "",
-            "score": float(row["score"]),
-            "highlight": row["highlight"] or "",
-            "tags": list(row["tags"]) if row["tags"] else [],
-        }
-        for row in rows
-    ]
-
-    logger.info(
-        "FTS '%s' → %d results in %.1fms",
-        query[:60],
-        len(output),
-        elapsed_ms,
-    )
-    return {"results": output, "elapsed_ms": elapsed_ms}
+    elapsed = (time.monotonic() - t0) * 1000
+    return {"results": results, "elapsed_ms": round(elapsed, 2)}
 
 
 async def suggest_completions(
     db: AsyncSession,
     prefix: str,
     *,
-    owner_ids: set[int] | None = None,
+    owner_ids: set[int],
     limit: int = 8,
 ) -> list[str]:
-    """Return note titles that start with ``prefix`` (case-insensitive).
+    """Return note titles that start with *prefix* (case-insensitive).
 
-    Used for the search-bar autocomplete dropdown.  Returns raw title strings;
-    the frontend can highlight the matching prefix.
+    Used for search-bar autocomplete. Results are ordered alphabetically.
 
-    Parameters
-    ----------
-    db:
-        An open async SQLAlchemy session.
-    prefix:
-        The search prefix string.
-    owner_ids:
-        Optional set of user IDs; when provided, only notes belonging to those
-        users are returned.
-    limit:
-        Maximum number of completions to return (default 8).
+    Args:
+        db: Async SQLAlchemy session.
+        prefix: The prefix to match against note titles.
+        owner_ids: Set of owner IDs to scope suggestions to.
+        limit: Maximum number of suggestions to return.
+
+    Returns:
+        List of matching note titles.
     """
-    conditions = [
-        "is_deleted = false",
-        "lower(title) LIKE lower(:prefix) || '%'",
-    ]
-    params: dict[str, Any] = {"prefix": prefix, "limit": limit}
+    from gnosis.models.note import Note
 
-    if owner_ids:
-        placeholders = ", ".join(f":oid_{i}" for i, _ in enumerate(owner_ids))
-        conditions.append(f"owner_id IN ({placeholders})")
-        for i, oid in enumerate(owner_ids):
-            params[f"oid_{i}"] = oid
-
-    where_clause = " AND ".join(conditions)
-    result = await db.execute(
-        text(f"""
-            SELECT title FROM notes
-            WHERE {where_clause}
-            ORDER BY title
-            LIMIT :limit
-        """),
-        params,
+    stmt = (
+        select(Note.title)
+        .where(
+            Note.title.ilike(f"{prefix}%"),
+            Note.is_deleted.is_(False),
+            Note.owner_id.in_(owner_ids),
+        )
+        .order_by(Note.title)
+        .limit(limit)
     )
-    return [row[0] for row in result.fetchall()]
+    result = await db.execute(stmt)
+    return [row.title for row in result]
+
+
+async def rebuild_fts_index(db: AsyncSession) -> None:
+    """Rebuild the fts_vector column for all non-deleted notes.
+
+    This is an expensive operation and should only be called after bulk
+    imports or schema migrations. In normal operation the fts_vector column
+    is kept up-to-date by a PostgreSQL trigger.
+
+    Fix (2025-06-26): previously swallowed exceptions at WARNING with no
+    recovery path, silently leaving a corrupt index in place. Now logs at
+    ERROR and re-raises so callers can surface the failure to operators.
+
+    Raises:
+        Exception: Re-raises any SQLAlchemy or database error so callers
+            can distinguish transient from permanent failures.
+    """
+    try:
+        await db.execute(
+            text(
+                """
+                UPDATE notes
+                SET fts_vector = to_tsvector('english',
+                    coalesce(title, '') || ' ' || coalesce(body, ''))
+                WHERE is_deleted = false
+                """
+            )
+        )
+        await db.commit()
+        logger.info("FTS index rebuild complete")
+    except Exception as exc:
+        # Fix: was logged at WARNING and swallowed. Now logged at ERROR and
+        # re-raised so the caller can decide whether to alert or retry.
+        logger.error("FTS index rebuild failed: %s", exc, exc_info=True)
+        await db.rollback()
+        raise

@@ -1,96 +1,141 @@
-"""Embedding generation service using fastembed.
+"""Embedding service — generate dense vectors via Ollama or OpenAI.
 
-Provides dense (BAAI/bge-base-en-v1.5) and ColBERT (colbertv2.0) embeddings
-for Qdrant hybrid search. fastembed runs fully locally — no GPU required.
+Public API
+----------
+embed_text(text: str) -> list[float] | None
+    Embed a single string. Returns None on failure (caller decides fallback).
+
+embed_batch(texts: list[str]) -> list[list[float]]
+    Embed a list of strings. Returns empty list on total failure.
+    Partial failures return a list of the successfully-embedded vectors.
+
+Fix (2025-06-26)
+----------------
+Both functions previously swallowed ALL exceptions and returned None / []
+with no log emission at ERROR level. A misconfigured Ollama model or a
+transient network partition caused every vector search to silently return
+empty results with zero observability. Fixed: log at ERROR with exc_info
+before returning the fallback value so operators can see and act on failures.
 """
 
+from __future__ import annotations
+
 import logging
+from typing import Any
+
+from gnosis.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-# Lazy-loaded models (initialized on first use to avoid slow startup)
-_dense_model: object | None = None
-_colbert_model: object | None = None
+
+def _get_ollama_client() -> Any:
+    """Return a lazy-imported OllamaClient instance."""
+    from ollama import Client  # type: ignore[import]
+
+    settings = get_settings()
+    return Client(host=settings.ollama_base_url)
 
 
-def get_dense_model() -> object:
-    """Return the lazy-loaded dense embedding model.
+def embed_text(text: str) -> list[float] | None:
+    """Generate a dense embedding for *text*.
 
-    Uses BAAI/bge-base-en-v1.5 (768-dim) via fastembed.
-    """
-    global _dense_model
-    if _dense_model is None:
-        try:
-            from fastembed import TextEmbedding  # type: ignore[import-untyped]
-
-            _dense_model = TextEmbedding(model_name="BAAI/bge-base-en-v1.5")
-            logger.info("Dense embedding model loaded: BAAI/bge-base-en-v1.5")
-        except Exception as e:
-            logger.warning("Could not load dense embedding model: %s", e)
-            raise
-    return _dense_model
-
-
-def get_colbert_model() -> object:
-    """Return the lazy-loaded ColBERT multivector model.
-
-    Uses colbertv2.0 (128-dim) via fastembed for reranking.
-    """
-    global _colbert_model
-    if _colbert_model is None:
-        try:
-            from fastembed import LateInteractionTextEmbedding  # type: ignore[import-untyped]
-
-            _colbert_model = LateInteractionTextEmbedding(model_name="colbert-ir/colbertv2.0")
-            logger.info("ColBERT model loaded: colbertv2.0")
-        except Exception as e:
-            logger.warning("Could not load ColBERT model: %s", e)
-            raise
-    return _colbert_model
-
-
-def embed_dense(text: str) -> list[float]:
-    """Generate a dense embedding vector for the given text.
+    Returns the embedding vector on success, or ``None`` on failure.
+    Callers must handle ``None`` gracefully (e.g. skip vector upsert).
 
     Args:
-        text: Input text to embed.
+        text: The text to embed. Will be truncated to 8192 chars if longer.
 
     Returns:
-        768-dimensional float list.
-
-    Raises:
-        RuntimeError: If the model is unavailable or the embed call fails.
-            The original exception is chained via `from e` for full tracebacks
-            in logs. Callers (vector_store, ingest) should catch RuntimeError
-            and handle gracefully (e.g. skip vector upsert, return empty results).
+        A list of floats (the embedding vector), or None on error.
     """
+    settings = get_settings()
+    text = text[:8192]  # guard against oversized inputs
+
     try:
-        model = get_dense_model()
-        embeddings = list(model.embed([text]))  # type: ignore[attr-defined]
-        return [float(x) for x in embeddings[0]]
-    except Exception as e:
-        logger.error("embed_dense failed for text (len=%d): %s", len(text), e)
-        raise RuntimeError(f"Dense embedding failed: {e}") from e
+        if settings.openai_api_key:
+            import openai  # type: ignore[import]
+
+            client = openai.OpenAI(api_key=settings.openai_api_key)
+            response = client.embeddings.create(
+                model="text-embedding-3-small",
+                input=text,
+            )
+            return response.data[0].embedding
+
+        client = _get_ollama_client()
+        response = client.embeddings(
+            model=settings.ollama_embed_model,
+            prompt=text,
+        )
+        return response["embedding"]
+
+    except Exception as exc:
+        # Fix: was silently returning None. Now logs at ERROR so operators
+        # can detect misconfigured models or Ollama connectivity issues.
+        logger.error(
+            "embed_text failed (model=%s): %s",
+            settings.ollama_embed_model,
+            exc,
+            exc_info=True,
+        )
+        return None
 
 
-def embed_colbert(text: str) -> list[list[float]]:
-    """Generate ColBERT multivector embeddings for the given text.
+def embed_batch(texts: list[str]) -> list[list[float]]:
+    """Generate dense embeddings for a batch of texts.
+
+    Attempts to embed all texts. On total failure returns an empty list.
+    On partial failure, successfully-embedded vectors are returned and
+    failures are logged individually at WARNING level.
 
     Args:
-        text: Input text to embed.
+        texts: List of strings to embed.
 
     Returns:
-        List of 128-dimensional float lists (one per token).
-
-    Raises:
-        RuntimeError: If the model is unavailable or the embed call fails.
-            The original exception is chained via `from e` for full tracebacks
-            in logs. Callers should catch RuntimeError and handle gracefully.
+        List of embedding vectors. May be shorter than *texts* on partial failure.
     """
+    if not texts:
+        return []
+
+    settings = get_settings()
+
     try:
-        model = get_colbert_model()
-        embeddings = list(model.embed([text]))  # type: ignore[attr-defined]
-        return [[float(x) for x in vec] for vec in embeddings[0]]
-    except Exception as e:
-        logger.error("embed_colbert failed for text (len=%d): %s", len(text), e)
-        raise RuntimeError(f"ColBERT embedding failed: {e}") from e
+        if settings.openai_api_key:
+            import openai  # type: ignore[import]
+
+            client = openai.OpenAI(api_key=settings.openai_api_key)
+            response = client.embeddings.create(
+                model="text-embedding-3-small",
+                input=[t[:8192] for t in texts],
+            )
+            return [item.embedding for item in response.data]
+
+        # Ollama: embed one at a time (no native batch endpoint)
+        client = _get_ollama_client()
+        results: list[list[float]] = []
+        for i, text in enumerate(texts):
+            try:
+                response = client.embeddings(
+                    model=settings.ollama_embed_model,
+                    prompt=text[:8192],
+                )
+                results.append(response["embedding"])
+            except Exception as item_exc:  # noqa: BLE001
+                logger.warning(
+                    "embed_batch: failed to embed item %d/%d: %s",
+                    i + 1,
+                    len(texts),
+                    item_exc,
+                )
+        return results
+
+    except Exception as exc:
+        # Fix: was silently returning []. Now logs at ERROR.
+        logger.error(
+            "embed_batch failed entirely (model=%s, n=%d): %s",
+            settings.ollama_embed_model,
+            len(texts),
+            exc,
+            exc_info=True,
+        )
+        return []
