@@ -57,19 +57,11 @@ except ImportError:
 
 
 class GraphRAGService:
-    """Wraps per-user LightRAG lifecycle and exposes ingest / query / stream helpers.
-
-    Each ``user_id`` maps to its own LightRAG instance backed by a
-    separate on-disk working directory, providing complete graph isolation
-    between vaults.
-
-    Shared-vault members receive merged answers from all accessible graphs
-    when ``owner_ids`` is passed to ``query()`` or ``stream()``.
-    """
+    """Wraps per-user LightRAG lifecycle and exposes ingest / query / stream helpers."""
 
     def __init__(self) -> None:
         self._instances: dict[int, Any] = {}
-        self._base_dir = Path(settings.lightrag_data_dir)
+        self._base_dir = Path(getattr(settings, "lightrag_data_dir", "/tmp/lightrag"))
 
     def _working_dir(self, user_id: int) -> Path:
         if user_id == _LEGACY_USER_ID:
@@ -77,21 +69,36 @@ class GraphRAGService:
         return self._base_dir / str(user_id)
 
     async def _get_instance(self, user_id: int) -> Any:
-        """Return the LightRAG instance for *user_id*, initialising if needed."""
+        """Return the LightRAG instance for *user_id*, initialising if needed.
+
+        Guarantees
+        ----------
+        - Never raises; returns ``None`` on any failure.
+        - If init fails, ``user_id`` is removed from ``_instances`` so the
+          next call will retry rather than returning a stale entry.
+        """
         if not _LIGHTRAG_AVAILABLE:
             return None
         if user_id in self._instances:
             return self._instances[user_id]
 
-        working_dir = self._working_dir(user_id)
-        working_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            working_dir = self._working_dir(user_id)
+            working_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "GraphRAGService: could not create working dir for user %s: %s", user_id, exc
+            )
+            return None
+
+        instance: Any = None
         try:
             instance = LightRAG(
                 working_dir=str(working_dir),
                 llm_model_func=ollama_model_complete,
-                llm_model_name=settings.ollama_llm_model,
+                llm_model_name=getattr(settings, "ollama_llm_model", "llama3.2"),
                 embedding_func=ollama_embed,
-                embedding_model=settings.ollama_embed_model,
+                embedding_model=getattr(settings, "ollama_embed_model", "nomic-embed-text"),
                 entity_types=[
                     "concept",
                     "person",
@@ -110,14 +117,18 @@ class GraphRAGService:
             )
             return instance
         except Exception as exc:  # noqa: BLE001
-            logger.error("GraphRAGService: LightRAG init failed for user %s: %s", user_id, exc)
+            # Remove any partially-inserted entry so subsequent calls retry cleanly.
+            self._instances.pop(user_id, None)
+            logger.error(
+                "GraphRAGService: LightRAG init failed for user %s: %s", user_id, exc
+            )
             return None
 
     async def initialize(self, user_id: int = _LEGACY_USER_ID) -> None:
         """Pre-warm the LightRAG instance for *user_id* (called at startup)."""
         await self._get_instance(user_id)
 
-    async def is_available(self, user_id: int = _LEGACY_USER_ID) -> bool:  # type: ignore[override]
+    async def is_available(self, user_id: int = _LEGACY_USER_ID) -> bool:
         """Return True when LightRAG is installed and the instance for *user_id* is ready."""
         return _LIGHTRAG_AVAILABLE and user_id in self._instances
 
@@ -137,18 +148,7 @@ class GraphRAGService:
             logger.warning("GraphRAGService.ingest_note failed for user %s: %s", user_id, exc)
 
     async def export_graph(self, owner_ids: list[int]) -> dict[str, Any]:
-        """Export the LightRAG entity/relation graph for the given owner_ids.
-
-        Returns a dict with ``nodes`` and ``links`` lists suitable for D3
-        visualisation.  Falls back to an empty graph if LightRAG is not
-        initialised or no entity data is available.
-
-        Args:
-            owner_ids: List of user IDs whose graphs to merge.
-
-        Returns:
-            {"nodes": [...], "links": [...]}
-        """
+        """Export the LightRAG entity/relation graph for the given owner_ids."""
         nodes: list[dict[str, Any]] = []
         links: list[dict[str, Any]] = []
 
@@ -157,8 +157,6 @@ class GraphRAGService:
             if instance is None:
                 continue
             try:
-                # LightRAG exposes entity/relation data via chunk_entity_relation_graph
-                # when available; fall back to the working directory JSON files.
                 if hasattr(instance, "chunk_entity_relation_graph"):
                     graph = instance.chunk_entity_relation_graph
                     for node_id, data in graph.nodes(data=True):
@@ -180,7 +178,6 @@ class GraphRAGService:
                             }
                         )
                 else:
-                    # Newer LightRAG versions store entities in working_dir JSON
                     import json
 
                     wd = self._working_dir(uid)
