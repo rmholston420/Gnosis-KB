@@ -185,8 +185,21 @@ class IngestQueue:
         task: IngestTask,
         loop: asyncio.AbstractEventLoop | None = None,
     ) -> None:
-        """Thread-safe variant for use from watchdog observer threads."""
-        _loop = loop or asyncio.get_event_loop()
+        """Thread-safe variant for use from watchdog observer threads.
+
+        Uses asyncio.get_running_loop() (Python 3.10+) which raises RuntimeError
+        if called outside a running event loop. The loop parameter allows callers
+        to pass an explicit loop reference (e.g. captured during startup) which
+        is the recommended pattern for watchdog thread callbacks.
+        """
+        try:
+            _loop = loop or asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop in this thread — caller must supply one explicitly.
+            raise RuntimeError(
+                "enqueue_threadsafe called from a thread with no running event loop. "
+                "Pass the app event loop explicitly: queue.enqueue_threadsafe(task, loop=app_loop)"
+            )
         _loop.call_soon_threadsafe(self._queue.put_nowait, task)
 
     # ------------------------------------------------------------------
@@ -282,9 +295,8 @@ class IngestQueue:
     ) -> None:
         """Broadcast a progress event on the vault WebSocket channel.
 
-        The vault_ws router receives these events and relays them to any
-        connected browser clients so the VaultSyncPage can show a live
-        progress bar without polling.
+        Fixed: was importing from gnosis.routers.vault_ws (non-existent module).
+        Corrected to gnosis.routers.ws where broadcast_vault_event lives.
 
         Non-fatal — if the WebSocket manager is unavailable, the event
         is logged and dropped.
@@ -292,7 +304,7 @@ class IngestQueue:
         try:
             import asyncio
 
-            from gnosis.routers.vault_ws import broadcast_vault_event
+            from gnosis.routers.ws import broadcast_vault_event
 
             event = {
                 "type": "ingest_progress",
@@ -306,7 +318,7 @@ class IngestQueue:
             }
             asyncio.create_task(broadcast_vault_event(event))
         except ImportError:
-            pass  # vault_ws not yet wired up — no-op
+            pass  # ws router not yet wired up — no-op
         except Exception as exc:  # noqa: BLE001
             logger.debug("_emit_progress failed: %s", exc)
 

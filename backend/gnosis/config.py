@@ -12,10 +12,13 @@ get_settings      : () -> Settings  -- lru_cache shim for FastAPI Depends()
 
 from __future__ import annotations
 
+import sys
 from functools import lru_cache
 
-from pydantic import computed_field
+from pydantic import computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_DEFAULT_SECRET = "CHANGE_ME_IN_PRODUCTION_USE_OPENSSL_RAND_HEX_32"
 
 
 class Settings(BaseSettings):
@@ -25,7 +28,6 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
-        # Environment variables always win over .env file
         env_nested_delimiter=None,
     )
 
@@ -35,9 +37,11 @@ class Settings(BaseSettings):
 
     # Vector store
     qdrant_url: str = "http://qdrant:6333"
-    qdrant_collection: str = "gnosis_notes"
-    qdrant_api_key: str | None = None
+    # Single canonical name — the former `qdrant_collection` duplicate field has
+    # been removed. Any env var previously set as QDRANT_COLLECTION should be
+    # renamed to QDRANT_COLLECTION_NAME.
     qdrant_collection_name: str = "gnosis_notes"
+    qdrant_api_key: str | None = None
 
     # Vault
     vault_path: str = "/vault"
@@ -49,7 +53,7 @@ class Settings(BaseSettings):
     lightrag_data_dir: str = "/lightrag"
 
     # Auth
-    secret_key: str = "CHANGE_ME_IN_PRODUCTION_USE_OPENSSL_RAND_HEX_32"
+    secret_key: str = _DEFAULT_SECRET
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 10080  # 7 days
     auth_required: bool = False
@@ -78,6 +82,26 @@ class Settings(BaseSettings):
     # Bootstrap admin
     initial_admin_email: str = "admin@gnosis.local"
     initial_admin_password: str = "gnosis_admin"
+
+    @model_validator(mode="after")
+    def _check_secret_key_in_production(self) -> "Settings":
+        """Fail fast if the default placeholder secret_key is used outside debug mode.
+
+        A production deploy with the well-known placeholder key allows any
+        attacker to forge valid JWTs. This guard causes an explicit startup
+        crash with a clear message rather than silent insecurity.
+        """
+        if not self.debug and self.secret_key == _DEFAULT_SECRET:
+            print(  # noqa: T201
+                "\n[FATAL] secret_key is still the default placeholder value.\n"
+                "Set SECRET_KEY to a random 32-byte hex string before running in production.\n"
+                "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\"\n",
+                file=sys.stderr,
+            )
+            raise ValueError(
+                "SECRET_KEY must be changed from the default before running with debug=False"
+            )
+        return self
 
     @computed_field  # type: ignore[misc]
     @property

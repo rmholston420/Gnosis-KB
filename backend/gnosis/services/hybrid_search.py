@@ -123,16 +123,22 @@ def hybrid_search(
         )
         points = results.points
     except Exception as e:
-        logger.warning("Hybrid search failed, falling back to dense: %s", e)
-        # Fallback: pure dense search (namespace filter preserved)
-        results = client.search(
-            collection_name=collection,
-            query_vector=("dense", dense_vec),
-            limit=limit,
-            query_filter=query_filter,
-            with_payload=True,
-        )
-        points = results  # type: ignore[assignment]
+        logger.warning("Hybrid search failed, falling back to dense-only query_points: %s", e)
+        # Fallback: pure dense search via query_points (client.search is deprecated
+        # in qdrant-client >= 1.7 and removed in 2.x).
+        try:
+            fallback_results = client.query_points(
+                collection_name=collection,
+                query=dense_vec,
+                using="dense",
+                limit=limit,
+                query_filter=query_filter,
+                with_payload=True,
+            )
+            points = fallback_results.points
+        except Exception as e2:
+            logger.error("Dense fallback search also failed: %s", e2)
+            return {"results": [], "elapsed_ms": (time.monotonic() - start) * 1000}
 
     elapsed_ms = (time.monotonic() - start) * 1000
 

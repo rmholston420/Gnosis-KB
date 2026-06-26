@@ -56,34 +56,35 @@ def get_session_factory() -> async_sessionmaker:
     return _session_factory
 
 
-def _get_async_session_local() -> async_sessionmaker:
-    """Lazy proxy so AsyncSessionLocal works as an async context manager.
+class _AsyncSessionLocalProxy:
+    """Proxy that delegates __call__ and async CM to a new session from the factory.
 
     Usage::
         async with AsyncSessionLocal() as session:
             ...
-    """
-    return get_session_factory()
 
-
-class _AsyncSessionLocalProxy:
-    """Proxy that delegates __call__ and async CM to the real factory.
-
-    This lets vault_sync (and any other module) write::
-
-        async with AsyncSessionLocal() as db: ...
-
-    without caring whether the factory has been initialised yet.
+    Fix: __aenter__ and __aexit__ must operate on a *session instance*
+    (factory()()) rather than on the factory itself. Calling __aenter__
+    on the async_sessionmaker factory (not a session) returned the factory
+    object instead of an AsyncSession, breaking all ORM calls.
     """
 
-    def __call__(self) -> AsyncSession:  # type: ignore[override]
+    def __call__(self):
+        """Return a new AsyncSession context-manager."""
         return get_session_factory()()
 
     def __aenter__(self):
-        return get_session_factory().__aenter__()
+        # Create a fresh session and enter its context manager.
+        return get_session_factory()().__aenter__()
 
     def __aexit__(self, *args):
-        return get_session_factory().__aexit__(*args)
+        # NOTE: This path is only hit when AsyncSessionLocal is used directly
+        # as ``async with AsyncSessionLocal:`` (without calling it).
+        # Prefer ``async with AsyncSessionLocal() as db:`` which calls __call__
+        # and delegates __aexit__ to the session returned by __aenter__.
+        # This fallback creates a temporary session purely to satisfy the
+        # protocol; in practice it is never reached in well-formed usage.
+        return get_session_factory()().__aexit__(*args)
 
 
 # Correct alias: calling AsyncSessionLocal() returns an AsyncSession

@@ -32,6 +32,18 @@ async def on_startup() -> None:
     except Exception:  # noqa: BLE001
         pass
 
+    # Ensure DB tables exist (idempotent — safe to run on every startup).
+    # This guarantees a fresh Docker Compose deploy works without a manual
+    # `alembic upgrade head` step. When real migrations are in use, Alembic
+    # will skip tables that already exist.
+    try:
+        from gnosis.database import init_db
+
+        await init_db()
+        logger.info("Database schema initialised")
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Database init failed — app may be non-functional: %s", exc)
+
     # Initialise LightRAG if available
     try:
         from gnosis.services import graph_rag

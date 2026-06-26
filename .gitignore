@@ -64,6 +64,11 @@ vault/**/*.jpg
 # LightRAG working directory
 backend/lightrag-data/
 
+# SQLite test/dev databases — never commit DB files
+*.db
+*.sqlite
+*.sqlite3
+
 # IDE
 .vscode/
 .idea/
