@@ -1,18 +1,15 @@
-import React from 'react';
-import AIChat from '../components/AIChat';
-
-export default function AIChatPage() {
-  return (
-    <div data-testid="ai-chat" className="flex flex-col h-full bg-gnosis-bg">
-      <div className="px-6 pt-6 pb-2 border-b border-gnosis-border">
-        <h1 className="text-xl font-semibold text-gnosis-fg">AI Chat</h1>
-        <p className="text-sm text-gnosis-muted mt-1">
-          Ask questions about your vault using hybrid RAG retrieval.
-        </p>
-      </div>
-      <div className="flex-1 overflow-hidden">
-        <AIChat />
-      </div>
-    </div>
-  );
-}
+/**
+ * AIChatPage.tsx — canonical AI chat page re-exported from AiPage.
+ *
+ * The two pages (AiPage.tsx and AIChatPage.tsx) were duplicated:
+ * - AIChatPage wrapped AIChat component directly (simple RAG chat only)
+ * - AiPage wrapped AiSidebar + LinkSuggestions (richer context panel)
+ *
+ * Resolution (P5 #11): AIChatPage is now a thin re-export of AiPage so there
+ * is one authoritative implementation. Routes that previously pointed at
+ * AIChatPage automatically get the richer AiPage experience.
+ *
+ * If a future route needs the bare <AIChat /> embed without the AI sidebar,
+ * import AIChat directly from '@/components/AIChat'.
+ */
+export { default } from './AiPage';
