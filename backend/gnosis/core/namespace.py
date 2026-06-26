@@ -5,6 +5,14 @@ All note queries that touch the database MUST go through one of:
   - ``get_accessible_user_ids()`` -- set of user IDs readable by current_user
 
 This keeps the isolation logic in one place rather than scattered across routers.
+
+Synthetic guest (id=0)
+----------------------
+When ``AUTH_REQUIRED=false`` and the DB has no real users yet, auth.py
+returns a synthetic ``User(id=0)``.  ``get_accessible_owner_ids`` treats
+``id=0`` as a signal to return the empty set, and ``scoped_note_stmt``
+treats an empty owner_ids as "no filter" (returns all notes).  Together
+this makes the app fully usable on a fresh install without any DB seed.
 """
 
 from __future__ import annotations
@@ -51,6 +59,10 @@ def ensure_vault_directory(user: User) -> Path:
 # Query scoping
 # ---------------------------------------------------------------------------
 
+#: Sentinel id used by the synthetic guest returned when AUTH_REQUIRED=false
+#: and no real users exist.  Must match the value in gnosis/core/auth.py.
+_GUEST_ID = 0
+
 
 async def get_accessible_owner_ids(
     current_user: User,
@@ -64,13 +76,24 @@ async def get_accessible_owner_ids(
 
     If *target_owner_id* is given, additionally verify the current user
     has access to that specific owner's vault (raises ValueError if not).
+
+    Special case
+    ------------
+    When *current_user* is the synthetic guest (id=0, created when
+    AUTH_REQUIRED=false and the DB has no real users), this function returns
+    the **empty set** ``set()``.  ``scoped_note_stmt`` treats an empty set as
+    "no owner filter" so all notes are visible — correct for local single-user
+    mode before any accounts are created.
     """
+    # Synthetic guest: skip all DB queries and return empty set so that
+    # scoped_note_stmt falls through to the "no filter" branch below.
+    if current_user.id == _GUEST_ID:
+        return set()
+
     from gnosis.models.shared_vault import SharedVault  # local to avoid circular
 
     accessible: set[int] = {current_user.id}
 
-    # Fetch SharedVault records that this user is a member of in a single join query.
-    # Returns SharedVault ORM objects so .owner_id is accessible on each result.
     result = await session.execute(
         select(SharedVault)
         .join(
@@ -103,7 +126,17 @@ def scoped_note_stmt(
     ``include_null_owner=True`` (default) also returns legacy notes where
     ``owner_id`` is NULL so existing data is visible before the migration
     backfill runs.
+
+    Empty *owner_ids* (synthetic guest or unscoped query)
+    -------------------------------------------------------
+    When *owner_ids* is empty, no owner filter is applied at all — all notes
+    are returned regardless of ``owner_id``.  This is the correct behaviour
+    for local single-user mode (AUTH_REQUIRED=false, no real users seeded).
     """
+    if not owner_ids:
+        # No owner filter — return all notes (local single-user mode).
+        return base_stmt
+
     if include_null_owner:
         from sqlalchemy import or_
 
