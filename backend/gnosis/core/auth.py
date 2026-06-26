@@ -234,12 +234,16 @@ async def get_vault_owner_ids(
             detail=f"Invalid {_VAULT_HEADER} header value: {raw_header!r}. Must be an integer user ID.",
         )
 
+    # Own vault — no grant check required.
     if target_id == current_user.id:
         return {current_user.id}
 
-    try:
-        await get_accessible_owner_ids(current_user, db, target_owner_id=target_id)
-    except ValueError:
+    # FIX: previously used `except ValueError` as control flow, which would
+    # also swallow unrelated ValueErrors from deeper in get_accessible_owner_ids
+    # (e.g. DB type coercion errors) and return a misleading 403.
+    # Now we explicitly check membership in the accessible set instead.
+    accessible = await get_accessible_owner_ids(current_user, db)
+    if target_id not in accessible:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(

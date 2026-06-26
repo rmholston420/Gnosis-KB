@@ -359,6 +359,7 @@ async def get_note_graph(
 ) -> dict:
     from gnosis.models.link import Link
 
+    # Fetch scoped note IDs and metadata
     notes_stmt = scoped_note_stmt(
         select(Note.id, Note.title, Note.folder, Note.note_type).where(Note.is_deleted.is_(False)),
         owner_ids,
@@ -369,8 +370,18 @@ async def get_note_graph(
         for r in notes_rows
     ]
 
-    links_stmt = select(Link.source_id, Link.target_id, Link.link_type)
-    links_rows = (await db.execute(links_stmt)).all()
+    # FIX: scope edges to only the note IDs visible to this user.
+    # Previously this was SELECT * from links with no filter, leaking
+    # cross-vault wikilink relationships in multi-user deployments.
+    visible_ids = {r.id for r in notes_rows}
+    if visible_ids:
+        links_stmt = select(Link.source_id, Link.target_id, Link.link_type).where(
+            Link.source_id.in_(visible_ids)
+        )
+        links_rows = (await db.execute(links_stmt)).all()
+    else:
+        links_rows = []
+
     edges = [
         {"source": r.source_id, "target": r.target_id, "type": r.link_type} for r in links_rows
     ]
