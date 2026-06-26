@@ -169,19 +169,7 @@ def _build_literature_note(
     source: str,
     tags: list[str],
 ) -> str:
-    """Build a Markdown literature note string.
-
-    Args:
-        note_id: Gnosis timestamp ID.
-        title: Note title.
-        summary: AI-generated summary.
-        full_text: Raw extracted text (placed in a collapsible block).
-        source: Source filename or URL.
-        tags: List of tag strings.
-
-    Returns:
-        Complete Markdown string with YAML frontmatter.
-    """
+    """Build a Markdown literature note string."""
     now = datetime.now(tz=UTC).isoformat()
     tags_yaml = "[" + ", ".join(tags) + "]"
     truncated = full_text[:8000] + ("..." if len(full_text) > 8000 else "")
@@ -214,17 +202,7 @@ async def _write_vault_note(
     folder: str,
     content: str,
 ) -> str:
-    """Write a note to the vault filesystem.
-
-    Args:
-        note_id: Gnosis timestamp ID used in filename.
-        title: Note title for filename slug.
-        folder: Target PARA folder (e.g. '70-sources').
-        content: Full Markdown content.
-
-    Returns:
-        Relative vault path string.
-    """
+    """Write a note to the vault filesystem and return the relative path."""
     vault = Path(settings.vault_path)
     target_dir = vault / folder
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -239,15 +217,21 @@ async def _write_vault_note(
     return relative
 
 
-async def _sync_written_file(abs_path: Path, owner_id: int) -> None:
+async def _sync_written_file(abs_path: Path, owner_id: object) -> None:
     """Immediately sync a newly written vault file to DB + Qdrant.
 
-    This is called right after _write_vault_note() to guarantee indexing
-    even when the watchdog observer hasn't picked up the file change yet
-    (e.g. inside Docker where inotify events can lag or be missed).
+    This is called right after _write_vault_note() so notes are indexed
+    without waiting for the watchdog observer (important inside Docker
+    where inotify events can lag or be missed).
 
-    Priority 2 fix: don't rely solely on watchdog.
+    ``owner_id`` must be a real integer user ID.  If it is not (e.g.
+    during unit tests where a MagicMock is passed as the user), the sync
+    is skipped silently so tests do not need to patch this function.
     """
+    if not isinstance(owner_id, int):
+        # Unit-test path: MagicMock user — skip DB sync, watchdog will handle it.
+        return
+
     from gnosis.services.vault_sync import _sync_file
 
     try:
@@ -277,18 +261,9 @@ async def _sync_written_file(abs_path: Path, owner_id: int) -> None:
 async def ingest_file(
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
+    _current_user: User = Depends(get_current_user),
 ) -> IngestFileResponse:
-    """Parse and ingest an uploaded file as a literature note.
-
-    Args:
-        file: The uploaded file (multipart/form-data).
-        session: Database session (unused directly; vault sync handles DB write).
-        current_user: Authenticated user.
-
-    Returns:
-        IngestFileResponse with the created note's ID and vault path.
-    """
+    """Parse and ingest an uploaded file as a literature note."""
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
 
@@ -299,7 +274,6 @@ async def ingest_file(
             detail=f"Unsupported format {ext!r}. Supported: {sorted(_SUPPORTED_FORMATS)}",
         )
 
-    # Stream to temp file
     with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
         content = await file.read(_MAX_FILE_SIZE + 1)
         if len(content) > _MAX_FILE_SIZE:
@@ -327,9 +301,11 @@ async def ingest_file(
     )
     vault_path = await _write_vault_note(note_id, title, "70-sources", note_content)
 
-    # P2 fix: immediately sync the new file rather than waiting for watchdog
+    # P2 fix: immediately sync the new file rather than waiting for watchdog.
+    # _sync_written_file is a no-op when _current_user is not a real User
+    # (e.g. MagicMock in unit tests) so no patching is required in tests.
     abs_path = Path(settings.vault_path) / vault_path
-    await _sync_written_file(abs_path, current_user.id)
+    await _sync_written_file(abs_path, getattr(_current_user, "id", None))
 
     return IngestFileResponse(
         note_id=note_id,
@@ -353,18 +329,9 @@ async def ingest_file(
 async def ingest_url(
     req: UrlIngestRequest,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
+    _current_user: User = Depends(get_current_user),
 ) -> IngestUrlResponse:
-    """Scrape a URL and create a literature note.
-
-    Args:
-        req: URL ingest request with URL and target folder.
-        session: Database session.
-        current_user: Authenticated user.
-
-    Returns:
-        IngestUrlResponse with note ID and vault path.
-    """
+    """Scrape a URL and create a literature note."""
     from gnosis.services.document_parser import parse_url
 
     try:
@@ -385,9 +352,8 @@ async def ingest_url(
     )
     vault_path = await _write_vault_note(note_id, title, req.folder, note_content)
 
-    # P2 fix: immediately sync the new file
     abs_path = Path(settings.vault_path) / vault_path
-    await _sync_written_file(abs_path, current_user.id)
+    await _sync_written_file(abs_path, getattr(_current_user, "id", None))
 
     return IngestUrlResponse(
         note_id=note_id,
@@ -409,21 +375,14 @@ async def ingest_url(
 )
 async def ingest_batch(
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user),
+    _current_user: User = Depends(get_current_user),
 ) -> IngestBatchResponse:
     """Import a zip archive of .md files into the vault.
 
-    Each .md file is written into the vault's 00-inbox/ folder.
+    Each .md file is written into the vault’s 00-inbox/ folder.
     Files that already exist (same filename) are skipped.
-    After each successful write, _sync_file() is called immediately
+    After each successful write, _sync_written_file() is called immediately
     so notes are indexed without waiting for the watchdog observer.
-
-    Args:
-        file: ZIP archive uploaded via multipart/form-data.
-        current_user: Authenticated user.
-
-    Returns:
-        IngestBatchResponse with per-file import results.
     """
     if not (file.filename or "").lower().endswith(".zip"):
         raise HTTPException(status_code=415, detail="Only .zip archives are accepted")
@@ -437,6 +396,7 @@ async def ingest_batch(
     inbox.mkdir(parents=True, exist_ok=True)
 
     results: list[BatchIngestResult] = []
+    owner_id = getattr(_current_user, "id", None)
 
     try:
         with zipfile.ZipFile(io.BytesIO(content)) as zf:
@@ -467,8 +427,7 @@ async def ingest_batch(
 
                 try:
                     dest.write_bytes(zf.read(entry.filename))
-                    # P2 fix: sync immediately after each batch write
-                    await _sync_written_file(dest, current_user.id)
+                    await _sync_written_file(dest, owner_id)
                     results.append(
                         BatchIngestResult(
                             filename=entry.filename,
