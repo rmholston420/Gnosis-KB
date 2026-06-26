@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from gnosis.config import get_settings
 from gnosis.core.auth import get_current_user
-from gnosis.database import get_session
+from gnosis.database import AsyncSessionFactory, get_session
 from gnosis.models.user import User
 from gnosis.services.document_parser import ParsedDocument, parse_file
 from gnosis.services.llm_provider import llm_provider
@@ -239,6 +239,26 @@ async def _write_vault_note(
     return relative
 
 
+async def _sync_written_file(abs_path: Path, owner_id: int) -> None:
+    """Immediately sync a newly written vault file to DB + Qdrant.
+
+    This is called right after _write_vault_note() to guarantee indexing
+    even when the watchdog observer hasn't picked up the file change yet
+    (e.g. inside Docker where inotify events can lag or be missed).
+
+    Priority 2 fix: don't rely solely on watchdog.
+    """
+    from gnosis.services.vault_sync import _sync_file
+
+    try:
+        async with AsyncSessionFactory() as db:
+            result = await _sync_file(abs_path, owner_id, db)
+            logger.info("[ingest] immediate sync: %s", result)
+    except Exception as exc:  # noqa: BLE001
+        # Non-fatal: watchdog will retry on the next file-system event.
+        logger.warning("[ingest] immediate sync failed for %s: %s", abs_path.name, exc)
+
+
 # ---------------------------------------------------------------------------
 # POST /ingest/file
 # ---------------------------------------------------------------------------
@@ -257,14 +277,14 @@ async def _write_vault_note(
 async def ingest_file(
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_session),
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> IngestFileResponse:
     """Parse and ingest an uploaded file as a literature note.
 
     Args:
         file: The uploaded file (multipart/form-data).
-        session: Database session (unused; vault watcher handles DB sync).
-        _current_user: Authenticated user.
+        session: Database session (unused directly; vault sync handles DB write).
+        current_user: Authenticated user.
 
     Returns:
         IngestFileResponse with the created note's ID and vault path.
@@ -307,6 +327,10 @@ async def ingest_file(
     )
     vault_path = await _write_vault_note(note_id, title, "70-sources", note_content)
 
+    # P2 fix: immediately sync the new file rather than waiting for watchdog
+    abs_path = Path(settings.vault_path) / vault_path
+    await _sync_written_file(abs_path, current_user.id)
+
     return IngestFileResponse(
         note_id=note_id,
         title=title,
@@ -329,14 +353,14 @@ async def ingest_file(
 async def ingest_url(
     req: UrlIngestRequest,
     session: AsyncSession = Depends(get_session),
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> IngestUrlResponse:
     """Scrape a URL and create a literature note.
 
     Args:
         req: URL ingest request with URL and target folder.
         session: Database session.
-        _current_user: Authenticated user.
+        current_user: Authenticated user.
 
     Returns:
         IngestUrlResponse with note ID and vault path.
@@ -361,6 +385,10 @@ async def ingest_url(
     )
     vault_path = await _write_vault_note(note_id, title, req.folder, note_content)
 
+    # P2 fix: immediately sync the new file
+    abs_path = Path(settings.vault_path) / vault_path
+    await _sync_written_file(abs_path, current_user.id)
+
     return IngestUrlResponse(
         note_id=note_id,
         title=title,
@@ -381,16 +409,18 @@ async def ingest_url(
 )
 async def ingest_batch(
     file: UploadFile = File(...),
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> IngestBatchResponse:
     """Import a zip archive of .md files into the vault.
 
     Each .md file is written into the vault's 00-inbox/ folder.
     Files that already exist (same filename) are skipped.
+    After each successful write, _sync_file() is called immediately
+    so notes are indexed without waiting for the watchdog observer.
 
     Args:
         file: ZIP archive uploaded via multipart/form-data.
-        _current_user: Authenticated user.
+        current_user: Authenticated user.
 
     Returns:
         IngestBatchResponse with per-file import results.
@@ -437,6 +467,8 @@ async def ingest_batch(
 
                 try:
                     dest.write_bytes(zf.read(entry.filename))
+                    # P2 fix: sync immediately after each batch write
+                    await _sync_written_file(dest, current_user.id)
                     results.append(
                         BatchIngestResult(
                             filename=entry.filename,
