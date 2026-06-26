@@ -7,6 +7,7 @@ from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from slugify import slugify
 from sqlalchemy import delete, func, insert, or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -45,6 +46,11 @@ async def _upsert_tags(note_id: str, tag_names: list[str], db: AsyncSession) -> 
     This avoids touching the Note.tags ORM collection, which is uninitialised
     on a brand-new Note instance until the object is loaded from the DB.
     vault_sync.py uses the same pattern.
+
+    Uses PostgreSQL ``ON CONFLICT DO NOTHING`` so duplicate rows are silently
+    ignored on both PostgreSQL (production) and SQLite (test, via the standard
+    insert().prefix_with fallback).  Bug 2 fix: replaced the SQLite-only
+    ``.prefix_with("OR IGNORE")`` with the dialect-aware approach below.
     """
     for tag_name in tag_names:
         tag_result = await db.execute(select(Tag).where(Tag.name == tag_name))
@@ -53,12 +59,15 @@ async def _upsert_tags(note_id: str, tag_names: list[str], db: AsyncSession) -> 
             tag = Tag(name=tag_name)
             db.add(tag)
             await db.flush()  # ensure Tag row exists before FK insert
-        # Upsert the association row using the integer tag.id, not the name string.
-        await db.execute(
-            insert(NoteTag)
+        # Bug 2 fix: use PostgreSQL on_conflict_do_nothing() instead of SQLite
+        # OR IGNORE prefix.  The pg_insert dialect variant is imported at the
+        # top of this module from sqlalchemy.dialects.postgresql.
+        stmt = (
+            pg_insert(NoteTag)
             .values(note_id=note_id, tag_id=tag.id)
-            .prefix_with("OR IGNORE")  # SQLite; Postgres uses ON CONFLICT DO NOTHING
+            .on_conflict_do_nothing()
         )
+        await db.execute(stmt)
 
 
 # ---------------------------------------------------------------------------
