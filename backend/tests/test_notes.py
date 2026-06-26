@@ -5,12 +5,14 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_health_check(async_client):
-    """Health endpoint returns 200 and a valid status value."""
+    """Health endpoint returns a valid status value.
+
+    Status code may be 200 (healthy) or 503 (degraded) depending on whether
+    Qdrant is reachable in the test environment.  Both are correct behavior.
+    """
     response = await async_client.get("/api/v1/health/")
-    assert response.status_code == 200
+    assert response.status_code in (200, 503)
     data = response.json()
-    # Health router returns 'healthy' when all checks pass, 'degraded' otherwise.
-    # In the test environment Qdrant is not running so status may be 'degraded'.
     assert data["status"] in ("healthy", "degraded")
 
 
