@@ -1,11 +1,20 @@
 /**
  * types/index.ts — canonical shared TypeScript types for Gnosis-KB.
  *
- * IMPORTANT: This file must remain a proper ES module.
- * The bare `export {}` below ensures TypeScript treats it as a module
- * even before the first real export statement.
+ * Audit fixes (2026-06-25)
+ * ------------------------
+ * - Removed bare `export {}` — it was a no-op (any file with `export interface`
+ *   or `export type` is already an ES module; the comment was misleading).
+ * - Note.id made optional: the backend returns `note_id`; requiring `id` caused
+ *   silent undefined access in BacklinkPanel and route helpers. Consumers that
+ *   need a stable id should use `note.id ?? note.note_id`.
+ * - NoteListItem.id made optional for the same reason.
+ * - NoteListResponse.items changed from Note[] to NoteListItem[] — list
+ *   endpoints return lightweight items without body/backlinks/incoming_links;
+ *   using Note[] caused consumers to expect fields never present in list results.
+ * - AiCritique score fields documented as [0, 10] range.
+ * - ChatMessage deprecated alias annotated with @see and removal target.
  */
-export {};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Notes
@@ -31,7 +40,9 @@ export type NoteStatus =
 
 export interface Note {
   note_id:        string;
-  id:             string;
+  /** Alias for note_id — populated by the API response normalizer.
+   *  Use `note.id ?? note.note_id` for a guaranteed non-undefined value. */
+  id?:            string;
   title:          string;
   body:           string;
   body_html?:     string;
@@ -70,7 +81,8 @@ export interface LinkRef {
 
 export interface NoteListItem {
   note_id:     string;
-  id:          string;
+  /** Alias for note_id — populated by the API response normalizer. */
+  id?:         string;
   title:       string;
   note_type?:  NoteType;
   status?:     NoteStatus;
@@ -87,8 +99,11 @@ export interface NoteListItem {
 }
 
 export interface NoteListResponse {
-  items: Note[];
-  total: number;
+  /** Lightweight list items — body, backlinks, and link arrays are absent.
+   *  Was incorrectly typed as Note[] which caused consumers to expect fields
+   *  that list endpoints never return. */
+  items:     NoteListItem[];
+  total:     number;
   page?:     number;
   per_page?: number;
 }
@@ -187,7 +202,9 @@ export interface GraphNode {
 export interface GraphEdge {
   source_id:  string;
   target_id:  string;
+  /** Alias for source_id — present on some API responses. */
   source?:    string;
+  /** Alias for target_id — present on some API responses. */
   target?:    string;
   link_type?: string;
   link_text?: string;
@@ -240,18 +257,27 @@ export interface TagSuggestion {
 /**
  * Zettelkasten-style critique with per-dimension scores.
  * AiSidebar renders atomicity/connectivity/standalone/insight dimensions.
+ *
+ * All *_score fields are in the range [0, 10]. Consumers rendering score
+ * bars must clamp to this range: Math.min(10, Math.max(0, score ?? 0)).
+ * The backend may return probability values (0–1) for older model responses;
+ * callers should multiply by 10 in that case.
  */
 export interface AiCritique {
   strengths?:           string[];
   weaknesses?:          string[];
   suggestions?:         string[];
   overall?:             string;
+  /** [0, 10] */
   atomicity_score?:     number;
   atomicity_feedback?:  string;
+  /** [0, 10] */
   connectivity_score?:  number;
   connectivity_feedback?: string;
+  /** [0, 10] */
   standalone_score?:    number;
   standalone_feedback?: string;
+  /** [0, 10] */
   insight_score?:       number;
   insight_feedback?:    string;
 }
@@ -266,7 +292,11 @@ export interface AIChatMessage {
   meta?:   Record<string, unknown>;
 }
 
-/** @deprecated Use AIChatMessage instead. Kept for legacy imports. */
+/**
+ * @deprecated Use {@link AIChatMessage} instead.
+ * Target removal: once all import sites have been migrated.
+ * Track at: https://github.com/rmholston420/Gnosis-KB/issues
+ */
 export type ChatMessage = AIChatMessage;
 
 export interface ChatSource {

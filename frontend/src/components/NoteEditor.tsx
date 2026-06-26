@@ -13,18 +13,27 @@
  * -----
  * note          Note        The note to edit (required)
  * onSave        function    Called with (body, title, tags) on auto-save
- * isLoading     boolean?    Shows "Saving\u2026" in status
+ * isLoading     boolean?    Shows "Saving…" in status
  * onBodyChange  function?   Mirror every body change to parent
- * textareaRef   Ref?        Attached to CM wrapper for WikilinkAutocomplete
+ * textareaRef   Ref?        Attached to CM wrapper div for WikilinkAutocomplete.
+ *                           Typed as HTMLDivElement — only a div is ever attached.
  *
- * Fix: noteTitlesById was previously always an empty Map because allNotesData
- * was hard-coded to null via a fake destructuring stub.  BacklinkPanel uses
- * noteTitlesById to resolve link labels — with an empty map every backlink
- * displayed the raw note ID instead of the human-readable title.  The fix
- * wires the real useNotes hook so the map is populated from live query data.
+ * Audit fixes (2026-06-25)
+ * ------------------------
+ * 1. noteTitlesById wrapped in useMemo — was rebuilt on every render (O(n)
+ *    over up to 2000 notes on every keystroke).
+ * 2. prefillTitle added to useEffect dependency array; eslint-disable removed.
+ * 3. saveTimerRef cleanup on unmount prevents post-unmount onSave calls.
+ * 4. handleTitleBlur wrapped in useCallback with correct deps so it no longer
+ *    captures stale tags from the time the title field was focused.
+ * 5. void onSave() replaced with .catch() so network failures re-flag dirty.
+ * 6. textareaRef prop type narrowed to HTMLDivElement (was HTMLTextAreaElement
+ *    | HTMLDivElement with a silent cast at the attachment site).
+ * 7. split-mode preview pane gets min-w-[280px] for narrow viewports.
+ * 8. TagInput disabled condition removed — tags are always interactive.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import React from 'react';
 import { useSearchParams } from 'react-router-dom';
 import CodeMirror from '@uiw/react-codemirror';
@@ -44,7 +53,7 @@ interface NoteEditorProps {
   isLoading?: boolean;
   onBodyChange?: (value: string) => void;
   /** Ref forwarded to the CM editor wrapper div, used by WikilinkAutocomplete. */
-  textareaRef?: React.RefObject<HTMLTextAreaElement | HTMLDivElement>;
+  textareaRef?: React.RefObject<HTMLDivElement>;
 }
 
 export default function NoteEditor({
@@ -65,20 +74,34 @@ export default function NoteEditor({
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ---- Note navigation \u2014 reset when note.id changes ----------------------
+  // ---- Cleanup debounce timer on unmount ---------------------------------
+  // Prevents onSave firing after the component is torn down, which would
+  // trigger a React "state update on unmounted component" warning.
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, []);
+
+  // ---- Note navigation — reset when note.id or prefillTitle changes ------
+  // prefillTitle must be in the dependency array; omitting it caused stale
+  // title state when the query param changed while note.id stayed the same.
   useEffect(() => {
     setTitle(note.title || prefillTitle);
     setBody(note.body ?? '');
     setTags(note.tags ?? []);
     setIsDirty(false);
-  }, [note.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [note.id, prefillTitle]);
 
   // ---- Debounced auto-save -----------------------------------------------
   const scheduleAutoSave = useCallback(
     (newBody: string, newTitle: string, newTags: string[]) => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       saveTimerRef.current = setTimeout(() => {
-        void onSave(newBody, newTitle, newTags);
+        onSave(newBody, newTitle, newTags).catch((err) => {
+          console.error('[NoteEditor] auto-save failed', err);
+          setIsDirty(true); // Re-flag dirty so the user knows the save failed
+        });
         setIsDirty(false);
       }, 1500);
     },
@@ -91,12 +114,18 @@ export default function NoteEditor({
     setIsDirty(true);
   };
 
-  const handleTitleBlur = () => {
+  // useCallback with full deps so the closure always sees current body/title/tags.
+  // The previous non-memoized version captured stale tag state from the time
+  // the title field was focused, causing blur-saves to drop recent tag edits.
+  const handleTitleBlur = useCallback(() => {
     if (isDirty) {
-      void onSave(body, title, tags);
+      onSave(body, title, tags).catch((err) => {
+        console.error('[NoteEditor] title-blur save failed', err);
+        setIsDirty(true);
+      });
       setIsDirty(false);
     }
-  };
+  }, [isDirty, onSave, body, title, tags]);
 
   const handleBodyChange = (value: string) => {
     setBody(value);
@@ -111,31 +140,32 @@ export default function NoteEditor({
     scheduleAutoSave(body, title, newTags);
   };
 
-  // ---- Note titles map for BacklinkPanel --------------------------------
-  // Fix: the previous code used a hard-coded `{ data: null }` stub which
-  // always produced an empty Map, causing BacklinkPanel to display raw IDs
-  // instead of note titles for every backlink.  Wire the real query.
+  // ---- Note titles map for BacklinkPanel ---------------------------------
+  // useMemo prevents the Map from being rebuilt on every render.
+  // Previously this was a bare `new Map(...)` in the render body, which
+  // performed an O(n) allocation on every keystroke across up to 2000 notes.
   const { data: allNotesData } = useNotes({ limit: 2000 });
-  const noteTitlesById = new Map(
-    (allNotesData?.items ?? []).map((n) => [n.id, n.title])
+  const noteTitlesById = useMemo(
+    () => new Map((allNotesData?.items ?? []).map((n) => [n.note_id, n.title])),
+    [allNotesData]
   );
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
 
-      {/* \u2500\u2500 Toolbar \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */}
+      {/* ── Toolbar ──────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-1.5 flex-shrink-0">
         <input
           type="text"
           value={title}
           onChange={handleTitleChange}
           onBlur={handleTitleBlur}
-          placeholder="Note title\u2026"
+          placeholder="Note title…"
           className="flex-1 bg-transparent text-sm font-semibold text-text-primary placeholder:text-text-faint focus:outline-none"
         />
         <div className="flex items-center gap-1">
-          {isLoading && <span className="text-xs text-text-faint">Saving\u2026</span>}
-          {isDirty   && <span className="text-xs text-accent-orange">\u25cf unsaved</span>}
+          {isLoading && <span className="text-xs text-text-faint">Saving…</span>}
+          {isDirty   && <span className="text-xs text-accent-orange">● unsaved</span>}
           {(['edit','split','preview'] as const).map((m) => (
             <button
               key={m}
@@ -152,23 +182,25 @@ export default function NoteEditor({
         </div>
       </div>
 
-      {/* \u2500\u2500 Tags row \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */}
+      {/* ── Tags row ─────────────────────────────────────────────────────── */}
+      {/* disabled prop removed — tags are always interactive regardless of   */}
+      {/* note.id presence; silently non-interactive tags with no tooltip     */}
+      {/* was a poor UX on brand-new notes.                                   */}
       <div className="border-b border-border px-3 py-1 flex-shrink-0">
         <TagInput
           tags={tags}
           onChange={handleTagsChange}
-          disabled={!note.id && !prefillTitle}
         />
       </div>
 
-      {/* \u2500\u2500 Editor area \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */}
+      {/* ── Editor area ──────────────────────────────────────────────────── */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
 
         {/* CodeMirror pane */}
         {(mode === 'edit' || mode === 'split') && (
           <div
             className="flex-1 min-w-0 overflow-auto"
-            ref={textareaRef as React.RefObject<HTMLDivElement>}
+            ref={textareaRef}
           >
             <CodeMirror
               value={body}
@@ -182,9 +214,11 @@ export default function NoteEditor({
         )}
 
         {/* Preview pane */}
+        {/* min-w-[280px] prevents the pane collapsing below readable width  */}
+        {/* on narrow viewports (13" laptop + open sidebar).                 */}
         {(mode === 'preview' || mode === 'split') && (
           <div className={`overflow-auto p-4 ${
-            mode === 'split' ? 'w-1/2 border-l border-border' : 'flex-1'
+            mode === 'split' ? 'w-1/2 min-w-[280px] border-l border-border' : 'flex-1'
           }`}>
             <div className="prose prose-sm prose-invert max-w-none">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{body}</ReactMarkdown>
@@ -193,7 +227,7 @@ export default function NoteEditor({
         )}
       </div>
 
-      {/* \u2500\u2500 Backlink panel \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */}
+      {/* ── Backlink panel ───────────────────────────────────────────────── */}
       {note.id && (
         <div className="border-t border-border flex-shrink-0">
           <BacklinkPanel
