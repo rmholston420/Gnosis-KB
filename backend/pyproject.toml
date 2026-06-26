@@ -61,14 +61,13 @@ dependencies = [
     "pytesseract>=0.3.13",
     "pillow>=11.0.0",
 
-    # LightRAG — optional heavy dep; install separately if needed
-    # "lightrag-hku>=1.0.0",
+    # Graph-RAG
+    "lightrag-hku>=1.0.0",
 ]
 
 [project.optional-dependencies]
-ai = [
-    "lightrag-hku>=1.0.0",
-]
+# Alias kept for backward compatibility with any CI that runs pip install .[ai]
+ai = []
 dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",

@@ -13,9 +13,10 @@ WORKDIR /app
 # Copy ALL source first so editable install can find the package
 COPY . .
 
-# Upgrade pip, install deps from pyproject.toml, then gunicorn/uvicorn
+# Upgrade pip, install all core + dev deps from pyproject.toml
+# lightrag-hku is now in core deps so no extra flag needed.
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
- && pip install --no-cache-dir -e . \
+ && pip install --no-cache-dir -e ".[dev]" \
  && pip install --no-cache-dir gunicorn "uvicorn[standard]"
 
 EXPOSE 8010
