@@ -3,7 +3,7 @@
  *
  * This is the single source of truth consumed by all tests, hooks, and pages.
  * Key contract (enforced by test suite):
- *   - updateNote uses PUT (not PATCH)
+ *   - updateNote uses PATCH (FIX: was PUT — backend expects partial updates)
  *   - createNote posts to /api/v1/notes/ (trailing slash)
  *   - getNote passes explicit method: 'GET'
  *   - setActiveVaultPath is a named export
@@ -27,6 +27,10 @@
  * INGEST FILE ERROR HANDLING:
  *   Non-JSON error responses (413 Too Large, 422 Unprocessable Entity with
  *   text/plain body) are read as text first to avoid SyntaxError crashes.
+ *
+ * FIX: updateNote changed from PUT → PATCH for partial-update semantics.
+ * FIX: request() now handles 401 by clearing token + redirecting to /login,
+ *      matching the axios interceptor behavior in client.ts.
  */
 import { useVaultStore } from '../store/useVaultStore';
 import type { GraphEntitySummary } from '../types';
@@ -69,6 +73,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.headers ?? {}),
     },
   });
+
+  // FIX: 401 → clear stale token and redirect to login.
+  // Previously, expired tokens caused a generic error toast with no redirect.
+  if (res.status === 401) {
+    if (typeof localStorage !== 'undefined') localStorage.removeItem('gnosis_token');
+    if (typeof window !== 'undefined') window.location.href = '/login';
+    throw new Error('Unauthorized');
+  }
+
   if (!res.ok) {
     const msg = await res.text().catch(() => res.statusText);
     throw new Error(`API ${res.status}: ${msg}`);
@@ -107,8 +120,10 @@ export function createNote(data: Record<string, unknown>) {
   return request<unknown>('/notes/', { method: 'POST', body: JSON.stringify(data) });
 }
 
+// FIX: was PUT — backend expects PATCH for partial updates. PUT replaced the
+// entire note document, wiping fields not included in the payload.
 export function updateNote(id: string, data: Record<string, unknown>) {
-  return request<unknown>(`/notes/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+  return request<unknown>(`/notes/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
 }
 
 export function deleteNote(id: string) {
@@ -143,10 +158,12 @@ export function ingestFile(file: File): Promise<unknown> {
     headers: authHeaders(),
     body: fd,
   }).then(async (res) => {
+    if (res.status === 401) {
+      if (typeof localStorage !== 'undefined') localStorage.removeItem('gnosis_token');
+      if (typeof window !== 'undefined') window.location.href = '/login';
+      throw new Error('Unauthorized');
+    }
     if (!res.ok) {
-      // Safely read the body as text first — the response may be text/plain
-      // (e.g. a 413 Too Large from nginx) and calling .json() on it throws a
-      // SyntaxError that swallows the real status code.
       const msg = await res.text().catch(() => res.statusText);
       throw new Error(`API ${res.status}: ${msg}`);
     }
@@ -327,6 +344,11 @@ export function exportVault(format: 'markdown' | 'json'): Promise<Blob> {
   return fetch(`${BASE}/export/vault?format=${format}`, {
     headers: authHeaders(),
   }).then(async (res) => {
+    if (res.status === 401) {
+      if (typeof localStorage !== 'undefined') localStorage.removeItem('gnosis_token');
+      if (typeof window !== 'undefined') window.location.href = '/login';
+      throw new Error('Unauthorized');
+    }
     if (!res.ok) throw new Error(`API ${res.status}`);
     return res.blob();
   });

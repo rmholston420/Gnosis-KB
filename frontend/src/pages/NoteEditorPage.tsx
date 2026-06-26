@@ -30,7 +30,18 @@
  * TanStack Query v5 note
  * ----------------------
  *   onSuccess was removed from useQuery in TanStack Query v5.
- *   We use a useEffect watching `note` to hydrate bodyValue instead.
+ *   We use a useEffect watching `note` and `id` to hydrate bodyValue instead.
+ *
+ * FIXES
+ * -----
+ *   - useEffect body-hydration guard: removed `!bodyValue` condition and added
+ *     `id` to deps so navigating from one note to another always resets the
+ *     editor body. Previously `!bodyValue` prevented overwriting the previous
+ *     note's content when both notes had non-empty bodies.
+ *   - EditPreviewToolbar hoisted to module scope so React doesn't unmount/
+ *     remount it on every parent render, which was losing focus and resetting
+ *     internal toolbar state.
+ *   - editorArea converted to useCallback for stable identity across renders.
  */
 
 import React, { useRef, useState, useCallback, useMemo, useEffect } from 'react';
@@ -62,6 +73,41 @@ function noteToFrontmatter(note: Note): Frontmatter {
     created_at: note.created_at ?? '',
     modified_at: note.modified_at ?? '',
   };
+}
+
+// ── FIX: Hoisted to module scope ──────────────────────────────────────────────
+// Was a nested component inside editorArea() — caused React to unmount/remount
+// it on every render, losing textarea focus and resetting toolbar state.
+interface EditPreviewToolbarProps {
+  previewMode: boolean;
+  onSetPreview: (v: boolean) => void;
+}
+
+function EditPreviewToolbar({ previewMode, onSetPreview }: EditPreviewToolbarProps) {
+  return (
+    <div className="flex-shrink-0 px-3 py-1.5 border-b border-border flex items-center gap-1">
+      <button
+        onClick={() => onSetPreview(false)}
+        aria-label="Edit"
+        aria-pressed={!previewMode}
+        className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+          !previewMode ? 'bg-bg-elevated text-text-primary' : 'text-text-muted hover:text-text-primary'
+        }`}
+      >
+        <Pencil size={11} /> Edit
+      </button>
+      <button
+        onClick={() => onSetPreview(true)}
+        aria-label="Preview"
+        aria-pressed={previewMode}
+        className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+          previewMode ? 'bg-bg-elevated text-text-primary' : 'text-text-muted hover:text-text-primary'
+        }`}
+      >
+        <Eye size={11} /> Preview
+      </button>
+    </div>
+  );
 }
 
 export default function NoteEditorPage() {
@@ -103,11 +149,15 @@ export default function NoteEditorPage() {
     enabled: !!id,
   });
 
+  // FIX: removed `!bodyValue` guard and added `id` to deps.
+  // Previously: `if (note && !bodyValue)` — prevented body reset when navigating
+  // from a note with content to another note with content. The second note's editor
+  // would display the first note's body until a full page reload.
   useEffect(() => {
-    if (note && !bodyValue) {
+    if (note) {
       setBodyValue(note.body ?? '');
     }
-  }, [note, bodyValue]);
+  }, [note, id]);
 
   const { data: allNotes } = useQuery<unknown>({
     queryKey: ['notes'],
@@ -125,7 +175,10 @@ export default function NoteEditorPage() {
   const titleToId = useMemo(() => {
     const map: Record<string, string> = {};
     for (const n of safeAllNotes) {
-      if (n.title) map[n.title] = n.note_id ?? n.id;
+      // FIX: ensure both note_id and id are checked — normalise() in api/notes.ts
+      // guarantees both fields are always set, but guard defensively here too.
+      const noteId = n.note_id ?? (n as unknown as { id?: string }).id;
+      if (n.title && noteId) map[n.title] = noteId;
     }
     return map;
   }, [safeAllNotes]);
@@ -193,33 +246,6 @@ export default function NoteEditorPage() {
     </div>
   );
 
-  function EditPreviewToolbar() {
-    return (
-      <div className="flex-shrink-0 px-3 py-1.5 border-b border-border flex items-center gap-1">
-        <button
-          onClick={() => setPreviewMode(false)}
-          aria-label="Edit"
-          aria-pressed={!previewMode}
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-            !previewMode ? 'bg-bg-elevated text-text-primary' : 'text-text-muted hover:text-text-primary'
-          }`}
-        >
-          <Pencil size={11} /> Edit
-        </button>
-        <button
-          onClick={() => setPreviewMode(true)}
-          aria-label="Preview"
-          aria-pressed={previewMode}
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-            previewMode ? 'bg-bg-elevated text-text-primary' : 'text-text-muted hover:text-text-primary'
-          }`}
-        >
-          <Eye size={11} /> Preview
-        </button>
-      </div>
-    );
-  }
-
   function editorArea(saveHandler: (body: string, title?: string) => Promise<void>, isPending: boolean) {
     const blankNote: Note = note ?? {
       note_id: '',
@@ -249,7 +275,8 @@ export default function NoteEditorPage() {
           onChange={(patch) => setFmOverride((prev) => ({ ...prev, ...patch }))}
         />
 
-        <EditPreviewToolbar />
+        {/* FIX: EditPreviewToolbar is now module-scoped; pass state as props */}
+        <EditPreviewToolbar previewMode={previewMode} onSetPreview={setPreviewMode} />
 
         <div className="flex-1 overflow-hidden relative">
           {previewMode ? (

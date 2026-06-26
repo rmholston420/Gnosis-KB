@@ -6,15 +6,19 @@
  *      modules that don't need interceptors.
  *   2. axios-based `apiClient` — used by modules that need interceptors
  *      (auth token injection, 401 → logout redirect).
+ *
+ * FIX: BASE now defaults to /api/v1 (was /api — missing the version prefix,
+ *      causing all fetch-helper calls to 404 against the backend's /api/v1 router).
  */
 import axios from 'axios';
 
 // ── 1. Fetch-based helpers ──────────────────────────────────────────────────
 
+// FIX: was `/api` — backend mounts all routers under /api/v1
 const BASE =
   (typeof import.meta !== 'undefined'
     ? (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_API_BASE_URL
-    : undefined) ?? '/api';
+    : undefined) ?? '/api/v1';
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const token =
@@ -30,6 +34,12 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
+
+  if (res.status === 401) {
+    if (typeof localStorage !== 'undefined') localStorage.removeItem('gnosis_token');
+    if (typeof window !== 'undefined') window.location.href = '/login';
+    throw new Error('Unauthorized');
+  }
 
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);

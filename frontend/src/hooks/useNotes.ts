@@ -10,6 +10,13 @@
  * The test mocks services/api as { default: { ... } } with no named exports.
  * Any named import triggers a Vitest error: 'No "X" export is defined on the mock'.
  * Use inline type aliases instead.
+ *
+ * FIX: useNotesList and useNoteList shared the same queryKey
+ *   ([NOTES_KEY, 'list', params]) but returned different types (Note[] vs
+ *   NoteListResponse). Two components using both hooks with the same params
+ *   would overwrite each other's cache with incompatible shapes, causing
+ *   runtime crashes. useNotesList now uses queryKey [NOTES_KEY, 'list-arr', params]
+ *   to avoid the collision.
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
@@ -70,9 +77,13 @@ export function useNotes(params: AnyRecord = {}) {
   });
 }
 
+// FIX: queryKey changed from [NOTES_KEY, 'list', params] to
+// [NOTES_KEY, 'list-arr', params] to avoid collision with useNoteList
+// which uses [NOTES_KEY, 'list', params] and returns NoteListResponse.
+// Sharing the same key caused incompatible cache shape overwrites.
 export function useNotesList(params: AnyRecord = {}) {
   return useQuery({
-    queryKey: [NOTES_KEY, 'list', params],
+    queryKey: [NOTES_KEY, 'list-arr', params],
     queryFn: async () => {
       const res = await apiListNotes(params);
       if (Array.isArray(res)) return res as unknown as Note[];

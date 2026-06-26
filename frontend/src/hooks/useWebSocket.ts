@@ -12,8 +12,14 @@
  *
  * When AUTH_REQUIRED=false (local dev default) the backend accepts
  * connections without a token, so omitting the param is correct and clean.
+ *
+ * FIX: lastMessage is now useState (was useRef.current).
+ * useRef mutations do not schedule re-renders, so every consumer of
+ * lastMessage always received the initial `undefined` regardless of how
+ * many vault events arrived. Switching to useState ensures consumers
+ * re-render when a new event is dispatched.
  */
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { NOTES_KEY } from './useNotes';
 
@@ -53,7 +59,9 @@ export function useVaultWebSocket(
   const wsRef = useRef<WebSocket | null>(null);
   const cbRef = useRef(onEvent);
   const retryCountRef = useRef(0);
-  const lastMsgRef = useRef<VaultEvent | undefined>(undefined);
+  // FIX: was useRef — ref mutations don't trigger re-renders so lastMessage
+  // was always undefined from the consumer's perspective.
+  const [lastMessage, setLastMessage] = useState<VaultEvent | undefined>(undefined);
   cbRef.current = onEvent;
 
   const connect = useCallback(() => {
@@ -90,7 +98,8 @@ export function useVaultWebSocket(
       // Ignore server keep-alive pings — no cache invalidation needed.
       if (evt.type === 'ping') return;
 
-      lastMsgRef.current = evt;
+      // FIX: setState instead of mutating ref so consumers re-render
+      setLastMessage(evt);
       cbRef.current?.(evt);
 
       switch (evt.type) {
@@ -138,5 +147,5 @@ export function useVaultWebSocket(
     };
   }, [connect]);
 
-  return { lastMessage: lastMsgRef.current };
+  return { lastMessage };
 }

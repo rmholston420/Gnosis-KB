@@ -190,22 +190,35 @@ export function AppRoutes() {
         <Route path="/sync"       element={<SyncPage />} />
       </Route>
 
-      {/* Catch-all */}
-      <Route path="*" element={<NotFoundPage />} />
+      {/*
+        FIX: NotFoundPage was lazy-loaded but had no Suspense boundary.
+        The catch-all sits outside AppShell's Suspense, so if the lazy
+        bundle hadn't loaded yet React threw an unhandled suspense error.
+        Wrapped in its own Suspense with a null fallback.
+      */}
+      <Route
+        path="*"
+        element={
+          <Suspense fallback={null}>
+            <NotFoundPage />
+          </Suspense>
+        }
+      />
     </Routes>
   );
 }
 
 // ── App root ──────────────────────────────────────────────────────────────────
 export default function App() {
-  // QueryClient lives inside the component so HMR reloads get a fresh instance
-  // and tests that import App don't share stale query cache between runs.
-  const queryClientRef = useRef<QueryClient | null>(null);
-  if (!queryClientRef.current) {
-    queryClientRef.current = new QueryClient({
-      defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },
-    });
-  }
+  // FIX: was useRef<QueryClient | null> initialized inline during render phase.
+  // In React 18 Strict Mode the component runs twice; useState with an initializer
+  // guarantees exactly one QueryClient instance per component mount.
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },
+      }),
+  );
 
   useEffect(() => {
     // Guard: registerSW must run inside a lifecycle, not at module level.
@@ -224,7 +237,7 @@ export default function App() {
   }, []);
 
   return (
-    <QueryClientProvider client={queryClientRef.current}>
+    <QueryClientProvider client={queryClient}>
       <AppRoutes />
     </QueryClientProvider>
   );
