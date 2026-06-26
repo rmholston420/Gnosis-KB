@@ -9,13 +9,22 @@ embed_batch(texts: list[str]) -> list[list[float]]
     Embed a list of strings. Returns empty list on total failure.
     Partial failures return a list of the successfully-embedded vectors.
 
+embed_dense(text: str) -> list[float]
+    Alias used by vector_store.py and hybrid_search.py. Raises RuntimeError
+    on failure so callers can distinguish "no results" from "embedding error".
+
+embed_colbert(text: str) -> list[list[float]]
+    Generate a ColBERT multi-vector representation (list of per-token vectors).
+    Falls back to wrapping the dense vector in a list when a dedicated ColBERT
+    model is unavailable, which is sufficient for the MAX_SIM comparator.
+
 Fix (2025-06-26)
 ----------------
-Both functions previously swallowed ALL exceptions and returned None / []
-with no log emission at ERROR level. A misconfigured Ollama model or a
-transient network partition caused every vector search to silently return
-empty results with zero observability. Fixed: log at ERROR with exc_info
-before returning the fallback value so operators can see and act on failures.
+- embed_dense and embed_colbert were missing entirely, causing an ImportError
+  that crashed vector_store.py and hybrid_search.py at import time, making
+  every vector upsert and every search call fail with a 500.
+- Both functions previously swallowed ALL exceptions and returned None / []
+  with no log emission at ERROR level. Fixed: log at ERROR with exc_info.
 """
 
 from __future__ import annotations
@@ -139,3 +148,60 @@ def embed_batch(texts: list[str]) -> list[list[float]]:
             exc_info=True,
         )
         return []
+
+
+def embed_dense(text: str) -> list[float]:
+    """Generate a dense embedding vector, raising on failure.
+
+    This is the primary embedding entry-point used by vector_store.py and
+    hybrid_search.py. Unlike embed_text() it raises RuntimeError on failure
+    so callers can distinguish a genuine empty result set from an embedding
+    infrastructure problem.
+
+    Fix (2025-06-26): this function was missing entirely, causing an ImportError
+    that crashed every vector upsert and every search request at import time.
+
+    Args:
+        text: The text to embed.
+
+    Returns:
+        A non-empty list of floats representing the embedding vector.
+
+    Raises:
+        RuntimeError: If the embedding call fails for any reason.
+    """
+    vec = embed_text(text)
+    if vec is None:
+        raise RuntimeError(
+            f"embed_dense: embedding returned None for text starting with {text[:80]!r}"
+        )
+    return vec
+
+
+def embed_colbert(text: str) -> list[list[float]]:
+    """Generate a ColBERT multi-vector (list of per-token vectors).
+
+    ColBERT MAX_SIM scoring requires a list of vectors, one per token.
+    When a dedicated ColBERT model is unavailable (the common case with
+    Ollama), we fall back to wrapping the single dense vector in a list.
+    This degrades ColBERT reranking to standard cosine similarity but
+    avoids a hard dependency on a separate ColBERT endpoint.
+
+    Fix (2025-06-26): this function was missing entirely, causing an ImportError
+    that crashed vector_store.py at import time and silently dropped all
+    vector upserts on every note save.
+
+    Args:
+        text: The text to embed.
+
+    Returns:
+        A list of embedding vectors (multivector). At minimum a single-element
+        list containing the dense vector.
+
+    Raises:
+        RuntimeError: If the underlying embedding call fails.
+    """
+    # Future: call a dedicated ColBERT endpoint here when available.
+    # For now, wrap the dense vector to satisfy the multivector schema.
+    dense = embed_dense(text)
+    return [dense]

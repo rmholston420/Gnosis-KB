@@ -126,13 +126,16 @@ def hybrid_search(
         logger.warning("Hybrid search failed, falling back to dense-only query_points: %s", e)
         # Fallback: pure dense search via query_points (client.search is deprecated
         # in qdrant-client >= 1.7 and removed in 2.x).
+        # Fix (2025-06-26): the fallback previously used query_filter= (wrong kwarg
+        # name for query_points) which silently ignored the owner namespace filter,
+        # leaking cross-vault notes to the wrong user. Corrected to filter=.
         try:
             fallback_results = client.query_points(
                 collection_name=collection,
                 query=dense_vec,
                 using="dense",
                 limit=limit,
-                query_filter=query_filter,
+                filter=query_filter,
                 with_payload=True,
             )
             points = fallback_results.points

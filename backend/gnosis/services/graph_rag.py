@@ -38,10 +38,7 @@ from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
 
-from gnosis.config import get_settings
-
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
 _LEGACY_USER_ID = 0
 
@@ -58,11 +55,25 @@ except ImportError:
 
 
 class GraphRAGService:
-    """Wraps per-user LightRAG lifecycle and exposes ingest / query / stream helpers."""
+    """Wraps per-user LightRAG lifecycle and exposes ingest / query / stream helpers.
+
+    Fix (2025-06-26): the previous implementation called get_settings() at module
+    level (top of file, outside any class or function). If Settings validation
+    fails at import time (e.g. missing env vars, wrong SECRET_KEY), the entire
+    gnosis.services.graph_rag module fails to import, cascading to crash main.py
+    at startup before the app can even emit a useful error message.
+
+    Fix: get_settings() is now called lazily inside __init__ so the import always
+    succeeds and the failure is surfaced at runtime with a clear traceback.
+    """
 
     def __init__(self) -> None:
+        # Lazy import — avoids import-time crash if settings validation fails.
+        from gnosis.config import get_settings
+
+        _settings = get_settings()
         self._instances: dict[int, Any] = {}
-        self._base_dir = Path(getattr(settings, "lightrag_data_dir", "/tmp/lightrag"))
+        self._base_dir = Path(getattr(_settings, "lightrag_data_dir", "/tmp/lightrag"))
         # Per-user locks prevent TOCTOU races when two concurrent requests both
         # find `user_id not in _instances` and try to initialise simultaneously.
         # Without locks, the second coroutine would silently discard the first
@@ -113,14 +124,18 @@ class GraphRAGService:
                 )
                 return None
 
+            # Re-read settings at init time so we always use the current config.
+            from gnosis.config import get_settings
+            _settings = get_settings()
+
             instance: Any = None
             try:
                 instance = LightRAG(
                     working_dir=str(working_dir),
                     llm_model_func=ollama_model_complete,
-                    llm_model_name=getattr(settings, "ollama_llm_model", "llama3.2"),
+                    llm_model_name=getattr(_settings, "ollama_llm_model", "llama3.2"),
                     embedding_func=ollama_embed,
-                    embedding_model=getattr(settings, "ollama_embed_model", "nomic-embed-text"),
+                    embedding_model=getattr(_settings, "ollama_embed_model", "nomic-embed-text"),
                     entity_types=[
                         "concept",
                         "person",

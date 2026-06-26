@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from functools import partial
 from pathlib import Path
 
@@ -74,11 +74,15 @@ async def _sync_file(path: Path, owner_id: int, db_session: object) -> str:
 
     Returns a one-line log string describing the outcome.
 
-    Fix (2025-06-26): upsert_note() calls the synchronous QdrantClient.upsert()
-    directly. Calling it from inside this async coroutine blocked the entire
-    event loop on every embedding + Qdrant write. The call is now dispatched
-    to the default ThreadPoolExecutor via run_in_executor so the event loop
-    remains free during I/O-bound Qdrant writes.
+    Fix (2025-06-26):
+    - upsert_note() calls the synchronous QdrantClient.upsert() directly.
+      Dispatching it from inside this async coroutine blocked the entire
+      event loop on every embedding + Qdrant write. The call is now dispatched
+      to the default ThreadPoolExecutor via run_in_executor so the event loop
+      remains free during I/O-bound Qdrant writes.
+    - asyncio.get_event_loop() replaced with asyncio.get_running_loop() to
+      avoid DeprecationWarning on Python >= 3.10 and RuntimeError on 3.12+
+      when called from a thread context with no current event loop.
     """
     import frontmatter  # python-frontmatter
     import mistune
@@ -196,8 +200,10 @@ async def _sync_file(path: Path, owner_id: int, db_session: object) -> str:
 
     # Vector upsert — dispatched to ThreadPoolExecutor so the synchronous
     # QdrantClient.upsert() call does not block the event loop.
+    # Fix (2025-06-26): use get_running_loop() instead of get_event_loop()
+    # to avoid DeprecationWarning on Python >= 3.10 and RuntimeError on 3.12+.
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(
             None,
             partial(
@@ -223,12 +229,16 @@ async def _sync_file(path: Path, owner_id: int, db_session: object) -> str:
 # ---------------------------------------------------------------------------
 
 
-async def run_full_sync_for_user(user_id: int) -> AsyncIterator[str]:
+async def run_full_sync_for_user(user_id: int) -> AsyncGenerator[str, None]:  # type: ignore[misc]
     """Async generator: scan the vault directory and sync every .md file.
 
     Yields one log line per file processed (``synced: path``, ``skipped: path``,
     ``deleted: path``, ``error: path — reason``) plus a final
     ``total: N`` summary line.
+
+    Fix (2025-06-26): return type corrected from AsyncIterator[str] to
+    AsyncGenerator[str, None]. An async def with yield is an AsyncGenerator,
+    not an AsyncIterator, and the wrong annotation caused mypy errors.
 
     Args:
         user_id: The owner_id to stamp on every upserted note.
@@ -336,7 +346,12 @@ class VaultEventHandler(FileSystemEventHandler):
                 logger.warning("[watcher] upsert failed %s: %s", path.name, exc)
 
     async def _handle_delete(self, path: Path) -> None:
-        """Soft-delete a note from the DB when its vault file is removed."""
+        """Soft-delete a note from the DB when its vault file is removed.
+
+        Fix (2025-06-26): delete_note_vector (alias for delete_note) calls the
+        synchronous QdrantClient.delete() directly. Calling it on the event-loop
+        thread blocked the loop for every file deletion. Wrapped in run_in_executor.
+        """
         from sqlalchemy import select
         from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -355,8 +370,11 @@ class VaultEventHandler(FileSystemEventHandler):
             if note:
                 note.is_deleted = True
                 await db_session.commit()
+                # Dispatch synchronous Qdrant delete to thread pool so the
+                # event loop is not blocked during the network I/O.
                 try:
-                    delete_note_vector(note.id)
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(None, delete_note_vector, note.id)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Vector delete skipped for %s: %s", note.id, exc)
                 logger.info("[watcher] soft-deleted %s", rel_path)

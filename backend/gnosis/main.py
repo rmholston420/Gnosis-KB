@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -119,6 +120,20 @@ def create_app() -> FastAPI:
     # WebSocket router — must be last so the WS upgrade doesn't interfere
     # with HTTP middleware ordering.
     application.include_router(ws.router, prefix=_api_v1)
+
+    # Fix (2025-06-26): the global Exception handler previously caught
+    # RequestValidationError (Pydantic 422 errors) and converted them to 500s,
+    # making client-side validation errors indistinguishable from server faults.
+    # RequestValidationError is re-raised here so FastAPI's built-in 422 handler
+    # processes it before our catch-all 500 handler ever sees it.
+    @application.exception_handler(RequestValidationError)
+    async def _validation_exception_handler(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": exc.errors()},
+        )
 
     @application.exception_handler(Exception)
     async def _global_exception_handler(request: Request, exc: Exception) -> JSONResponse:

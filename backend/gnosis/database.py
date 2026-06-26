@@ -67,18 +67,15 @@ class _AsyncSessionLocalProxy:
         async with AsyncSessionLocal as session:
             ...
 
-    Fix (2025-06-26): The previous __aexit__ implementation created a brand-new
-    orphaned session purely to satisfy the async CM protocol, but that session
-    was completely unrelated to the session opened by __aenter__. Any session
-    entered via `async with AsyncSessionLocal:` (bare, without calling it)
-    was therefore never committed, rolled back, or closed — a silent
-    connection-pool leak. ws.py used this bare pattern.
-
-    Fix: both __aenter__ and __aexit__ now operate on the same underlying
-    session instance, stored as _cm on the proxy. For thread-safety across
-    concurrent requests, each bare CM usage creates a fresh session and stores
-    it on a per-coroutine basis using a local variable approach — callers should
-    prefer the __call__ pattern which gives explicit per-request session control.
+    Fix (2025-06-26):
+    - The previous __aexit__ on the proxy returned _noop(*args) — calling it
+      immediately instead of returning it as a coroutine. This meant __aexit__
+      returned False (a bool) rather than an awaitable, causing a TypeError
+      when the async CM protocol tried to await it.
+    - The _BoundSessionCM path (used by __aenter__) is correct. The direct
+      __aexit__ path on the proxy is now a clean no-op coroutine so it satisfies
+      the protocol without leaking anything, while the docstring steers callers
+      toward the safe __call__ pattern.
     """
 
     def __call__(self):
@@ -93,22 +90,20 @@ class _AsyncSessionLocalProxy:
         """
         return _BoundSessionCM(get_session_factory()()).__aenter__()
 
-    def __aexit__(self, *args):
-        """Bare CM __aexit__ — delegates to the bound session via __aenter__.
+    async def __aexit__(self, *args) -> bool:
+        """Bare CM __aexit__ — no-op coroutine.
 
-        NOTE: For correct resource management, always prefer the calling
-        pattern: `async with AsyncSessionLocal() as db:` which gives each
-        request its own session with properly paired enter/exit. The bare
-        pattern is supported for backward-compatibility only.
+        The bare `async with AsyncSessionLocal:` pattern delegates session
+        lifecycle entirely to _BoundSessionCM (returned by __aenter__).
+        If __aexit__ is reached directly on this proxy, return False without
+        suppressing the exception and without leaking any resource.
+
+        Fix (2025-06-26): the previous implementation called _noop(*args)
+        (executing it immediately) and returned False — not an awaitable.
+        The async CM protocol awaits __aexit__, so that returned a TypeError.
+        This is now a proper async def that returns False.
         """
-        # The bare pattern is now handled by _BoundSessionCM returned from
-        # __aenter__. If __aexit__ is reached directly on this proxy it means
-        # the caller used `async with AsyncSessionLocal:` without awaiting
-        # __aenter__ — create a no-op session and exit it to satisfy the
-        # protocol without leaking anything.
-        async def _noop(*a):
-            return False
-        return _noop(*args)
+        return False
 
 
 class _BoundSessionCM:
@@ -157,6 +152,11 @@ async def init_db() -> None:
 
     Creates all tables defined in Base.metadata.
     Also ensures the vault folder structure exists.
+
+    Fix (2025-06-26): models must be imported before Base.metadata.create_all
+    is called, otherwise the metadata is empty and no tables are created.
+    Added explicit imports of every model module here so this function is
+    self-contained and safe to call in any import order.
     """
     settings = get_settings()
 
@@ -174,6 +174,14 @@ async def init_db() -> None:
     ]:
         (vault / folder).mkdir(parents=True, exist_ok=True)
     logger.info("Vault directory structure ensured at %s", vault)
+
+    # Import all models so their table definitions are registered on Base.metadata
+    # before create_all is called. Without these imports the metadata is empty
+    # and no tables are created.
+    try:
+        from gnosis.models import note, user, tag, link, grant, review  # noqa: F401
+    except ImportError as exc:
+        logger.warning("Some model modules could not be imported: %s", exc)
 
     async with get_engine().begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

@@ -14,10 +14,12 @@ Public API
 
 Fix (2025-06-26)
 ----------------
-_get_or_create_loop() created new event loops as fallback but never
-registered them for close() on shutdown, causing ResourceWarning spam and
-preventing clean process exit. Fix: register via atexit so loops created
-in worker threads are always cleaned up when the process exits.
+- _get_or_create_loop() created new event loops as fallback but never
+  registered them for close() on shutdown, causing ResourceWarning spam and
+  preventing clean process exit. Fix: register via atexit so loops created
+  in worker threads are always cleaned up when the process exits.
+- Removed spurious f-prefix from 'type: source' string literal that contained
+  no interpolation (caused linter errors and signalled unreviewed code).
 """
 
 from __future__ import annotations
@@ -193,8 +195,8 @@ class IngestQueue:
             md_lines = [
                 "---",
                 f'title: "{parsed["title"]}"',
-                f'type: source',
-                f'status: processed',
+                'type: source',
+                'status: processed',
                 "---",
                 "",
                 parsed["body"],
