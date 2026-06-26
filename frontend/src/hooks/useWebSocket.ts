@@ -7,18 +7,15 @@
  * Auth note
  * ---------
  * WebSocket handshake requests cannot carry an Authorization header (the
- * browser WS API doesn't support it).  The token is sent as a query param
- * instead.  We read it from the apiClient axios instance's default headers
- * (set at login time) — NOT from localStorage, which is never written.
+ * browser WS API doesn't support it). The token is sent as a query param.
+ * Token storage key is 'gnosis_token' in localStorage — same as client.ts.
  *
- * When AUTH_REQUIRED=false (local dev, the default) the backend accepts
- * connections without a token by auto-resolving the first DB user, so the
- * empty-string fallback works fine.
+ * When AUTH_REQUIRED=false (local dev default) the backend accepts
+ * connections without a token, so omitting the param is correct and clean.
  */
 import { useEffect, useRef, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { NOTES_KEY } from './useNotes';
-import { apiClient } from '../api/client';
 
 export type VaultEvent =
   | { type: 'note_created'; note_id: string; title: string }
@@ -32,12 +29,14 @@ const WS_BASE = (() => {
   return base.replace(/^https/, 'wss').replace(/^http/, 'ws');
 })();
 
-/** Extract the Bearer token from the shared axios instance, if set. */
-function _getToken(): string {
-  const auth = apiClient.defaults.headers.common['Authorization'] as string | undefined;
-  if (!auth) return '';
-  // Header value is "Bearer <token>" — strip the prefix.
-  return auth.startsWith('Bearer ') ? auth.slice(7) : auth;
+/** Build the WS URL. Omit ?token entirely when no token is present. */
+function _wsUrl(): string {
+  const token =
+    typeof localStorage !== 'undefined'
+      ? localStorage.getItem('gnosis_token')
+      : null;
+  const base = `${WS_BASE}/api/v1/ws/vault`;
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
 }
 
 /**
@@ -67,17 +66,11 @@ export function useVaultWebSocket(
       return;
     }
 
-    const token = _getToken();
-    const url = token
-      ? `${WS_BASE}/api/v1/ws/vault?token=${encodeURIComponent(token)}`
-      : `${WS_BASE}/api/v1/ws/vault`;
-
     let ws: WebSocket;
     try {
-      ws = new WebSocket(url);
+      ws = new WebSocket(_wsUrl());
     } catch (err) {
-      // URL construction can fail if the base URL is malformed.
-      console.warn('[WS] Failed to construct WebSocket URL:', err);
+      console.warn('[WS] Failed to open WebSocket:', err);
       return;
     }
     wsRef.current = ws;
@@ -121,12 +114,12 @@ export function useVaultWebSocket(
     };
 
     ws.onclose = (ev) => {
-      // 4001 = auth rejected by server — don't retry.
+      // 4001 = auth rejected by server — don't retry endlessly.
       if (ev.code === 4001) {
-        console.warn('[WS] Vault WebSocket closed: auth rejected (4001). Will not retry.');
+        console.warn('[WS] Vault WebSocket: auth rejected (4001). Will not retry.');
         return;
       }
-      // Exponential backoff: 1s, 2s, 4s … max 30s
+      // Exponential backoff: 1s, 2s, 4s … capped at 30s.
       const delay = Math.min(1000 * 2 ** retryCountRef.current, 30_000);
       retryCountRef.current += 1;
       setTimeout(connect, delay);
@@ -136,9 +129,8 @@ export function useVaultWebSocket(
   useEffect(() => {
     connect();
     return () => {
-      // Close without triggering reconnect on unmount.
       if (wsRef.current) {
-        // Temporarily neutralise onclose so the cleanup doesn't schedule a reconnect.
+        // Neutralise onclose so cleanup doesn't schedule a reconnect.
         wsRef.current.onclose = null;
         wsRef.current.close();
         wsRef.current = null;
