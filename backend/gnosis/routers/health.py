@@ -4,26 +4,14 @@ Endpoints
 ---------
 GET /health/ping              — Liveness: always 200 {"status": "pong"}
 GET /health/                  — Readiness: checks DB, Qdrant, disk space
-                                Returns 200 always (checks encoded in body).
-                                Only a failed DB ping makes status "error".
+                                Returns 200 when all checks pass, 503 when any fail.
 GET /health/providers         — AI provider/model info for Settings panel
 POST /health/providers/model  — Set the active AI model
 
 Status semantics
 ----------------
-  "healthy"   — all checks passed
-  "degraded"  — non-critical services (Qdrant, disk) failed but app is functional
-  "error"     — database unreachable; app cannot serve most requests
-
-HTTP status codes
------------------
-  The readiness endpoint always returns 200 so that load balancers and test
-  suites that call GET /health/ without a running Qdrant or full disk still
-  see a 200 response.  The "status" field in the JSON body conveys the true
-  health.  K8s readiness probes that want to gate on full health should check
-  ``body.status != "error"`` rather than the HTTP code.
-
-  The liveness endpoint (GET /health/ping) has always been 200-only.
+  "healthy"   — all checks passed (HTTP 200)
+  "degraded"  — any check failed (HTTP 503)
 
 Docker / k8s usage
 ------------------
@@ -54,29 +42,17 @@ _MIN_FREE_BYTES = 500 * 1024 * 1024  # 500 MiB
 
 @router.get("/", summary="Readiness probe — checks DB, Qdrant, and disk space")
 async def health(response: Response, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
-    """Return 200 always; encode true health in the 'status' key.
-
-    - ``healthy``  — everything OK
-    - ``degraded`` — non-critical dependency (Qdrant, disk) failed
-    - ``error``    — database is unreachable
-
-    The HTTP status is always 200 so that CI environments and health-check
-    orchestrators that don’t run Qdrant still pass the probe.
-    """
+    """Return 200 when everything is healthy, 503 when any check fails."""
     checks: dict[str, str] = {}
 
-    # -----------------------------------------------------------------
-    # Database ping (critical — affects overall status)
-    # -----------------------------------------------------------------
+    # Database ping
     try:
         await db.execute(text("SELECT 1"))
         checks["database"] = "ok"
     except Exception as exc:  # noqa: BLE001
         checks["database"] = f"error: {exc}"
 
-    # -----------------------------------------------------------------
-    # Qdrant ping (non-critical — degrades gracefully without Qdrant)
-    # -----------------------------------------------------------------
+    # Qdrant ping
     try:
         import httpx
 
@@ -86,9 +62,7 @@ async def health(response: Response, db: AsyncSession = Depends(get_db)) -> dict
     except Exception as exc:  # noqa: BLE001
         checks["qdrant"] = f"error: {exc}"
 
-    # -----------------------------------------------------------------
-    # Disk space probe (non-critical)
-    # -----------------------------------------------------------------
+    # Disk space probe (vault directory or cwd)
     try:
         vault_path = getattr(settings, "vault_path", "/vault")
         usage = shutil.disk_usage(vault_path)
@@ -100,24 +74,9 @@ async def health(response: Response, db: AsyncSession = Depends(get_db)) -> dict
     except Exception as exc:  # noqa: BLE001
         checks["disk"] = f"error: {exc}"
 
-    # -----------------------------------------------------------------
-    # Determine overall status
-    # DB failure → "error"; any other failure → "degraded"; else "healthy"
-    # HTTP is always 200 — callers inspect the status field.
-    # -----------------------------------------------------------------
-    db_ok = checks.get("database", "").startswith("ok")
-    all_ok = all(v.startswith("ok") for v in checks.values())
-
-    if not db_ok:
-        overall = "error"
-    elif not all_ok:
-        overall = "degraded"
-    else:
-        overall = "healthy"
-
-    # HTTP 200 always — remove the 503 that was previously set here.
-    # (Load-balancers / k8s readiness probes that need a hard gate should
-    # check response body status != "error" rather than HTTP code.)
+    overall = "healthy" if all(v.startswith("ok") for v in checks.values()) else "degraded"
+    if overall == "degraded":
+        response.status_code = 503
 
     return {
         "status": overall,
@@ -161,7 +120,6 @@ def _detect_provider() -> str:
     provider = getattr(settings, "ai_provider", None) or getattr(settings, "llm_provider", None)
     if provider:
         return str(provider).lower()
-    # Fallback: detect from available API keys
     if getattr(settings, "openai_api_key", None):
         return "openai"
     if getattr(settings, "anthropic_api_key", None):
@@ -206,7 +164,6 @@ async def get_providers() -> dict[str, Any]:
     model = _detect_model(provider)
     available = _is_available(provider)
     models = _KNOWN_PROVIDERS.get(provider, [model])
-    # Ensure the currently-configured model is always in the list
     if model not in models:
         models = [model, *models]
     return {
@@ -224,7 +181,6 @@ class ModelUpdate(BaseModel):
 @router.post("/providers/model", summary="Set the active AI model")
 async def set_model(body: ModelUpdate) -> dict[str, str]:
     """Persist the requested model to settings (in-process; not written to disk)."""
-    # settings may be a Pydantic model — fall back to attribute assignment.
     try:
         object.__setattr__(settings, "ai_model", body.model)
     except Exception:  # noqa: BLE001
