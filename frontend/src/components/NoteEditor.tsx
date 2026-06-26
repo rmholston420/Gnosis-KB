@@ -13,9 +13,15 @@
  * -----
  * note          Note        The note to edit (required)
  * onSave        function    Called with (body, title, tags) on auto-save
- * isLoading     boolean?    Shows "Saving…" in status
+ * isLoading     boolean?    Shows "Saving\u2026" in status
  * onBodyChange  function?   Mirror every body change to parent
  * textareaRef   Ref?        Attached to CM wrapper for WikilinkAutocomplete
+ *
+ * Fix: noteTitlesById was previously always an empty Map because allNotesData
+ * was hard-coded to null via a fake destructuring stub.  BacklinkPanel uses
+ * noteTitlesById to resolve link labels — with an empty map every backlink
+ * displayed the raw note ID instead of the human-readable title.  The fix
+ * wires the real useNotes hook so the map is populated from live query data.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -30,6 +36,7 @@ import remarkGfm from 'remark-gfm';
 import type { Note } from '../types';
 import TagInput from './TagInput';
 import BacklinkPanel from './BacklinkPanel';
+import { useNotes } from '../hooks/useNotes';
 
 interface NoteEditorProps {
   note: Note;
@@ -58,7 +65,7 @@ export default function NoteEditor({
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ---- Note navigation — reset when note.id changes ----------------------
+  // ---- Note navigation \u2014 reset when note.id changes ----------------------
   useEffect(() => {
     setTitle(note.title || prefillTitle);
     setBody(note.body ?? '');
@@ -104,11 +111,11 @@ export default function NoteEditor({
     scheduleAutoSave(body, title, newTags);
   };
 
-  // ---- Wikilink note titles (for BacklinkPanel) -------------------------
-  const { data: allNotesData } = {
-    data: null as { items: Array<{ id: string; title: string }> } | null
-  };
-  // Minimal titles map for BacklinkPanel
+  // ---- Note titles map for BacklinkPanel --------------------------------
+  // Fix: the previous code used a hard-coded `{ data: null }` stub which
+  // always produced an empty Map, causing BacklinkPanel to display raw IDs
+  // instead of note titles for every backlink.  Wire the real query.
+  const { data: allNotesData } = useNotes({ limit: 2000 });
   const noteTitlesById = new Map(
     (allNotesData?.items ?? []).map((n) => [n.id, n.title])
   );
@@ -116,19 +123,19 @@ export default function NoteEditor({
   return (
     <div className="flex h-full flex-col overflow-hidden">
 
-      {/* ── Toolbar ──────────────────────────────────────────────────── */}
+      {/* \u2500\u2500 Toolbar \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */}
       <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-1.5 flex-shrink-0">
         <input
           type="text"
           value={title}
           onChange={handleTitleChange}
           onBlur={handleTitleBlur}
-          placeholder="Note title…"
+          placeholder="Note title\u2026"
           className="flex-1 bg-transparent text-sm font-semibold text-text-primary placeholder:text-text-faint focus:outline-none"
         />
         <div className="flex items-center gap-1">
-          {isLoading && <span className="text-xs text-text-faint">Saving…</span>}
-          {isDirty   && <span className="text-xs text-accent-orange">● unsaved</span>}
+          {isLoading && <span className="text-xs text-text-faint">Saving\u2026</span>}
+          {isDirty   && <span className="text-xs text-accent-orange">\u25cf unsaved</span>}
           {(['edit','split','preview'] as const).map((m) => (
             <button
               key={m}
@@ -145,7 +152,7 @@ export default function NoteEditor({
         </div>
       </div>
 
-      {/* ── Tags row ─────────────────────────────────────────────────── */}
+      {/* \u2500\u2500 Tags row \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */}
       <div className="border-b border-border px-3 py-1 flex-shrink-0">
         <TagInput
           tags={tags}
@@ -154,7 +161,7 @@ export default function NoteEditor({
         />
       </div>
 
-      {/* ── Editor area ──────────────────────────────────────────────── */}
+      {/* \u2500\u2500 Editor area \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
 
         {/* CodeMirror pane */}
@@ -186,7 +193,7 @@ export default function NoteEditor({
         )}
       </div>
 
-      {/* ── Backlink panel ───────────────────────────────────────────── */}
+      {/* \u2500\u2500 Backlink panel \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */}
       {note.id && (
         <div className="border-t border-border flex-shrink-0">
           <BacklinkPanel

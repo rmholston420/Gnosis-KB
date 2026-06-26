@@ -8,6 +8,15 @@
  * Meta event: the backend emits a single `{meta: {rag_source, mode}}`
  * event just before [DONE].  We capture it and display a colour-coded badge
  * beneath the assistant message.
+ *
+ * Fix: assistantIdx previously captured `messages.length + 1` from a stale
+ * closure over the pre-setState `messages` array.  React batches state
+ * updates, so after adding both the user message and the empty assistant
+ * stub in two separate `setMessages` calls, the index was off-by-one in all
+ * edge cases (first message, rapid sends).  We now use a `useRef` counter
+ * that is incremented atomically alongside each pair of pushes and read
+ * directly inside the streaming callbacks, so it is always correct regardless
+ * of React's scheduler timing.
  */
 
 import { useRef, useState } from 'react';
@@ -41,20 +50,29 @@ export default function AIChat() {
   const [input,    setInput]    = useState('');
   const [loading,  setLoading]  = useState(false);
   const [mode,     setMode]     = useState<ChatMode>('hybrid');
-  const bottomRef  = useRef<HTMLDivElement>(null);
-  const sessionRef = useRef<string>(crypto.randomUUID());
+  const bottomRef     = useRef<HTMLDivElement>(null);
+  const sessionRef    = useRef<string>(crypto.randomUUID());
+  // Stable ref to the index of the in-progress assistant message.
+  // Updated atomically inside the functional setState updater so streaming
+  // callbacks never read a stale closure value.
+  const assistantIdxRef = useRef<number>(-1);
 
   async function send() {
     const text = input.trim();
     if (!text || loading) return;
 
     const userMsg: AIChatMessage = { role: 'user', content: text };
-    setMessages((prev) => [...prev, userMsg]);
+
+    // Collapse both pushes into one functional updater so `prev` is always
+    // the actual current array.  Capture the assistant slot index here where
+    // it is guaranteed correct, then persist it in the ref.
+    setMessages((prev) => {
+      assistantIdxRef.current = prev.length + 1; // user at prev.length, assistant at +1
+      return [...prev, userMsg, { role: 'assistant', content: '' }];
+    });
+
     setInput('');
     setLoading(true);
-
-    const assistantIdx = messages.length + 1;
-    setMessages((prev) => [...prev, { role: 'assistant', content: '' }]);
 
     try {
       const token = localStorage.getItem('gnosis_token') ?? '';
@@ -97,19 +115,22 @@ export default function AIChat() {
                 | { meta: MetaPayload }
                 | { error: string };
 
+              // Read from ref — never from a stale closure.
+              const idx = assistantIdxRef.current;
+
               if ('error' in parsed) {
                 accumulated += `\n\n*Error: ${parsed.error}*`;
               } else if ('meta' in parsed) {
                 setMessages((prev) =>
                   prev.map((m, i) =>
-                    i === assistantIdx ? { ...m, meta: parsed.meta } : m
+                    i === idx ? { ...m, meta: parsed.meta } : m
                   )
                 );
               } else if ('token' in parsed) {
                 accumulated += parsed.token;
                 setMessages((prev) =>
                   prev.map((m, i) =>
-                    i === assistantIdx ? { ...m, content: accumulated } : m
+                    i === idx ? { ...m, content: accumulated } : m
                   )
                 );
                 bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -122,9 +143,10 @@ export default function AIChat() {
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error';
+      const idx = assistantIdxRef.current;
       setMessages((prev) =>
         prev.map((m, i) =>
-          i === assistantIdx
+          i === idx
             ? { ...m, content: `*Failed to get response: ${msg}*` }
             : m
         )
@@ -181,9 +203,9 @@ export default function AIChat() {
               >
                 {msg.content || (
                   <span className="inline-flex gap-1">
-                    <span className="animate-bounce" style={{ animationDelay: '0ms'   }}>\xb7</span>
-                    <span className="animate-bounce" style={{ animationDelay: '150ms' }}>\xb7</span>
-                    <span className="animate-bounce" style={{ animationDelay: '300ms' }}>\xb7</span>
+                    <span className="animate-bounce" style={{ animationDelay: '0ms'   }}>&middot;</span>
+                    <span className="animate-bounce" style={{ animationDelay: '150ms' }}>&middot;</span>
+                    <span className="animate-bounce" style={{ animationDelay: '300ms' }}>&middot;</span>
                   </span>
                 )}
               </div>
@@ -233,7 +255,7 @@ export default function AIChat() {
         </div>
         <div className="mt-1.5 flex items-center gap-1 text-xs text-text-faint">
           <Zap size={10} />
-          <span>Powered by LightRAG \xb7 <BookOpen size={10} className="inline" /> references your vault</span>
+          <span>Powered by LightRAG &middot; <BookOpen size={10} className="inline" /> references your vault</span>
         </div>
       </div>
     </div>
