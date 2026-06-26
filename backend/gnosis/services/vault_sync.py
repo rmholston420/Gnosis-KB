@@ -145,7 +145,7 @@ async def _sync_file(path: Path, owner_id: int, db_session: object) -> str:
     else:
         note.title = title
         note.body = body
-        note.body_html = body_html  # Bug 3 fix: keep HTML in sync with markdown body
+        note.body_html = body_html  # keep HTML in sync with markdown body
         note.note_type = note_type
         note.status = status
         note.vault_path = rel_path
@@ -157,7 +157,7 @@ async def _sync_file(path: Path, owner_id: int, db_session: object) -> str:
 
     await db.flush()
 
-    # Sync tags — Bug 1 fix: use tag.id (integer FK) not tag_name (string)
+    # Sync tags
     await db.execute(delete(NoteTag).where(NoteTag.c.note_id == note_id))
     for tag_name in tags_raw:
         tag_result = await db.execute(select(Tag).where(Tag.name == tag_name))
@@ -166,7 +166,6 @@ async def _sync_file(path: Path, owner_id: int, db_session: object) -> str:
             tag = Tag(name=tag_name)
             db.add(tag)
             await db.flush()
-        # FIX Bug 1: was tag_id=tag_name (wrong type); must be the integer Tag.id
         await db.execute(NoteTag.insert().values(note_id=note_id, tag_id=tag.id))
 
     # Sync wikilinks
@@ -188,7 +187,7 @@ async def _sync_file(path: Path, owner_id: int, db_session: object) -> str:
 
     await db.commit()
 
-    # Vector upsert (non-fatal) — pass all required positional args
+    # Vector upsert (non-fatal)
     try:
         upsert_note(
             note_id,
@@ -263,17 +262,34 @@ class VaultEventHandler(FileSystemEventHandler):
         self._loop: asyncio.AbstractEventLoop | None = None
 
     def _get_loop(self) -> asyncio.AbstractEventLoop:
+        """Return the running event loop, or create a new one if none exists.
+
+        Uses asyncio.get_running_loop() (Python 3.10+) to avoid the
+        DeprecationWarning emitted by the deprecated get_event_loop() when
+        called from a thread with no current event loop set.
+        """
         if self._loop is None:
             try:
-                self._loop = asyncio.get_event_loop()
+                self._loop = asyncio.get_running_loop()
             except RuntimeError:
+                # No running loop in this thread — create a fresh one.
                 self._loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(self._loop)
         return self._loop
 
     def _dispatch_coroutine(self, coro: object) -> None:
         """Schedule a coroutine on the running event loop (thread-safe)."""
         try:
-            loop = asyncio.get_event_loop()
+            # Always try the *running* loop first; watchdog callbacks fire
+            # from a background thread so get_running_loop() will raise
+            # RuntimeError if uvicorn's loop is not accessible here — in
+            # that case fall back to run_coroutine_threadsafe on the cached
+            # loop obtained via _get_loop().
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = self._get_loop()
+
             if loop.is_running():
                 asyncio.run_coroutine_threadsafe(coro, loop)  # type: ignore[arg-type]
             else:
