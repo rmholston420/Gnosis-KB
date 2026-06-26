@@ -44,14 +44,16 @@ async def on_startup() -> None:
     except Exception as exc:  # noqa: BLE001
         logger.error("Database init failed — app may be non-functional: %s", exc)
 
-    # Initialise LightRAG if available
+    # Pre-warm the LightRAG graph store if available.
+    # Fix: the module exports a `graph_rag` singleton (GraphRAGService instance).
+    # The previous code looked for a nonexistent `init_lightrag` attribute on the
+    # module object — it was never found, so LightRAG was never pre-warmed at
+    # startup. The correct call is `graph_rag_service.initialize()`.
     try:
-        from gnosis.services import graph_rag
+        from gnosis.services.graph_rag import graph_rag as graph_rag_service
 
-        init_fn = getattr(graph_rag, "init_lightrag", None)
-        if init_fn is not None:
-            await init_fn()
-            logger.info("LightRAG graph store initialised")
+        await graph_rag_service.initialize()
+        logger.info("LightRAG graph store initialised")
     except Exception as exc:  # noqa: BLE001
         logger.warning("LightRAG init skipped: %s", exc)
 

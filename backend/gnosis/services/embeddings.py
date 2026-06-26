@@ -57,10 +57,20 @@ def embed_dense(text: str) -> list[float]:
 
     Returns:
         768-dimensional float list.
+
+    Raises:
+        RuntimeError: If the model is unavailable or the embed call fails.
+            The original exception is chained via `from e` for full tracebacks
+            in logs. Callers (vector_store, ingest) should catch RuntimeError
+            and handle gracefully (e.g. skip vector upsert, return empty results).
     """
-    model = get_dense_model()
-    embeddings = list(model.embed([text]))  # type: ignore[attr-defined]
-    return [float(x) for x in embeddings[0]]
+    try:
+        model = get_dense_model()
+        embeddings = list(model.embed([text]))  # type: ignore[attr-defined]
+        return [float(x) for x in embeddings[0]]
+    except Exception as e:
+        logger.error("embed_dense failed for text (len=%d): %s", len(text), e)
+        raise RuntimeError(f"Dense embedding failed: {e}") from e
 
 
 def embed_colbert(text: str) -> list[list[float]]:
@@ -71,7 +81,16 @@ def embed_colbert(text: str) -> list[list[float]]:
 
     Returns:
         List of 128-dimensional float lists (one per token).
+
+    Raises:
+        RuntimeError: If the model is unavailable or the embed call fails.
+            The original exception is chained via `from e` for full tracebacks
+            in logs. Callers should catch RuntimeError and handle gracefully.
     """
-    model = get_colbert_model()
-    embeddings = list(model.embed([text]))  # type: ignore[attr-defined]
-    return [[float(x) for x in vec] for vec in embeddings[0]]
+    try:
+        model = get_colbert_model()
+        embeddings = list(model.embed([text]))  # type: ignore[attr-defined]
+        return [[float(x) for x in vec] for vec in embeddings[0]]
+    except Exception as e:
+        logger.error("embed_colbert failed for text (len=%d): %s", len(text), e)
+        raise RuntimeError(f"ColBERT embedding failed: {e}") from e

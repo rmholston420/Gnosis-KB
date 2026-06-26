@@ -92,7 +92,9 @@ async def _resolve_ws_user(token: str | None) -> Any:
     * AUTH_REQUIRED=false → auto-resolve first active DB user (no token needed).
     * AUTH_REQUIRED=true  → decode JWT; return None on failure.
     """
-    from gnosis.core.auth import ALGORITHM, _synthetic_guest
+    # Use the public export (synthetic_guest) rather than the private alias
+    # (_synthetic_guest) to avoid fragile cross-module private-name coupling.
+    from gnosis.core.auth import ALGORITHM, synthetic_guest
     from gnosis.models.user import User
 
     async with AsyncSessionLocal() as db:
@@ -101,7 +103,7 @@ async def _resolve_ws_user(token: str | None) -> Any:
                 select(User).where(User.is_active == True).limit(1)  # noqa: E712
             )
             user = result.scalar_one_or_none()
-            return user if user is not None else _synthetic_guest()
+            return user if user is not None else synthetic_guest()
 
         if not token:
             return None
@@ -166,6 +168,11 @@ async def vault_ws(
                 except Exception:  # noqa: BLE001
                     break
             except WebSocketDisconnect:
+                break
+            except asyncio.CancelledError:
+                # Server shutdown or task cancellation — break cleanly so the
+                # finally block removes the connection from the registry before
+                # CancelledError propagates up the call stack.
                 break
     finally:
         _manager.disconnect(websocket)

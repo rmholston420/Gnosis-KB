@@ -104,8 +104,11 @@ def create_access_token(data: TokenData, expires_delta: timedelta | None = None)
     return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
 
 
-def _synthetic_guest() -> Any:
+def synthetic_guest() -> Any:
     """Return a SimpleNamespace duck-typed as a User for auth-disabled single-user mode.
+
+    Public name (no leading underscore) so other modules (e.g. ws.py) can
+    import it without relying on private-name cross-module coupling.
 
     Using SimpleNamespace (not User.__new__) avoids the SQLAlchemy
     instrumentation crash that occurs when an ORM-mapped object is created
@@ -129,6 +132,11 @@ def _synthetic_guest() -> Any:
     )
 
 
+# Backward-compat alias — internal code that previously imported `_synthetic_guest`
+# will continue to work without changes.
+_synthetic_guest = synthetic_guest
+
+
 async def get_current_user(
     token: str | None = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),
@@ -146,7 +154,7 @@ async def get_current_user(
         user = result.scalar_one_or_none()
         # Fresh install: no users seeded yet — return synthetic guest rather
         # than None, which would cause require_user to raise 401.
-        return user if user is not None else _synthetic_guest()
+        return user if user is not None else synthetic_guest()
 
     if token is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")

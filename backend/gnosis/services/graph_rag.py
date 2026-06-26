@@ -32,6 +32,7 @@ synthesis block from shared vaults as a final chunk.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -62,6 +63,17 @@ class GraphRAGService:
     def __init__(self) -> None:
         self._instances: dict[int, Any] = {}
         self._base_dir = Path(getattr(settings, "lightrag_data_dir", "/tmp/lightrag"))
+        # Per-user locks prevent TOCTOU races when two concurrent requests both
+        # find `user_id not in _instances` and try to initialise simultaneously.
+        # Without locks, the second coroutine would silently discard the first
+        # partially-built instance and overwrite it.
+        self._init_locks: dict[int, asyncio.Lock] = {}
+
+    def _get_lock(self, user_id: int) -> asyncio.Lock:
+        """Return (creating if needed) a per-user asyncio.Lock."""
+        if user_id not in self._init_locks:
+            self._init_locks[user_id] = asyncio.Lock()
+        return self._init_locks[user_id]
 
     def _working_dir(self, user_id: int) -> Path:
         if user_id == _LEGACY_USER_ID:
@@ -76,51 +88,61 @@ class GraphRAGService:
         - Never raises; returns ``None`` on any failure.
         - If init fails, ``user_id`` is removed from ``_instances`` so the
           next call will retry rather than returning a stale entry.
+        - Uses a per-user asyncio.Lock to prevent concurrent init of the same
+          user's instance (TOCTOU race fix).
         """
         if not _LIGHTRAG_AVAILABLE:
             return None
+
+        # Fast path — already initialised, no lock needed.
         if user_id in self._instances:
             return self._instances[user_id]
 
-        try:
-            working_dir = self._working_dir(user_id)
-            working_dir.mkdir(parents=True, exist_ok=True)
-        except Exception as exc:  # noqa: BLE001
-            logger.error(
-                "GraphRAGService: could not create working dir for user %s: %s", user_id, exc
-            )
-            return None
+        async with self._get_lock(user_id):
+            # Re-check inside the lock: another coroutine may have finished
+            # init while we were waiting.
+            if user_id in self._instances:
+                return self._instances[user_id]
 
-        instance: Any = None
-        try:
-            instance = LightRAG(
-                working_dir=str(working_dir),
-                llm_model_func=ollama_model_complete,
-                llm_model_name=getattr(settings, "ollama_llm_model", "llama3.2"),
-                embedding_func=ollama_embed,
-                embedding_model=getattr(settings, "ollama_embed_model", "nomic-embed-text"),
-                entity_types=[
-                    "concept",
-                    "person",
-                    "project",
-                    "tool",
-                    "technique",
-                    "insight",
-                    "question",
-                ],
-            )
-            self._instances[user_id] = instance
-            logger.info(
-                "GraphRAGService: LightRAG initialised for user %s at %s",
-                user_id,
-                working_dir,
-            )
-            return instance
-        except Exception as exc:  # noqa: BLE001
-            # Remove any partially-inserted entry so subsequent calls retry cleanly.
-            self._instances.pop(user_id, None)
-            logger.error("GraphRAGService: LightRAG init failed for user %s: %s", user_id, exc)
-            return None
+            try:
+                working_dir = self._working_dir(user_id)
+                working_dir.mkdir(parents=True, exist_ok=True)
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "GraphRAGService: could not create working dir for user %s: %s", user_id, exc
+                )
+                return None
+
+            instance: Any = None
+            try:
+                instance = LightRAG(
+                    working_dir=str(working_dir),
+                    llm_model_func=ollama_model_complete,
+                    llm_model_name=getattr(settings, "ollama_llm_model", "llama3.2"),
+                    embedding_func=ollama_embed,
+                    embedding_model=getattr(settings, "ollama_embed_model", "nomic-embed-text"),
+                    entity_types=[
+                        "concept",
+                        "person",
+                        "project",
+                        "tool",
+                        "technique",
+                        "insight",
+                        "question",
+                    ],
+                )
+                self._instances[user_id] = instance
+                logger.info(
+                    "GraphRAGService: LightRAG initialised for user %s at %s",
+                    user_id,
+                    working_dir,
+                )
+                return instance
+            except Exception as exc:  # noqa: BLE001
+                # Remove any partially-inserted entry so subsequent calls retry cleanly.
+                self._instances.pop(user_id, None)
+                logger.error("GraphRAGService: LightRAG init failed for user %s: %s", user_id, exc)
+                return None
 
     async def initialize(self, user_id: int = _LEGACY_USER_ID) -> None:
         """Pre-warm the LightRAG instance for *user_id* (called at startup)."""
