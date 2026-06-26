@@ -99,17 +99,30 @@ async def ping() -> dict[str, str]:
 
 _KNOWN_PROVIDERS: dict[str, list[str]] = {
     "openai": [
-        "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo",
+        "gpt-4o",
+        "gpt-4o-mini",
+        "gpt-4-turbo",
+        "gpt-4",
+        "gpt-3.5-turbo",
     ],
     "anthropic": [
-        "claude-opus-4-5", "claude-sonnet-4-5", "claude-3-5-sonnet-20241022",
-        "claude-3-5-haiku-20241022", "claude-3-opus-20240229",
+        "claude-opus-4-5",
+        "claude-sonnet-4-5",
+        "claude-3-5-sonnet-20241022",
+        "claude-3-5-haiku-20241022",
+        "claude-3-opus-20240229",
     ],
     "ollama": [
-        "llama3.2", "llama3.1", "mistral", "gemma2", "phi3", "qwen2.5",
+        "llama3.2",
+        "llama3.1",
+        "mistral",
+        "gemma2",
+        "phi3",
+        "qwen2.5",
     ],
     "openrouter": [
-        "meta-llama/llama-3.1-8b-instruct", "mistralai/mistral-7b-instruct",
+        "meta-llama/llama-3.1-8b-instruct",
+        "mistralai/mistral-7b-instruct",
         "google/gemma-2-9b-it",
     ],
 }

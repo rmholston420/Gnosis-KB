@@ -45,9 +45,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar
 
 logger = logging.getLogger(__name__)
 
@@ -55,10 +54,10 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 
-_MAX_WORKERS: int = 2    # parallel worker coroutines draining the queue
-_MAX_RETRIES: int = 3    # per-task retry limit before dead-letter
-_RETRY_BASE_DELAY: float = 2.0   # seconds; doubled each retry
-_QUEUE_MAX_SIZE: int = 5000      # cap to prevent unbounded memory growth
+_MAX_WORKERS: int = 2  # parallel worker coroutines draining the queue
+_MAX_RETRIES: int = 3  # per-task retry limit before dead-letter
+_RETRY_BASE_DELAY: float = 2.0  # seconds; doubled each retry
+_QUEUE_MAX_SIZE: int = 5000  # cap to prevent unbounded memory growth
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +236,7 @@ class IngestQueue:
 
             except Exception as exc:  # noqa: BLE001
                 if task.retry < _MAX_RETRIES:
-                    delay = _RETRY_BASE_DELAY * (2 ** task.retry)
+                    delay = _RETRY_BASE_DELAY * (2**task.retry)
                     logger.warning(
                         "[ingest-worker-%d] retry %d/%d in %.1fs for %s: %s",
                         worker_id,
@@ -291,9 +290,9 @@ class IngestQueue:
         is logged and dropped.
         """
         try:
-            from gnosis.routers.vault_ws import broadcast_vault_event
-
             import asyncio
+
+            from gnosis.routers.vault_ws import broadcast_vault_event
 
             event = {
                 "type": "ingest_progress",

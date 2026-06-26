@@ -119,9 +119,7 @@ class GraphRAGService:
         except Exception as exc:  # noqa: BLE001
             # Remove any partially-inserted entry so subsequent calls retry cleanly.
             self._instances.pop(user_id, None)
-            logger.error(
-                "GraphRAGService: LightRAG init failed for user %s: %s", user_id, exc
-            )
+            logger.error("GraphRAGService: LightRAG init failed for user %s: %s", user_id, exc)
             return None
 
     async def initialize(self, user_id: int = _LEGACY_USER_ID) -> None:

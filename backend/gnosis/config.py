@@ -88,10 +88,8 @@ class Settings(BaseSettings):
         main application uses asyncpg. This swaps the driver prefix so both
         can share the same base DATABASE_URL environment variable.
         """
-        return (
-            self.database_url
-            .replace("postgresql+asyncpg://", "postgresql+psycopg2://")
-            .replace("postgresql://", "postgresql+psycopg2://")
+        return self.database_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://").replace(
+            "postgresql://", "postgresql+psycopg2://"
         )
 
 

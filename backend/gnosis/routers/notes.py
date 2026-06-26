@@ -6,7 +6,7 @@ from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from slugify import slugify
-from sqlalchemy import delete, func, insert, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -62,11 +62,7 @@ async def _upsert_tags(note_id: str, tag_names: list[str], db: AsyncSession) -> 
         # Bug 2 fix: use PostgreSQL on_conflict_do_nothing() instead of SQLite
         # OR IGNORE prefix.  The pg_insert dialect variant is imported at the
         # top of this module from sqlalchemy.dialects.postgresql.
-        stmt = (
-            pg_insert(NoteTag)
-            .values(note_id=note_id, tag_id=tag.id)
-            .on_conflict_do_nothing()
-        )
+        stmt = pg_insert(NoteTag).values(note_id=note_id, tag_id=tag.id).on_conflict_do_nothing()
         await db.execute(stmt)
 
 
