@@ -43,14 +43,8 @@ router = APIRouter(prefix="/notes", tags=["notes"])
 async def _upsert_tags(note_id: str, tag_names: list[str], db: AsyncSession) -> None:
     """Insert note<->tag associations directly into the note_tags table.
 
-    This avoids touching the Note.tags ORM collection, which is uninitialised
-    on a brand-new Note instance until the object is loaded from the DB.
-    vault_sync.py uses the same pattern.
-
     Uses PostgreSQL ``ON CONFLICT DO NOTHING`` so duplicate rows are silently
-    ignored on both PostgreSQL (production) and SQLite (test, via the standard
-    insert().prefix_with fallback).  Bug 2 fix: replaced the SQLite-only
-    ``.prefix_with("OR IGNORE")`` with the dialect-aware approach below.
+    ignored. Bug 2 fix: replaced SQLite-only ``.prefix_with("OR IGNORE")``.
     """
     for tag_name in tag_names:
         tag_result = await db.execute(select(Tag).where(Tag.name == tag_name))
@@ -58,10 +52,7 @@ async def _upsert_tags(note_id: str, tag_names: list[str], db: AsyncSession) -> 
         if tag is None:
             tag = Tag(name=tag_name)
             db.add(tag)
-            await db.flush()  # ensure Tag row exists before FK insert
-        # Bug 2 fix: use PostgreSQL on_conflict_do_nothing() instead of SQLite
-        # OR IGNORE prefix.  The pg_insert dialect variant is imported at the
-        # top of this module from sqlalchemy.dialects.postgresql.
+            await db.flush()
         stmt = pg_insert(NoteTag).values(note_id=note_id, tag_id=tag.id).on_conflict_do_nothing()
         await db.execute(stmt)
 
@@ -89,11 +80,10 @@ async def _get_note_or_404(
     if note is None:
         raise NoteNotFoundError(note_id)
 
-    if note.owner_id == 0 and 0 not in owner_ids:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This note has no owner assigned. Run scripts/fix_owner_ids.py to reassign.",
-        )
+    # Empty owner_ids means synthetic guest (AUTH_REQUIRED=false, no real
+    # users seeded yet) — skip ownership check, all notes are accessible.
+    if not owner_ids:
+        return note
 
     if note.owner_id is not None and note.owner_id not in owner_ids:
         raise HTTPException(
@@ -179,7 +169,6 @@ async def list_notes(
     if status:
         query = query.where(Note.status == status)
     if tags:
-        # Filter by tag name: join through the tags table to match by name (not raw tag_id int)
         for tag_name in tags:
             tag_subq = (
                 select(NoteTag.c.note_id)
@@ -281,7 +270,6 @@ async def resolve_wikilink(
 # ---------------------------------------------------------------------------
 # Tags  (GET /notes/tags) -- BEFORE /{note_id}
 # Returns a plain string[] of distinct tag names for the current user.
-# Used by api.listTags() for autocomplete and tag-filter dropdowns.
 # ---------------------------------------------------------------------------
 
 
@@ -290,15 +278,19 @@ async def list_note_tags(
     db: AsyncSession = Depends(get_db),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> list[str]:
-    """Return alphabetically sorted tag names visible to the requesting user."""
+    """Return alphabetically sorted tag names visible to the requesting user.
+
+    Uses scoped_note_stmt so that the synthetic guest (owner_ids=set()) sees
+    tags from all notes rather than an empty IN () clause crashing Postgres.
+    """
+    note_stmt = scoped_note_stmt(
+        select(Note.id).where(Note.is_deleted.is_(False)),
+        owner_ids,
+    )
     stmt = (
         select(Tag.name)
         .join(NoteTag, Tag.id == NoteTag.c.tag_id)
-        .join(Note, Note.id == NoteTag.c.note_id)
-        .where(
-            Note.owner_id.in_(owner_ids),
-            Note.is_deleted.is_(False),
-        )
+        .where(NoteTag.c.note_id.in_(note_stmt))
         .distinct()
         .order_by(Tag.name.asc())
     )
@@ -308,7 +300,6 @@ async def list_note_tags(
 
 # ---------------------------------------------------------------------------
 # Folders  (GET /notes/folders) -- BEFORE /{note_id}
-# Returns a string[] of distinct folder names for the current user.
 # ---------------------------------------------------------------------------
 
 
@@ -317,17 +308,18 @@ async def list_note_folders(
     db: AsyncSession = Depends(get_db),
     owner_ids: set[int] = Depends(get_vault_owner_ids),
 ) -> list[str]:
-    """Return sorted distinct folder values from notes visible to the requesting user."""
-    stmt = (
-        select(Note.folder)
-        .where(
-            Note.owner_id.in_(owner_ids),
+    """Return sorted distinct folder values from notes visible to the requesting user.
+
+    Uses scoped_note_stmt so that the synthetic guest (owner_ids=set()) sees
+    folders from all notes rather than an empty IN () clause.
+    """
+    stmt = scoped_note_stmt(
+        select(Note.folder).where(
             Note.is_deleted.is_(False),
             Note.folder.isnot(None),
-        )
-        .distinct()
-        .order_by(Note.folder.asc())
-    )
+        ),
+        owner_ids,
+    ).distinct().order_by(Note.folder.asc())
     rows = (await db.execute(stmt)).scalars().all()
     return [f for f in rows if f]
 
@@ -524,7 +516,6 @@ async def get_or_create_daily_note(
     if note:
         return _note_to_read(note)
 
-    # Create a new daily note
     import mistune
 
     from gnosis.services.markdown_parser import build_default_frontmatter, write_note_file
@@ -594,12 +585,10 @@ async def create_note(
 ) -> NoteRead:
     from gnosis.core.namespace import resolve_vault_path
 
-    # Append a short uuid hex suffix to the timestamp ID so two notes created
-    # in the same second (common in fast async tests) never collide on notes.id.
     note_id = data.id or f"{generate_note_id()}-{uuid.uuid4().hex[:6]}"
     title = data.title
     slug = slugify(title)
-    owner_ids = {current_user.id}
+    owner_ids = {current_user.id} if current_user.id != 0 else set()
 
     existing_stmt = scoped_note_stmt(
         select(Note).where(Note.slug == slug, Note.is_deleted.is_(False)),
@@ -636,6 +625,10 @@ async def create_note(
     )
     body_html = str(renderer(data.body))
 
+    # For the synthetic guest (id=0), store owner_id=None so the note is
+    # visible to the include_null_owner=True path used by scoped_note_stmt.
+    stored_owner_id = current_user.id if current_user.id != 0 else None
+
     note = Note(
         id=note_id,
         title=title,
@@ -653,10 +646,10 @@ async def create_note(
         is_deleted=False,
         vector_indexed=False,
         graph_indexed=False,
-        owner_id=current_user.id,
+        owner_id=stored_owner_id,
     )
     db.add(note)
-    await db.flush()  # INSERT note row so FK in note_tags is valid
+    await db.flush()
 
     if data.tags:
         await _upsert_tags(note_id, data.tags, db)
